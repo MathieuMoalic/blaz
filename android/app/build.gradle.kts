@@ -14,9 +14,18 @@ android {
     versionCode = 1
     versionName = "1.0"
   }
+  val devApiUrl = providers
+    .environmentVariable("DEV_API_URL")
+    .orElse("http://192.168.1.81:8080")
+    .get()
 
   buildTypes {
+    debug {
+      val devApiUrl = providers.environmentVariable("DEV_API_URL").orElse("http://192.168.1.81:8080").get()
+      buildConfigField("String", "BASE_URL", "\"$devApiUrl\"")
+    }
     release {
+      buildConfigField("String", "BASE_URL", "\"https://blaz.matmoa.eu\"")
       isMinifyEnabled = false
       proguardFiles(
         getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -40,11 +49,19 @@ android {
 
 // Compose configuration
 android {
-  buildFeatures { compose = true }
+  buildFeatures { 
+    compose = true
+    buildConfig = true
+  }
   composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }
 
 dependencies {
+  // Retrofit + Gson + OkHttp (for your Api.kt)
+  implementation("com.squareup.retrofit2:retrofit:2.11.0")
+  implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+  implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
   val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
   implementation(composeBom)
   androidTestImplementation(composeBom)

@@ -1,12 +1,16 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest package="com.example.hellocompose"
     xmlns:android="http://schemas.android.com/apk/res/android">
 
+  <!-- Add this permission -->
+  <uses-permission android:name="android.permission.INTERNET"/>
+
   <application
-      android:label="HelloCompose"
+      android:label="Hello Compose"
       android:icon="@android:drawable/sym_def_app_icon"
       android:allowBackup="true"
-      android:supportsRtl="true">
+      android:supportsRtl="true"
+      android:usesCleartextTraffic="true">  <!-- dev only: allows http://192.168.x.x -->
+
     <activity
         android:name=".MainActivity"
         android:exported="true">
@@ -16,5 +20,5 @@
       </intent-filter>
     </activity>
   </application>
-
 </manifest>
+

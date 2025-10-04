@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tokio::net::TcpListener; // <- add this
+use tokio::net::TcpListener;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Recipe {
@@ -24,7 +24,7 @@ async fn main() {
         .init();
 
     let recipes = vec![
-        Recipe { id: 1, title: "Kig ha farz".into() },
+        Recipe { id: 1, title: "Kig ha farzz".into() },
         Recipe { id: 2, title: "Kouign-amann".into() },
     ];
 
