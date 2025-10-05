@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:blaz/src/api.dart';
+import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
   const AddRecipePage({super.key});
@@ -8,10 +8,8 @@ class AddRecipePage extends StatefulWidget {
 }
 
 class _AddRecipePageState extends State<AddRecipePage> {
-  final _formKey = GlobalKey<FormState>();
   final _controller = TextEditingController();
-  bool _saving = false;
-  String? _error;
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -20,19 +18,19 @@ class _AddRecipePageState extends State<AddRecipePage> {
   }
 
   Future<void> _submit() async {
-    final ok = _formKey.currentState?.validate() ?? false;
-    if (!ok) return;
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+    final title = _controller.text.trim();
+    if (title.isEmpty) return;
+    setState(() => _busy = true);
     try {
-      await createRecipe(_controller.text.trim());
+      await createRecipe(title);
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -42,46 +40,23 @@ class _AddRecipePageState extends State<AddRecipePage> {
       appBar: AppBar(title: const Text('Add recipe')),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              TextFormField(
-                controller: _controller,
-                decoration: const InputDecoration(
-                  labelText: 'Title',
-                  hintText: 'e.g. Kig ha farz',
-                ),
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) => _submit(),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Please enter a title'
-                    : null,
+        child: Column(
+          children: [
+            TextField(
+              controller: _controller,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 12),
-              if (_error != null)
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _saving ? null : _submit,
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save),
-                  label: const Text('Save'),
-                ),
-              ),
-            ],
-          ),
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _busy ? null : _submit,
+              icon: const Icon(Icons.check),
+              label: const Text('Create'),
+            ),
+          ],
         ),
       ),
     );

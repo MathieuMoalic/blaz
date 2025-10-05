@@ -5,4 +5,5 @@ linux:
   flutter run -d Linux 
 
 android:
+  adb reverse tcp:8080 tcp:8080
   flutter run -d CPH2465
