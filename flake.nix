@@ -1,5 +1,5 @@
 {
-  description = "Android app dev shell + Rust (musl) backend (blaz)";
+  description = "Flutter dev shell + Rust (musl) backend (blaz)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -20,13 +20,6 @@
         };
       };
 
-      android = pkgs.androidenv.composeAndroidPackages {
-        platformVersions = ["35" "34"];
-        buildToolsVersions = ["35.0.0" "34.0.0"];
-        includeEmulator = false;
-      };
-      sdkRoot = "${android.androidsdk}/libexec/android-sdk";
-
       muslTarget =
         {
           x86_64-linux = "x86_64-unknown-linux-musl";
@@ -37,6 +30,19 @@
 
       rustSrc = ./backend;
       rustLockfile = ./backend/Cargo.lock;
+
+      androidSdk =
+        (pkgs.androidenv.composeAndroidPackages {
+          platformVersions = ["35" "34"];
+          buildToolsVersions = ["35.0.0" "34.0.0"];
+          ndkVersions = ["27.0.12077973"];
+          includeNDK = true;
+          includeEmulator = false;
+          cmakeVersions = ["3.22.1"];
+          includeCmake = true;
+        }).androidsdk;
+
+      sdkRoot = "${androidSdk}/libexec/android-sdk";
     in rec {
       packages.default = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
         pname = "blaz";
@@ -44,7 +50,6 @@
         src = rustSrc;
         cargoLock.lockFile = rustLockfile;
 
-        # Ensure cargo targets musl; some crates need crt-static to fully static link.
         CARGO_BUILD_TARGET = muslTarget;
         RUSTFLAGS = "-C target-feature=+crt-static";
 
@@ -52,18 +57,17 @@
         doCheck = false;
       };
 
-      apps.default = {
-        type = "app";
-        program = "${packages.blaz}/bin/blaz";
-      };
-
       devShells.default = pkgs.mkShell {
-        name = "android-dev-shell";
-        buildInputs = with pkgs; [
+        name = "dev-shell";
+        packages = with pkgs; [
+          flutter
+          dart
+          androidSdk
+          android-tools
           jdk17
-          gradle
-          android.androidsdk
           just
+
+          # Rust
           rustc
           cargo
           clippy
@@ -71,13 +75,20 @@
           pkg-config
           mold
         ];
-        ANDROID_HOME = sdkRoot;
-        ANDROID_SDK_ROOT = sdkRoot;
-        JAVA_HOME = pkgs.jdk17;
+
         shellHook = ''
+          # Android tooling
+          export ANDROID_SDK_ROOT="${sdkRoot}"
+          export ANDROID_HOME="${sdkRoot}"
+          export ANDROID_NDK_HOME="${sdkRoot}/ndk/27.0.12077973"
+          export ANDROID_NDK_ROOT="${sdkRoot}/ndk/27.0.12077973"
+          export JAVA_HOME="${pkgs.jdk17}"
           export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-           export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+          export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
         '';
       };
+
+      checks.build = packages.blaz;
+      formatter = pkgs.nixpkgs-fmt;
     });
 }
