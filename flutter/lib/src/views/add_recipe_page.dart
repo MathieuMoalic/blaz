@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'api.dart';
+import 'package:blaz/src/api.dart';
 
 class AddRecipePage extends StatefulWidget {
   const AddRecipePage({super.key});
-
   @override
   State<AddRecipePage> createState() => _AddRecipePageState();
 }
@@ -23,17 +22,15 @@ class _AddRecipePageState extends State<AddRecipePage> {
   Future<void> _submit() async {
     final ok = _formKey.currentState?.validate() ?? false;
     if (!ok) return;
-
     setState(() {
       _saving = true;
       _error = null;
     });
-
     try {
       await createRecipe(_controller.text.trim());
-      if (mounted) Navigator.pop(context, true); // tell caller to refresh
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _saving = false);
     }
