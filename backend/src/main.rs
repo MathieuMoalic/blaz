@@ -1,57 +1,62 @@
 use axum::{
     Router,
-    extract::Json,
-    routing::{get, post},
+    extract::{Json, State},
+    routing::get,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+use sqlx::{FromRow, SqlitePool};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::net::TcpListener;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
+struct AppState {
+    pool: SqlitePool,
+}
+
+#[derive(Serialize, Deserialize, FromRow, Clone)]
 struct Recipe {
-    id: u64,
+    id: i64,
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct NewRecipe {
     title: String,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
+    // logging
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "recipes_api=info,axum=info".into()),
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "blaz=info,axum=info".into()))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let recipes = vec![
-        Recipe {
-            id: 1,
-            title: "Kig ha frrz".into(),
-        },
-        Recipe {
-            id: 2,
-            title: "Kouign-amann".into(),
-        },
-    ];
+    // DATABASE_URL like: sqlite:./blaz.sqlite
+    // let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./blaz.sqlite".to_string());
+    // let database_url = "sqlite:////home/mat/project/blaz/backend/blaz.sqlite".to_string();
+    //
+    // // connect pool
+    // let pool = SqlitePool::connect(&database_url).await?;
+    //
+    // // run migrations in ./migrations at startup
+    // sqlx::migrate!("./migrations").run(&pool).await?;
+    let pool = make_pool().await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    let state = AppState { pool };
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route(
-            "/recipes",
-            get({
-                let recipes = recipes.clone();
-                move || {
-                    let recipes = recipes.clone();
-                    async move { Json(recipes) }
-                }
-            }),
-        )
-        .route("/recipes", post(create_recipe))
+        .route("/recipes", get(list_recipes).post(create_recipe))
+        .with_state(state)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -63,13 +68,51 @@ async fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     tracing::info!("listening on http://{addr}");
 
-    let listener = TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 
-async fn create_recipe(Json(mut r): Json<Recipe>) -> Json<Recipe> {
-    if r.id == 0 {
-        r.id = 999
+async fn list_recipes(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Recipe>>, axum::http::StatusCode> {
+    let rows: Vec<Recipe> =
+        sqlx::query_as::<_, Recipe>("SELECT id, title FROM recipes ORDER BY id")
+            .fetch_all(&state.pool)
+            .await
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
+}
+
+async fn create_recipe(
+    State(state): State<AppState>,
+    Json(new): Json<NewRecipe>,
+) -> Result<Json<Recipe>, axum::http::StatusCode> {
+    // Use RETURNING (SQLite >= 3.35; bundled lib is new enough)
+    let rec: Recipe =
+        sqlx::query_as::<_, Recipe>("INSERT INTO recipes(title) VALUES (?) RETURNING id, title")
+            .bind(new.title)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rec))
+}
+
+async fn make_pool() -> anyhow::Result<SqlitePool> {
+    // default to ./blaz.sqlite, but allow override with DATABASE_PATH
+    let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "blaz.sqlite".into());
+    let db_path = PathBuf::from(db_path);
+
+    // ensure parent directory exists (important: WAL needs to create -wal/-shm files)
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    Json(r)
+
+    let opts = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal);
+
+    Ok(SqlitePool::connect_with(opts).await?)
 }
