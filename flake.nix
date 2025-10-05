@@ -1,6 +1,4 @@
 {
-  description = "Flutter dev shell + Rust (musl) backend (blaz)";
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
@@ -16,7 +14,7 @@
         inherit system;
         config = {
           allowUnfree = true;
-          android_sdk.accept_license = true; # accept Android SDK licenses
+          android_sdk.accept_license = true;
         };
       };
 
@@ -43,7 +41,7 @@
         }).androidsdk;
 
       sdkRoot = "${androidSdk}/libexec/android-sdk";
-    in rec {
+    in {
       packages.default = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
         pname = "blaz";
         version = "0.1.0";
@@ -77,18 +75,17 @@
         ];
 
         shellHook = ''
-          # Android tooling
-          export ANDROID_SDK_ROOT="${sdkRoot}"
-          export ANDROID_HOME="${sdkRoot}"
-          export ANDROID_NDK_HOME="${sdkRoot}/ndk/27.0.12077973"
-          export ANDROID_NDK_ROOT="${sdkRoot}/ndk/27.0.12077973"
-          export JAVA_HOME="${pkgs.jdk17}"
-          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
           export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+
+          cat > "flutter/android/local.properties" <<EOF
+                sdk.dir=${sdkRoot}
+                cmake.dir=${sdkRoot}/cmake/3.22.1
+                ndk.dir=${sdkRoot}/ndk/27.0.12077973
+                flutter.buildMode=debug
+                flutter.versionName=1.0.0
+                flutter.versionCode=1
+          EOF
         '';
       };
-
-      checks.build = packages.blaz;
-      formatter = pkgs.nixpkgs-fmt;
     });
 }
