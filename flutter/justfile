@@ -1,0 +1,8 @@
+web:
+  flutter run -d web-server --web-hostname 127.0.0.1 --web-port 5173
+
+linux:
+  flutter run -d Linux 
+
+android:
+  flutter run -d CPH2465
