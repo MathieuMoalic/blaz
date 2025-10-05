@@ -8,14 +8,6 @@ const String _baseUrl = String.fromEnvironment(
 );
 
 // ---------- Models ----------
-class Recipe {
-  final int id;
-  final String title;
-  Recipe({required this.id, required this.title});
-  factory Recipe.fromJson(Map<String, dynamic> j) =>
-      Recipe(id: (j['id'] as num).toInt(), title: j['title'] as String);
-  Map<String, dynamic> toJson() => {'id': id, 'title': title};
-}
 
 class MealPlanEntry {
   final int id;
@@ -58,21 +50,90 @@ Never _throw(http.Response r) =>
     throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
 
 // ---------- Recipes ----------
+class Recipe {
+  final int id;
+  final String title;
+  final String source;
+  final String
+  yieldText; // "yield" is a Dart keyword in some contexts, avoid clash
+  final String notes;
+  final String createdAt; // raw string from backend (SQLite CURRENT_TIMESTAMP)
+  final String updatedAt;
+  final List<String> ingredients;
+  final List<String> instructions;
+
+  Recipe({
+    required this.id,
+    required this.title,
+    required this.source,
+    required this.yieldText,
+    required this.notes,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.ingredients,
+    required this.instructions,
+  });
+
+  factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
+    id: (j['id'] ?? 0) as int,
+    title: (j['title'] ?? '') as String,
+    source: (j['source'] ?? '') as String,
+    yieldText: (j['yield'] ?? '') as String,
+    notes: (j['notes'] ?? '') as String,
+    createdAt: (j['created_at'] ?? '') as String,
+    updatedAt: (j['updated_at'] ?? '') as String,
+    ingredients: ((j['ingredients'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    instructions: ((j['instructions'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+  );
+}
+
 Future<List<Recipe>> fetchRecipes() async {
-  final r = await http.get(_u('/recipes'));
-  if (r.statusCode != 200) _throw(r);
-  final List data = jsonDecode(r.body) as List;
+  final res = await http.get(Uri.parse('$_baseUrl/recipes'));
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final List data = jsonDecode(res.body) as List;
   return data.map((e) => Recipe.fromJson(e as Map<String, dynamic>)).toList();
 }
 
-Future<Recipe> createRecipe(String title) async {
-  final r = await http.post(
-    _u('/recipes'),
+Future<Recipe> fetchRecipe(int id) async {
+  final res = await http.get(Uri.parse('$_baseUrl/recipes/$id'));
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+}
+
+Future<Recipe> createRecipeFull({
+  required String title,
+  String source = '',
+  String yieldText = '',
+  String notes = '',
+  List<String> ingredients = const [],
+  List<String> instructions = const [],
+}) async {
+  final body = jsonEncode({
+    'title': title,
+    'source': source,
+    'yield': yieldText, // backend expects "yield"
+    'notes': notes,
+    'ingredients': ingredients,
+    'instructions': instructions,
+  });
+
+  final res = await http.post(
+    Uri.parse('$_baseUrl/recipes'),
     headers: {'content-type': 'application/json'},
-    body: jsonEncode({'title': title}),
+    body: body,
   );
-  if (r.statusCode != 200) _throw(r);
-  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+  if (res.statusCode != 200 && res.statusCode != 201) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
 }
 
 Future<Recipe> getRecipe(int id) async {
@@ -82,8 +143,10 @@ Future<Recipe> getRecipe(int id) async {
 }
 
 Future<void> deleteRecipe(int id) async {
-  final r = await http.delete(_u('/recipes/$id'));
-  if (r.statusCode != 200) _throw(r);
+  final res = await http.delete(Uri.parse('$_baseUrl/recipes/$id'));
+  if (res.statusCode != 204) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
 }
 
 // ---------- Meal plan ----------

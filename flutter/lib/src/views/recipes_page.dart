@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import 'recipe_detail_page.dart';
+import 'add_recipe_page.dart';
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -28,7 +30,22 @@ class RecipesPageState extends State<RecipesPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const _AppTitle('Recipes'),
+        _AppTitle(
+          'Recipes',
+          trailing: IconButton(
+            tooltip: 'Add recipe',
+            icon: const Icon(Icons.add),
+            onPressed: () async {
+              // Push add screen; if it returns true, refresh list
+              final created = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(builder: (_) => const AddRecipePage()),
+              );
+              if (created == true) {
+                await refresh();
+              }
+            },
+          ),
+        ),
         Expanded(
           child: RefreshIndicator(
             onRefresh: refresh,
@@ -48,16 +65,30 @@ class RecipesPageState extends State<RecipesPage> {
                 return ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: items.length,
-                  itemBuilder: (_, i) => ListTile(
-                    title: Text(items[i].title),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () async {
-                        await deleteRecipe(items[i].id);
-                        refresh();
+                  itemBuilder: (_, i) {
+                    final r = items[i];
+                    return ListTile(
+                      title: Text(r.title),
+                      onTap: () async {
+                        // Open detail; refresh after coming back (in case of edits later)
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => RecipeDetailPage(recipeId: r.id),
+                          ),
+                        );
+                        await refresh();
                       },
-                    ),
-                  ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () async {
+                          await deleteRecipe(
+                            r.id,
+                          ); // make sure this exists in api.dart
+                          await refresh();
+                        },
+                      ),
+                    );
+                  },
                   separatorBuilder: (_, __) => const Divider(height: 1),
                 );
               },
@@ -71,14 +102,23 @@ class RecipesPageState extends State<RecipesPage> {
 
 class _AppTitle extends StatelessWidget {
   final String text;
-  const _AppTitle(this.text);
+  final Widget? trailing;
+  const _AppTitle(this.text, {this.trailing, super.key});
+
   @override
   Widget build(BuildContext context) {
     return Container(
       height: 48,
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Text(text, style: Theme.of(context).textTheme.titleLarge),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(text, style: Theme.of(context).textTheme.titleLarge),
+          ),
+          if (trailing != null) trailing!,
+        ],
+      ),
     );
   }
 }

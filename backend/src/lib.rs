@@ -59,7 +59,12 @@ pub fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/recipes", get(recipes::list).post(recipes::create))
-        .route("/recipes/{id}", get(recipes::get).delete(recipes::delete))
+        .route(
+            "/recipes/{id}",
+            get(recipes::get)
+                .delete(recipes::delete)
+                .patch(recipes::update),
+        )
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),
@@ -77,6 +82,5 @@ pub fn build_app(state: AppState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        // IMPORTANT: use your customized `trace` (not a fresh default layer)
         .layer(trace)
 }

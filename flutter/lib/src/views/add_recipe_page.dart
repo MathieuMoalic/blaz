@@ -8,21 +8,52 @@ class AddRecipePage extends StatefulWidget {
 }
 
 class _AddRecipePageState extends State<AddRecipePage> {
-  final _controller = TextEditingController();
+  final _form = GlobalKey<FormState>();
+
+  final _title = TextEditingController();
+  final _source = TextEditingController();
+  final _yieldText = TextEditingController();
+  final _notes = TextEditingController();
+  final _ingredientsRaw = TextEditingController();
+  final _instructionsRaw = TextEditingController();
+
   bool _busy = false;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _title.dispose();
+    _source.dispose();
+    _yieldText.dispose();
+    _notes.dispose();
+    _ingredientsRaw.dispose();
+    _instructionsRaw.dispose();
     super.dispose();
   }
 
+  List<String> _lines(String s) =>
+      s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
   Future<void> _submit() async {
-    final title = _controller.text.trim();
-    if (title.isEmpty) return;
+    if (!_form.currentState!.validate()) return;
+
+    final title = _title.text.trim();
+    final source = _source.text.trim();
+    final yieldText = _yieldText.text.trim();
+    final notes = _notes.text.trim();
+    final ingredients = _lines(_ingredientsRaw.text);
+    final instructions = _lines(_instructionsRaw.text);
+
     setState(() => _busy = true);
     try {
-      await createRecipe(title);
+      // Requires a createRecipeFull(...) helper in api.dart (see note below)
+      await createRecipeFull(
+        title: title,
+        source: source,
+        yieldText: yieldText,
+        notes: notes,
+        ingredients: ingredients,
+        instructions: instructions,
+      );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
@@ -36,27 +67,90 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
   @override
   Widget build(BuildContext context) {
+    final gap = const SizedBox(height: 12);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Add recipe')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: _controller,
-              decoration: const InputDecoration(
-                labelText: 'Title',
-                border: OutlineInputBorder(),
+      body: SafeArea(
+        child: Form(
+          key: _form,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              TextFormField(
+                controller: _title,
+                decoration: const InputDecoration(
+                  labelText: 'Title *',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.next,
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Title required' : null,
               ),
-              onSubmitted: (_) => _submit(),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _busy ? null : _submit,
-              icon: const Icon(Icons.check),
-              label: const Text('Create'),
-            ),
-          ],
+              gap,
+              TextField(
+                controller: _source,
+                decoration: const InputDecoration(
+                  labelText: 'Source (URL, book, person…)',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.next,
+              ),
+              gap,
+              TextField(
+                controller: _yieldText,
+                decoration: const InputDecoration(
+                  labelText: 'Yield (e.g. “4 servings”)',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.next,
+              ),
+              gap,
+              TextField(
+                controller: _notes,
+                decoration: const InputDecoration(
+                  labelText: 'Notes',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: 4,
+              ),
+              gap,
+              TextField(
+                controller: _ingredientsRaw,
+                decoration: const InputDecoration(
+                  labelText: 'Ingredients (one per line)',
+                  hintText: 'e.g.\n2 eggs\n150 g flour\nPinch of salt',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: 6,
+              ),
+              gap,
+              TextField(
+                controller: _instructionsRaw,
+                decoration: const InputDecoration(
+                  labelText: 'Instructions (one step per line)',
+                  hintText: 'e.g.\nWhisk eggs.\nFold in flour.\nBake 20 min.',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: 8,
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _busy ? null : _submit,
+                icon: _busy
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check),
+                label: const Text('Create'),
+              ),
+            ],
+          ),
         ),
       ),
     );
