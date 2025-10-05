@@ -1,0 +1,4 @@
+default: hot-reload
+
+hot-reload:
+        RUST_LOG=blaz=debug,axum=info cargo watch -q -c -w src -w Cargo.toml -x 'run'
