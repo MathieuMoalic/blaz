@@ -39,15 +39,6 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // DATABASE_URL like: sqlite:./blaz.sqlite
-    // let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./blaz.sqlite".to_string());
-    // let database_url = "sqlite:////home/mat/project/blaz/backend/blaz.sqlite".to_string();
-    //
-    // // connect pool
-    // let pool = SqlitePool::connect(&database_url).await?;
-    //
-    // // run migrations in ./migrations at startup
-    // sqlx::migrate!("./migrations").run(&pool).await?;
     let pool = make_pool().await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
@@ -88,7 +79,6 @@ async fn create_recipe(
     State(state): State<AppState>,
     Json(new): Json<NewRecipe>,
 ) -> Result<Json<Recipe>, axum::http::StatusCode> {
-    // Use RETURNING (SQLite >= 3.35; bundled lib is new enough)
     let rec: Recipe =
         sqlx::query_as::<_, Recipe>("INSERT INTO recipes(title) VALUES (?) RETURNING id, title")
             .bind(new.title)

@@ -1,24 +1,32 @@
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
-import 'src/api.dart';
 
-void main() async {
+import 'src/api.dart';
+import 'src/add_recipe_page.dart';
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Desktop-only: remove native title bar & buttons
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // Desktop only: init window_manager and hide native frame
+  final isDesktop =
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+
+  if (isDesktop) {
     await windowManager.ensureInitialized();
 
-    final windowOptions = const WindowOptions(
-      titleBarStyle: TitleBarStyle.hidden, // macOS-style hidden title bar
-      windowButtonVisibility: false,       // hide the traffic lights on macOS
-      backgroundColor: Colors.transparent, // prettier edges for dark UIs
+    const windowOptions = WindowOptions(
+      titleBarStyle: TitleBarStyle.hidden,
+      windowButtonVisibility: false,
+      backgroundColor: Colors.transparent,
     );
 
     windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.setAsFrameless(); // removes frame on Win/Linux/macOS
+      await windowManager.setAsFrameless();
       await windowManager.show();
       await windowManager.focus();
     });
@@ -29,14 +37,21 @@ void main() async {
 
 class BlazApp extends StatelessWidget {
   const BlazApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    final light = ColorScheme.fromSeed(seedColor: Colors.teal, brightness: Brightness.light);
-    final dark  = ColorScheme.fromSeed(seedColor: Colors.teal, brightness: Brightness.dark);
+    final light = ColorScheme.fromSeed(
+      seedColor: Colors.teal,
+      brightness: Brightness.light,
+    );
+    final dark = ColorScheme.fromSeed(
+      seedColor: Colors.teal,
+      brightness: Brightness.dark,
+    );
 
     return MaterialApp(
       title: 'Blaz',
-      themeMode: ThemeMode.dark,                  // always dark; change to system if you want
+      themeMode: ThemeMode.dark, // change to ThemeMode.system if you prefer
       theme: ThemeData(useMaterial3: true, colorScheme: light),
       darkTheme: ThemeData(useMaterial3: true, colorScheme: dark),
       home: const RecipesPage(),
@@ -60,48 +75,84 @@ class _RecipesPageState extends State<RecipesPage> {
     _future = fetchRecipes();
   }
 
+  Future<void> _refresh() async {
+    final f = fetchRecipes();
+    setState(() {
+      _future = f;
+    });
+    await f;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDesktop =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.linux ||
+            defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.macOS);
+
     return Scaffold(
-      // We removed the native title bar, so make a draggable Flutter one:
       body: Column(
         children: [
-          // Drag anywhere in this area to move the window
-          DragToMoveArea(
-            child: Container(
-              height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              alignment: Alignment.centerLeft,
-              child: Text('Blaz', style: Theme.of(context).textTheme.titleMedium),
+          // Simple draggable title bar area for desktop builds
+          if (isDesktop) ...[
+            DragToMoveArea(
+              child: Container(
+                height: 44,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Blaz',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
             ),
-          ),
-          const Divider(height: 1),
+            const Divider(height: 1),
+          ],
+
+          // Content
           Expanded(
-            child: FutureBuilder<List<Recipe>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(child: Text('Error: ${snap.error}'));
-                }
-                final items = snap.data ?? const [];
-                if (items.isEmpty) {
-                  return const Center(child: Text('No recipes yet'));
-                }
-                return ListView.separated(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: items.length,
-                  itemBuilder: (_, i) => ListTile(title: Text(items[i].title)),
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                );
-              },
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: FutureBuilder<List<Recipe>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snap.hasError) {
+                    return Center(child: Text('Error: ${snap.error}'));
+                  }
+                  final items = snap.data ?? const [];
+                  if (items.isEmpty) {
+                    return const Center(child: Text('No recipes yet'));
+                  }
+                  return ListView.separated(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: items.length,
+                    itemBuilder: (_, i) =>
+                        ListTile(title: Text(items[i].title)),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                  );
+                },
+              ),
             ),
           ),
         ],
       ),
+
+      floatingActionButton: FloatingActionButton.extended(
+        icon: const Icon(Icons.add),
+        label: const Text('Add'),
+        onPressed: () async {
+          final created = await Navigator.of(context).push<bool>(
+            MaterialPageRoute(builder: (_) => const AddRecipePage()),
+          );
+          if (created == true) {
+            await _refresh();
+          }
+        },
+      ),
     );
   }
 }
-
