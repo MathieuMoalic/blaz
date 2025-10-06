@@ -45,7 +45,6 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
     setState(() => _busy = true);
     try {
-      // Requires a createRecipeFull(...) helper in api.dart (see note below)
       await createRecipeFull(
         title: title,
         source: source,

@@ -26,6 +26,34 @@ class RecipesPageState extends State<RecipesPage> {
     await f;
   }
 
+  String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _assignRecipe(Recipe r) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked == null) return;
+
+    final day = _ymd(picked);
+    try {
+      final entry = await assignRecipeToDay(day: day, recipeId: r.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Assigned "${r.title}" to ${entry.day}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to assign: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -36,7 +64,6 @@ class RecipesPageState extends State<RecipesPage> {
             tooltip: 'Add recipe',
             icon: const Icon(Icons.add),
             onPressed: () async {
-              // Push add screen; if it returns true, refresh list
               final created = await Navigator.of(context).push<bool>(
                 MaterialPageRoute(builder: (_) => const AddRecipePage()),
               );
@@ -70,7 +97,6 @@ class RecipesPageState extends State<RecipesPage> {
                     return ListTile(
                       title: Text(r.title),
                       onTap: () async {
-                        // Open detail; refresh after coming back (in case of edits later)
                         await Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => RecipeDetailPage(recipeId: r.id),
@@ -78,14 +104,23 @@ class RecipesPageState extends State<RecipesPage> {
                         );
                         await refresh();
                       },
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () async {
-                          await deleteRecipe(
-                            r.id,
-                          ); // make sure this exists in api.dart
-                          await refresh();
-                        },
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Assign to day',
+                            icon: const Icon(Icons.event),
+                            onPressed: () => _assignRecipe(r),
+                          ),
+                          IconButton(
+                            tooltip: 'Delete',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () async {
+                              await deleteRecipe(r.id);
+                              await refresh();
+                            },
+                          ),
+                        ],
                       ),
                     );
                   },
@@ -122,3 +157,4 @@ class _AppTitle extends StatelessWidget {
     );
   }
 }
+
