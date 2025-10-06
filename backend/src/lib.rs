@@ -14,6 +14,7 @@ use axum::{
 };
 use axum::{body::Body, routing::post};
 use std::time::Duration;
+use tower_http::services::ServeDir;
 use tower_http::{
     classify::ServerErrorsFailureClass,
     cors::{Any, CorsLayer},
@@ -54,6 +55,7 @@ pub fn build_app(state: AppState) -> Router {
         .on_failure(|_class: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
+    let media_service = ServeDir::new(state.media_dir.clone());
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -75,6 +77,7 @@ pub fn build_app(state: AppState) -> Router {
             "/shopping/{id}",
             patch(shopping::toggle_done).delete(shopping::delete),
         )
+        .nest_service("/media", media_service)
         .with_state(state)
         .layer(
             CorsLayer::new()
