@@ -32,6 +32,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             return Center(child: Text('Error: ${snap.error}'));
           }
           final r = snap.data!;
+          final img = mediaUrl(r.imagePath);
           return RefreshIndicator(
             onRefresh: () async {
               final f = fetchRecipe(widget.recipeId);
@@ -45,6 +46,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               children: [
                 Text(r.title, style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 8),
+                if (img != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(img, fit: BoxFit.cover),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _MetaRow(
                   label: 'Source',
                   value: r.source.isEmpty ? '—' : r.source,

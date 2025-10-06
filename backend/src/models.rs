@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
+    pub media_dir: PathBuf,
 }
 
 /* ---------- API models ---------- */
@@ -21,6 +23,7 @@ pub struct Recipe {
     pub updated_at: String,
     pub ingredients: Vec<String>,
     pub instructions: Vec<String>,
+    pub image_path: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -63,6 +66,7 @@ pub struct RecipeRow {
     // store JSON arrays as TEXT; sqlx Json<T> maps it for us
     pub ingredients: Json<Vec<String>>,
     pub instructions: Json<Vec<String>>,
+    pub image_path: Option<String>,
 }
 
 impl From<RecipeRow> for Recipe {
@@ -77,6 +81,7 @@ impl From<RecipeRow> for Recipe {
             updated_at: r.updated_at,
             ingredients: r.ingredients.0,
             instructions: r.instructions.0,
+            image_path: r.image_path,
         }
     }
 }

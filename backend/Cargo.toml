@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -16,3 +16,4 @@ libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 anyhow = "1.0.100"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+uuid = { version = "1", features = ["v4"] }

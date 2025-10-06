@@ -23,8 +23,10 @@ async fn main() -> anyhow::Result<()> {
         .run(&pool)
         .await?;
 
-    // router from lib
-    let state = AppState { pool };
+    let media_dir = std::env::var("MEDIA_DIR").unwrap_or_else(|_| "media".into());
+    let media_dir = std::path::PathBuf::from(media_dir);
+    tokio::fs::create_dir_all(&media_dir).await.ok(); // best-effort
+    let state = AppState { pool, media_dir };
     let app = build_app(state);
 
     // serve

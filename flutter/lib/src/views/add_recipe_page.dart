@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -17,6 +18,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
   final _ingredientsRaw = TextEditingController();
   final _instructionsRaw = TextEditingController();
 
+  PlatformFile? _image;
+
   bool _busy = false;
 
   @override
@@ -33,6 +36,17 @@ class _AddRecipePageState extends State<AddRecipePage> {
   List<String> _lines(String s) =>
       s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
 
+  Future<void> _pickImage() async {
+    final res = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+      withData: false, // we use file path
+    );
+    if (res != null && res.files.isNotEmpty) {
+      setState(() => _image = res.files.single);
+    }
+  }
+
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
 
@@ -45,7 +59,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
     setState(() => _busy = true);
     try {
-      await createRecipeFull(
+      final created = await createRecipeFull(
         title: title,
         source: source,
         yieldText: yieldText,
@@ -53,6 +67,9 @@ class _AddRecipePageState extends State<AddRecipePage> {
         ingredients: ingredients,
         instructions: instructions,
       );
+      if (_image != null) {
+        await uploadRecipeImage(id: created.id, file: _image!);
+      }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
@@ -85,6 +102,24 @@ class _AddRecipePageState extends State<AddRecipePage> {
                 textInputAction: TextInputAction.next,
                 validator: (v) =>
                     (v == null || v.trim().isEmpty) ? 'Title required' : null,
+              ),
+              gap,
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _pickImage,
+                    icon: const Icon(Icons.photo),
+                    label: const Text('Choose image'),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _image?.name ?? 'No image selected',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
               gap,
               TextField(

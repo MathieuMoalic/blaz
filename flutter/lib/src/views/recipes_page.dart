@@ -94,7 +94,19 @@ class RecipesPageState extends State<RecipesPage> {
                   itemCount: items.length,
                   itemBuilder: (_, i) {
                     final r = items[i];
+                    final thumb = mediaUrl(r.imagePath);
                     return ListTile(
+                      leading: thumb == null
+                          ? const Icon(Icons.image_not_supported)
+                          : ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: Image.network(
+                                thumb,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
                       title: Text(r.title),
                       onTap: () async {
                         await Navigator.of(context).push(

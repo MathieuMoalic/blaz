@@ -6,13 +6,13 @@ use crate::{
     models::AppState,
     routes::{meal_plan, recipes, shopping},
 };
-use axum::body::Body;
 use axum::http::{Request, Response, header};
 use axum::{
     Json, Router,
     extract::ConnectInfo,
     routing::{delete, get, patch},
 };
+use axum::{body::Body, routing::post};
 use std::time::Duration;
 use tower_http::{
     classify::ServerErrorsFailureClass,
@@ -27,7 +27,6 @@ async fn healthz() -> Json<&'static str> {
 
 pub fn build_app(state: AppState) -> Router {
     let trace = TraceLayer::new_for_http()
-        // NOTE: Annotate the request body type here:
         .make_span_with(|req: &Request<Body>| {
             let method = req.method().to_string();
             let uri = req.uri().to_string();
@@ -65,6 +64,7 @@ pub fn build_app(state: AppState) -> Router {
                 .delete(recipes::delete)
                 .patch(recipes::update),
         )
+        .route("/recipes/{id}/image", post(recipes::upload_image))
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),

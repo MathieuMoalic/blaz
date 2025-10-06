@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:file_picker/file_picker.dart';
 
 /// Compile-time base URL (override with --dart-define API_BASE_URL=...)
 const String _baseUrl = String.fromEnvironment(
@@ -46,6 +47,10 @@ Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
   '$_baseUrl$path',
 ).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
 
+String? mediaUrl(String? imagePath) => imagePath == null || imagePath.isEmpty
+    ? null
+    : '$_baseUrl/media/$imagePath';
+
 Never _throw(http.Response r) =>
     throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
 
@@ -61,6 +66,7 @@ class Recipe {
   final String updatedAt;
   final List<String> ingredients;
   final List<String> instructions;
+  final String? imagePath;
 
   Recipe({
     required this.id,
@@ -72,6 +78,7 @@ class Recipe {
     required this.updatedAt,
     required this.ingredients,
     required this.instructions,
+    required this.imagePath,
   });
 
   factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
@@ -88,7 +95,25 @@ class Recipe {
     instructions: ((j['instructions'] as List?) ?? const [])
         .map((e) => e.toString())
         .toList(),
+    imagePath: j['image_path'] as String?,
   );
+}
+
+Future<Recipe> uploadRecipeImage({
+  required int id,
+  required PlatformFile file,
+}) async {
+  if (file.path == null) {
+    throw Exception('File path unavailable (platform restriction?)');
+  }
+  final req = http.MultipartRequest('POST', _u('/recipes/$id/image'));
+  req.files.add(await http.MultipartFile.fromPath('image', file.path!));
+  final streamed = await req.send();
+  final body = await streamed.stream.bytesToString();
+  if (streamed.statusCode != 200) {
+    throw Exception('HTTP ${streamed.statusCode}: $body');
+  }
+  return Recipe.fromJson(jsonDecode(body) as Map<String, dynamic>);
 }
 
 Future<List<Recipe>> fetchRecipes() async {

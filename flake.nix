@@ -47,6 +47,7 @@
         android-tools
         jdk17
         just
+        zenity # file picker for linux app
 
         rustc
         cargo
