@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
+import 'package:path/path.dart' as p;
 
 /// Compile-time base URL (override with --dart-define API_BASE_URL=...)
 const String _baseUrl = String.fromEnvironment(
@@ -101,19 +105,43 @@ class Recipe {
 
 Future<Recipe> uploadRecipeImage({
   required int id,
-  required PlatformFile file,
+  String? path, // used on mobile/desktop
+  List<int>? bytes, // used on web
+  String? filename, // used on web (and as override)
 }) async {
-  if (file.path == null) {
-    throw Exception('File path unavailable (platform restriction?)');
+  final url = _u('/recipes/$id/image');
+  final req = http.MultipartRequest('POST', url);
+
+  if (kIsWeb) {
+    if (bytes == null || (filename == null || filename.isEmpty)) {
+      throw Exception('On web, provide bytes and filename');
+    }
+    final ct = lookupMimeType(filename) ?? 'application/octet-stream';
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'image',
+        bytes,
+        filename: filename,
+        contentType: MediaType.parse(ct),
+      ),
+    );
+  } else {
+    if (path == null) throw Exception('On non-web, provide a file path');
+    final name = filename ?? p.basename(path);
+    final ct = lookupMimeType(name) ?? 'application/octet-stream';
+    req.files.add(
+      await http.MultipartFile.fromPath(
+        'image',
+        path,
+        filename: name,
+        contentType: MediaType.parse(ct),
+      ),
+    );
   }
-  final req = http.MultipartRequest('POST', _u('/recipes/$id/image'));
-  req.files.add(await http.MultipartFile.fromPath('image', file.path!));
-  final streamed = await req.send();
-  final body = await streamed.stream.bytesToString();
-  if (streamed.statusCode != 200) {
-    throw Exception('HTTP ${streamed.statusCode}: $body');
-  }
-  return Recipe.fromJson(jsonDecode(body) as Map<String, dynamic>);
+
+  final resp = await http.Response.fromStream(await req.send());
+  if (resp.statusCode != 200) _throw(resp);
+  return Recipe.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
 }
 
 Future<List<Recipe>> fetchRecipes() async {

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:path/path.dart' as p;
+import 'dart:io' show File;
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -18,7 +22,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
   final _ingredientsRaw = TextEditingController();
   final _instructionsRaw = TextEditingController();
 
-  PlatformFile? _image;
+  XFile? _picked; // the selected file (path on mobile/desktop, memory on web)
+  Uint8List? _preview; // for preview on web
 
   bool _busy = false;
 
@@ -37,14 +42,23 @@ class _AddRecipePageState extends State<AddRecipePage> {
       s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
 
   Future<void> _pickImage() async {
-    final res = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-      withData: false, // we use file path
+    final group = const XTypeGroup(
+      label: 'images',
+      extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
     );
-    if (res != null && res.files.isNotEmpty) {
-      setState(() => _image = res.files.single);
+
+    final x = await openFile(acceptedTypeGroups: [group]);
+    if (x == null) return; // user canceled
+
+    Uint8List? bytes;
+    if (kIsWeb) {
+      bytes = await x.readAsBytes(); // web gives bytes only
     }
+
+    setState(() {
+      _picked = x;
+      _preview = bytes; // non-null only on web
+    });
   }
 
   Future<void> _submit() async {
@@ -67,8 +81,18 @@ class _AddRecipePageState extends State<AddRecipePage> {
         ingredients: ingredients,
         instructions: instructions,
       );
-      if (_image != null) {
-        await uploadRecipeImage(id: created.id, file: _image!);
+      if (_picked != null) {
+        if (kIsWeb) {
+          await uploadRecipeImage(
+            id: created.id,
+            filename: _picked!.name,
+            bytes: _preview!, // we read bytes above
+          );
+        } else {
+          // path is available on Android/desktop
+          final path = _picked!.path;
+          await uploadRecipeImage(id: created.id, path: path);
+        }
       }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -115,12 +139,29 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      _image?.name ?? 'No image selected',
+                      _picked?.name ??
+                          (_picked?.path != null
+                              ? p.basename(_picked!.path)
+                              : 'No image selected'),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
+
+              if (_preview != null || (_picked?.path != null && !kIsWeb)) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 120,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: kIsWeb
+                        ? Image.memory(_preview!, fit: BoxFit.cover)
+                        : Image.file(File(_picked!.path), fit: BoxFit.cover),
+                  ),
+                ),
+              ],
+
               gap,
               TextField(
                 controller: _source,
