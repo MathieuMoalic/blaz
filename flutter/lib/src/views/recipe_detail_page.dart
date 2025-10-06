@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import 'edit_recipe_page.dart';
 
 class RecipeDetailPage extends StatefulWidget {
   final int recipeId;
@@ -18,10 +19,32 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     _future = fetchRecipe(widget.recipeId);
   }
 
+  Future<void> _refresh() async {
+    final f = fetchRecipe(widget.recipeId);
+    setState(() => _future = f);
+    await f;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Recipe')),
+      appBar: AppBar(
+        title: const Text('Recipe'),
+        actions: [
+          IconButton(
+            tooltip: 'Edit',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () async {
+              final r = await _future;
+              final changed = await Navigator.push<bool>(
+                context,
+                MaterialPageRoute(builder: (_) => EditRecipePage(recipe: r)),
+              );
+              if (changed == true) _refresh();
+            },
+          ),
+        ],
+      ),
       body: FutureBuilder<Recipe>(
         future: _future,
         builder: (context, snap) {
@@ -34,22 +57,23 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           final r = snap.data!;
           final img = mediaUrl(r.imagePath);
           return RefreshIndicator(
-            onRefresh: () async {
-              final f = fetchRecipe(widget.recipeId);
-              setState(() {
-                _future = f;
-              });
-              await f;
-            },
+            onRefresh: _refresh,
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
                 Text(r.title, style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 8),
                 if (img != null) ...[
+                  // smaller, nice aspect + rounded corners
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(img, fit: BoxFit.cover),
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      height: 200, // <- smaller image
+                      child: Ink.image(
+                        image: NetworkImage(img),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -110,7 +134,6 @@ class _MetaRow extends StatelessWidget {
   final String label;
   final String value;
   const _MetaRow({required this.label, required this.value});
-
   @override
   Widget build(BuildContext context) {
     final styleLabel = Theme.of(context).textTheme.bodySmall;
@@ -130,7 +153,6 @@ class _MetaRow extends StatelessWidget {
 class _Bullet extends StatelessWidget {
   final String text;
   const _Bullet(this.text);
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -150,7 +172,6 @@ class _Numbered extends StatelessWidget {
   final int step;
   final String text;
   const _Numbered({required this.step, required this.text});
-
   @override
   Widget build(BuildContext context) {
     return Padding(

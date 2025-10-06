@@ -4,9 +4,10 @@ use axum::{
     extract::{Multipart, Path, State},
     http::StatusCode,
 };
-use sqlx::types::Json as SqlxJson;
-use sqlx::{QueryBuilder, Sqlite};
+use sqlx::Arguments;
+use sqlx::sqlite::SqliteArguments;
 use tokio::io::AsyncWriteExt;
+use tracing::error;
 
 use crate::error::AppResult;
 
@@ -160,43 +161,76 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(up): Json<UpdateRecipe>,
 ) -> Result<Json<Recipe>, StatusCode> {
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("UPDATE recipes SET ");
-    let mut sep = qb.separated(", ");
+    let mut sets: Vec<&'static str> = Vec::new();
+    let mut args = SqliteArguments::default();
 
     if let Some(title) = up.title {
-        sep.push("title = ").push_bind(title);
+        sets.push("title = ?");
+        args.add(title)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(source) = up.source {
-        sep.push("source = ").push_bind(source);
+        sets.push("source = ?");
+        args.add(source)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(y) = up.r#yield {
-        sep.push(r#""yield" = "#).push_bind(y);
+        sets.push(r#""yield" = ?"#);
+        args.add(y).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(notes) = up.notes {
-        sep.push("notes = ").push_bind(notes);
+        sets.push("notes = ?");
+        args.add(notes)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(ing) = up.ingredients {
-        sep.push("ingredients = ").push_bind(SqlxJson(ing));
+        let s = serde_json::to_string(&ing).unwrap_or_else(|_| "[]".to_string());
+        sets.push("ingredients = json(?)");
+        args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(instr) = up.instructions {
-        sep.push("instructions = ").push_bind(SqlxJson(instr));
+        let s = serde_json::to_string(&instr).unwrap_or_else(|_| "[]".to_string());
+        sets.push("instructions = json(?)");
+        args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     // Always touch updated_at
-    sep.push("updated_at = CURRENT_TIMESTAMP");
+    sets.push("updated_at = CURRENT_TIMESTAMP");
 
-    qb.push(" WHERE id = ").push_bind(id);
+    // WHERE clause
+    let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
+    args.add(id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let res = qb
-        .build()
+    let res = sqlx::query_with(&sql, args)
         .execute(&state.pool)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            error!(?e, "recipes.update failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     if res.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // Fresh row, now includes image_path
-    get(State(state), Path(id)).await
+    // Return fresh row
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
+        r#"
+        SELECT id, title, source, "yield", notes,
+               created_at, updated_at,
+               ingredients, instructions, image_path
+          FROM recipes
+         WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| {
+        error!(?e, "recipes.get after update failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(row.into()))
 }

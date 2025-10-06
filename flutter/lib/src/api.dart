@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
@@ -101,6 +100,32 @@ class Recipe {
         .toList(),
     imagePath: j['image_path'] as String?,
   );
+}
+
+Future<Recipe> updateRecipe({
+  required int id,
+  String? title,
+  String? source,
+  String? yieldText,
+  String? notes,
+  List<String>? ingredients,
+  List<String>? instructions,
+}) async {
+  final body = <String, dynamic>{
+    if (title != null) 'title': title,
+    if (source != null) 'source': source,
+    if (yieldText != null) 'yield': yieldText,
+    if (notes != null) 'notes': notes,
+    if (ingredients != null) 'ingredients': ingredients,
+    if (instructions != null) 'instructions': instructions,
+  };
+  final r = await http.patch(
+    _u('/recipes/$id'),
+    headers: {'content-type': 'application/json'},
+    body: jsonEncode(body),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
 Future<Recipe> uploadRecipeImage({
