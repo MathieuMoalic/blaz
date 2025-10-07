@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../api.dart';
 import 'recipe_detail_page.dart';
@@ -11,11 +12,31 @@ class RecipesPage extends StatefulWidget {
 
 class RecipesPageState extends State<RecipesPage> {
   late Future<List<Recipe>> _future;
+  final _filterCtrl = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _future = fetchRecipes();
+    _filterCtrl.addListener(_onFilterChanged);
+  }
+
+  @override
+  void dispose() {
+    _filterCtrl.removeListener(_onFilterChanged);
+    _filterCtrl.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onFilterChanged() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      setState(() => _query = _filterCtrl.text.trim().toLowerCase());
+    });
   }
 
   Future<void> refresh() async {
@@ -54,6 +75,29 @@ class RecipesPageState extends State<RecipesPage> {
     }
   }
 
+  bool _matches(Recipe r, String q) {
+    if (q.isEmpty) return true;
+    final title = (r.title).toLowerCase();
+    if (title.contains(q)) return true;
+
+    // Try ingredients if available (List<String> or comma-separated String).
+    try {
+      final dyn = r as dynamic;
+      final v = dyn.ingredients;
+      if (v == null) return false;
+      if (v is List) {
+        for (final e in v) {
+          if (e.toString().toLowerCase().contains(q)) return true;
+        }
+      } else if (v is String) {
+        for (final part in v.split(',')) {
+          if (part.trim().toLowerCase().contains(q)) return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -73,6 +117,32 @@ class RecipesPageState extends State<RecipesPage> {
             },
           ),
         ),
+        // Filter field
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: TextField(
+            controller: _filterCtrl,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Filter by title or ingredient',
+              prefixIcon: const Icon(Icons.search),
+              isDense: true,
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear',
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        _filterCtrl.clear();
+                        FocusScope.of(context).unfocus();
+                      },
+                    ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
         Expanded(
           child: RefreshIndicator(
             onRefresh: refresh,
@@ -85,61 +155,171 @@ class RecipesPageState extends State<RecipesPage> {
                 if (snap.hasError) {
                   return Center(child: Text('Error: ${snap.error}'));
                 }
-                final items = snap.data ?? const [];
-                if (items.isEmpty) {
-                  return const Center(child: Text('No recipes yet'));
+                final items = snap.data ?? const <Recipe>[];
+                final filtered = items
+                    .where((r) => _matches(r, _query))
+                    .toList();
+                if (filtered.isEmpty) {
+                  return const _EmptyState();
                 }
-                return ListView.separated(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: items.length,
-                  itemBuilder: (_, i) {
-                    final r = items[i];
-                    final thumb = mediaUrl(r.imagePath);
-                    return ListTile(
-                      leading: thumb == null
-                          ? const Icon(Icons.image_not_supported)
-                          : ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: Image.network(
-                                thumb,
-                                width: 56,
-                                height: 56,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                      title: Text(r.title),
-                      onTap: () async {
-                        await Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => RecipeDetailPage(recipeId: r.id),
-                          ),
-                        );
-                        await refresh();
-                      },
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            tooltip: 'Assign to day',
-                            icon: const Icon(Icons.event),
-                            onPressed: () => _assignRecipe(r),
-                          ),
-                          IconButton(
-                            tooltip: 'Delete',
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () async {
-                              await deleteRecipe(r.id);
-                              await refresh();
-                            },
-                          ),
-                        ],
+
+                return LayoutBuilder(
+                  builder: (context, c) {
+                    int cols = 2;
+                    final w = c.maxWidth;
+                    if (w >= 1200)
+                      cols = 5;
+                    else if (w >= 900)
+                      cols = 4;
+                    else if (w >= 600)
+                      cols = 3;
+
+                    return GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: cols,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 3 / 4,
                       ),
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) {
+                        final r = filtered[i];
+                        final thumb = mediaUrl(r.imagePath);
+                        return _RecipeCard(
+                          title: r.title,
+                          imageUrl: thumb,
+                          onOpen: () async {
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    RecipeDetailPage(recipeId: r.id),
+                              ),
+                            );
+                            await refresh();
+                          },
+                          onAssign: () => _assignRecipe(r),
+                        );
+                      },
                     );
                   },
-                  separatorBuilder: (_, __) => const Divider(height: 1),
                 );
               },
             ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RecipeCard extends StatelessWidget {
+  final String title;
+  final String? imageUrl;
+  final VoidCallback? onOpen;
+  final VoidCallback? onAssign;
+
+  const _RecipeCard({
+    required this.title,
+    required this.imageUrl,
+    this.onOpen,
+    this.onAssign,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(16),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Image with a tucked-away action in the corner
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Image
+                  imageUrl == null
+                      ? _placeholder()
+                      : Image.network(
+                          imageUrl!,
+                          fit: BoxFit.cover,
+                          frameBuilder: (context, child, frame, wasSync) {
+                            if (wasSync || frame != null) return child;
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          },
+                          errorBuilder: (_, __, ___) => _placeholder(),
+                        ),
+                  // Tucked action (top-right)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Material(
+                      color: Colors.black54,
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        tooltip: 'Assign to day',
+                        icon: const Icon(
+                          Icons.event,
+                          size: 20,
+                          color: Colors.white,
+                        ),
+                        onPressed: onAssign,
+                        splashRadius: 22,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Title below
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder() {
+    return Container(
+      alignment: Alignment.center,
+      child: const Icon(Icons.restaurant_menu, size: 48),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: const [
+        SizedBox(height: 120),
+        Icon(Icons.no_food, size: 48),
+        SizedBox(height: 12),
+        Center(
+          child: Text(
+            'No recipes match your filter.',
+            textAlign: TextAlign.center,
           ),
         ),
       ],
@@ -169,4 +349,3 @@ class _AppTitle extends StatelessWidget {
     );
   }
 }
-
