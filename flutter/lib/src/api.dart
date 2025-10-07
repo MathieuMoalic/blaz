@@ -295,3 +295,60 @@ Future<void> deleteShoppingItem(int id) async {
   final r = await http.delete(_u('/shopping/$id'));
   if (r.statusCode != 200) _throw(r);
 }
+
+/// Add multiple shopping items at once.
+/// - Trims whitespace and drops empties
+/// - De-dupes within the input
+/// - If [avoidDuplicates] is true (default), skips items already present
+///   in the current shopping list (case-insensitive text match)
+/// - Returns the list of successfully created items
+/// - Throws if any item fails to create (none are rolled back)
+Future<List<ShoppingItem>> addShoppingItems(
+  List<String> items, {
+  bool avoidDuplicates = true,
+}) async {
+  // Clean & de-dupe input (case-insensitive)
+  final cleaned = <String>[];
+  final seen = <String>{};
+  for (final raw in items) {
+    final s = raw.trim();
+    if (s.isEmpty) continue;
+    final key = s.toLowerCase();
+    if (seen.add(key)) cleaned.add(s);
+  }
+
+  // Optionally skip ones already in the shopping list
+  List<String> toCreate = List.of(cleaned);
+  if (avoidDuplicates) {
+    final existing = await fetchShoppingList();
+    final existingKeys = existing
+        .map((e) => e.text.trim().toLowerCase())
+        .toSet();
+    toCreate.removeWhere((s) => existingKeys.contains(s.trim().toLowerCase()));
+  }
+
+  if (toCreate.isEmpty) return <ShoppingItem>[];
+
+  final created = <ShoppingItem>[];
+  final failures = <String>[];
+
+  // Create sequentially (simple + avoids spamming backend)
+  for (final text in toCreate) {
+    try {
+      final item = await createShoppingItem(text);
+      created.add(item);
+    } catch (e) {
+      failures.add('$text ($e)');
+    }
+  }
+
+  if (failures.isNotEmpty) {
+    // Some (or all) failed — surface a clear error.
+    // Callers can still rely on the returned list when no exception is thrown.
+    throw Exception(
+      'Failed to add ${failures.length} item(s): ${failures.join(', ')}',
+    );
+  }
+
+  return created;
+}
