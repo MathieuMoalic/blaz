@@ -4,9 +4,9 @@ use axum::{
     extract::{Multipart, Path, State},
     http::StatusCode,
 };
+use image::GenericImageView;
 use sqlx::Arguments;
 use sqlx::sqlite::SqliteArguments;
-use tokio::io::AsyncWriteExt;
 use tracing::error;
 
 use crate::error::AppResult;
@@ -16,49 +16,119 @@ pub async fn upload_image(
     Path(id): Path<i64>,
     mut multipart: Multipart,
 ) -> AppResult<Json<Recipe>> {
+    use image::imageops::FilterType;
     use uuid::Uuid;
+    use webp::Encoder as WebpEncoder;
 
+    const THUMB_MAX_DIM: u32 = 1024; // thumbnail bounding box (px)
+    const FULL_WEBP_QUALITY: f32 = 90.0;
+    const THUMB_WEBP_QUALITY: f32 = 3.0;
+
+    // 1) Pull the file bytes (accept "image" or "file")
+    let mut bytes: Option<Vec<u8>> = None;
     while let Some(field) = multipart.next_field().await? {
-        if field.name() != Some("image") {
-            continue;
+        match field.name() {
+            Some("image") | Some("file") => {
+                bytes = Some(field.bytes().await?.to_vec());
+                break;
+            }
+            _ => continue,
         }
-
-        let filename_hint = field.file_name().unwrap_or("upload.bin").to_string();
-        let ext = filename_hint
-            .rsplit('.')
-            .next()
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_else(|| "bin".to_string());
-
-        let fname = format!("{}.{ext}", Uuid::new_v4());
-        let dest_rel = fname.clone();
-        let dest_abs = state.media_dir.join(&fname);
-
-        tokio::fs::create_dir_all(&state.media_dir).await?;
-        let mut file = tokio::fs::File::create(&dest_abs).await?;
-        let bytes = field.bytes().await?;
-        file.write_all(&bytes).await?;
-        file.flush().await?;
-
-        sqlx::query(
-            r#"UPDATE recipes
-                 SET image_path = ?, updated_at = CURRENT_TIMESTAMP
-               WHERE id = ?"#,
-        )
-        .bind(&dest_rel)
-        .bind(id)
-        .execute(&state.pool)
-        .await?;
-
-        break;
     }
 
-    // Return updated recipe (now includes image_path)
+    // If nothing uploaded, just return the current recipe state
+    let bytes = match bytes {
+        Some(b) => b,
+        None => {
+            let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(
+                r#"
+                SELECT id, title, source, "yield", notes,
+                       created_at, updated_at,
+                       ingredients, instructions,
+                       image_path, image_path_small, image_path_full
+                  FROM recipes
+                 WHERE id = ?
+                "#,
+            )
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await?
+            .into();
+            return Ok(Json(recipe));
+        }
+    };
+
+    // 2) Ensure media dir
+    tokio::fs::create_dir_all(&state.media_dir).await?;
+
+    // 3) Build filenames (always .webp)
+    let uid = Uuid::new_v4();
+    let full_name = format!("recipe_{id}_{uid}.webp");
+    let thumb_name = format!("recipe_{id}_{uid}_sm.webp");
+    let full_abs = state.media_dir.join(&full_name);
+    let thumb_abs = state.media_dir.join(&thumb_name);
+
+    // 4) Heavy work off the async thread: decode, resize, encode to WebP
+    let (full_webp, thumb_webp): (Vec<u8>, Vec<u8>) =
+        tokio::task::spawn_blocking(move || -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+            // Decode any common image format
+            let img = image::load_from_memory(&bytes).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("decode error: {e}"))
+            })?;
+
+            // FULL (original size) -> WebP (quality)
+            let full_mem = WebpEncoder::from_image(&img)
+                .map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("webp enc init: {e}"))
+                })?
+                .encode(FULL_WEBP_QUALITY);
+            let full_out = full_mem.to_vec();
+
+            // THUMB: resize if needed, then WebP (lower quality)
+            let (w, h) = img.dimensions();
+            let thumb_img = if w <= THUMB_MAX_DIM && h <= THUMB_MAX_DIM {
+                img
+            } else {
+                img.resize(THUMB_MAX_DIM, THUMB_MAX_DIM, FilterType::Triangle)
+            };
+            let thumb_mem = WebpEncoder::from_image(&thumb_img)
+                .map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("webp enc init: {e}"))
+                })?
+                .encode(THUMB_WEBP_QUALITY);
+            let thumb_out = thumb_mem.to_vec();
+
+            Ok((full_out, thumb_out))
+        })
+        .await??;
+
+    // 5) Write both files
+    tokio::fs::write(&full_abs, &full_webp).await?;
+    tokio::fs::write(&thumb_abs, &thumb_webp).await?;
+
+    // 6) Update DB (store relative filenames)
+    sqlx::query(
+        r#"
+        UPDATE recipes
+           SET image_path_full  = ?,
+               image_path_small = ?,
+               updated_at       = CURRENT_TIMESTAMP
+         WHERE id = ?
+        "#,
+    )
+    .bind(&full_name)
+    .bind(&thumb_name)
+    .bind(id)
+    .execute(&state.pool)
+    .await?;
+
+    // 7) Return updated recipe
     let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(
         r#"
         SELECT id, title, source, "yield", notes,
                created_at, updated_at,
-               ingredients, instructions, image_path
+               ingredients, instructions,
+               image_path, image_path_small, image_path_full
           FROM recipes
          WHERE id = ?
         "#,
@@ -76,7 +146,8 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Recipe>>, St
         r#"
         SELECT id, title, source, "yield", notes,
                created_at, updated_at,
-               ingredients, instructions, image_path
+               ingredients, instructions,
+               image_path, image_path_small, image_path_full
           FROM recipes
          ORDER BY id
         "#,
@@ -96,7 +167,8 @@ pub async fn get(
         r#"
         SELECT id, title, source, "yield", notes,
                created_at, updated_at,
-               ingredients, instructions, image_path
+               ingredients, instructions,
+               image_path, image_path_small, image_path_full
           FROM recipes
          WHERE id = ?
         "#,
@@ -117,22 +189,23 @@ pub async fn create(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // RETURNING now includes image_path
+    // image_path_* start as NULL; can be updated by /recipes/{id}/image
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
         r#"
         INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
         VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING id, title, source, "yield", notes,
                   created_at, updated_at,
-                  ingredients, instructions, image_path
+                  ingredients, instructions,
+                  image_path, image_path_small, image_path_full
         "#,
     )
     .bind(new.title)
     .bind(new.source)
     .bind(new.r#yield)
     .bind(new.notes)
-    .bind(serde_json::to_string(&new.ingredients).unwrap_or("[]".to_string()))
-    .bind(serde_json::to_string(&new.instructions).unwrap_or("[]".to_string()))
+    .bind(serde_json::to_string(&new.ingredients).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&new.instructions).unwrap_or_else(|_| "[]".to_string()))
     .fetch_one(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -184,7 +257,7 @@ pub async fn update(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     if let Some(ing) = up.ingredients {
-        let s = serde_json::to_string(&ing).unwrap_or_else(|_| "[]".to_string());
+        let s = serde_json::to_string(&(ing)).unwrap_or_else(|_| "[]".to_string());
         sets.push("ingredients = json(?)");
         args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
@@ -219,7 +292,8 @@ pub async fn update(
         r#"
         SELECT id, title, source, "yield", notes,
                created_at, updated_at,
-               ingredients, instructions, image_path
+               ingredients, instructions,
+               image_path, image_path_small, image_path_full
           FROM recipes
          WHERE id = ?
         "#,

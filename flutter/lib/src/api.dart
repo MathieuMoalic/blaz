@@ -50,9 +50,12 @@ Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
   '$_baseUrl$path',
 ).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
 
-String? mediaUrl(String? imagePath) => imagePath == null || imagePath.isEmpty
-    ? null
-    : '$_baseUrl/media/$imagePath';
+String? mediaUrl(String? rel) {
+  if (rel == null || rel.isEmpty) return null;
+  final base = _baseUrl.replaceAll(RegExp(r'/+$'), '');
+  final path = rel.startsWith('/') ? rel.substring(1) : rel;
+  return '$base/media/$path';
+}
 
 Never _throw(http.Response r) =>
     throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
@@ -69,7 +72,8 @@ class Recipe {
   final String updatedAt;
   final List<String> ingredients;
   final List<String> instructions;
-  final String? imagePath;
+  final String? imagePathSmall;
+  final String? imagePathFull;
 
   Recipe({
     required this.id,
@@ -81,25 +85,29 @@ class Recipe {
     required this.updatedAt,
     required this.ingredients,
     required this.instructions,
-    required this.imagePath,
+    this.imagePathSmall,
+    this.imagePathFull,
   });
 
-  factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
-    id: (j['id'] ?? 0) as int,
-    title: (j['title'] ?? '') as String,
-    source: (j['source'] ?? '') as String,
-    yieldText: (j['yield'] ?? '') as String,
-    notes: (j['notes'] ?? '') as String,
-    createdAt: (j['created_at'] ?? '') as String,
-    updatedAt: (j['updated_at'] ?? '') as String,
-    ingredients: ((j['ingredients'] as List?) ?? const [])
-        .map((e) => e.toString())
-        .toList(),
-    instructions: ((j['instructions'] as List?) ?? const [])
-        .map((e) => e.toString())
-        .toList(),
-    imagePath: j['image_path'] as String?,
-  );
+  factory Recipe.fromJson(Map<String, dynamic> j) {
+    return Recipe(
+      id: (j['id'] ?? 0) as int,
+      title: (j['title'] ?? '') as String,
+      source: (j['source'] ?? '') as String,
+      yieldText: (j['yield'] ?? '') as String,
+      notes: (j['notes'] ?? '') as String,
+      createdAt: (j['created_at'] ?? '') as String,
+      updatedAt: (j['updated_at'] ?? '') as String,
+      ingredients: ((j['ingredients'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      instructions: ((j['instructions'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      imagePathSmall: (j['image_path_small'] as String?) ?? '',
+      imagePathFull: (j['image_path_full'] as String?) ?? '',
+    );
+  }
 }
 
 Future<Recipe> updateRecipe({

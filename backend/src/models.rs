@@ -24,6 +24,8 @@ pub struct Recipe {
     pub ingredients: Vec<String>,
     pub instructions: Vec<String>,
     pub image_path: Option<String>,
+    pub image_path_small: Option<String>,
+    pub image_path_full: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -67,6 +69,8 @@ pub struct RecipeRow {
     pub ingredients: Json<Vec<String>>,
     pub instructions: Json<Vec<String>>,
     pub image_path: Option<String>,
+    pub image_path_small: Option<String>,
+    pub image_path_full: Option<String>,
 }
 
 impl From<RecipeRow> for Recipe {
@@ -82,6 +86,8 @@ impl From<RecipeRow> for Recipe {
             ingredients: r.ingredients.0,
             instructions: r.instructions.0,
             image_path: r.image_path,
+            image_path_full: r.image_path_full,
+            image_path_small: r.image_path_small,
         }
     }
 }

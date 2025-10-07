@@ -226,6 +226,19 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
   }
 
+  void _openImageViewer({required String fullUrl, required String heroTag}) {
+    Navigator.of(context, rootNavigator: true).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black.withOpacity(0.95),
+        pageBuilder: (_, __, ___) =>
+            _ImageViewerPage(url: fullUrl, heroTag: heroTag),
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -274,7 +287,10 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             return Center(child: Text('Error: ${snap.error}'));
           }
           final r = snap.data!;
-          final img = mediaUrl(r.imagePath);
+          final small = mediaUrl(r.imagePathSmall);
+          final full = mediaUrl(r.imagePathFull);
+          final heroTag = 'recipe-image-${r.id}';
+
           return RefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
@@ -282,14 +298,23 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               children: [
                 Text(r.title, style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 8),
-                if (img != null) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: SizedBox(
-                      height: 200,
-                      child: Ink.image(
-                        image: NetworkImage(img),
-                        fit: BoxFit.cover,
+                if (small != null) ...[
+                  Hero(
+                    tag: heroTag,
+                    child: Material(
+                      borderRadius: BorderRadius.circular(10),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => _openImageViewer(
+                          fullUrl: full ?? small,
+                          heroTag: heroTag,
+                        ),
+                        child: Ink.image(
+                          image: NetworkImage(small),
+                          fit: BoxFit.cover,
+                          height: 200,
+                          width: double.infinity,
+                        ),
                       ),
                     ),
                   ),
@@ -400,6 +425,96 @@ class _Numbered extends StatelessWidget {
           Text('$step. '),
           Expanded(child: Text(text)),
         ],
+      ),
+    );
+  }
+}
+
+class _ImageViewerPage extends StatefulWidget {
+  final String url;
+  final String heroTag;
+  const _ImageViewerPage({required this.url, required this.heroTag});
+
+  @override
+  State<_ImageViewerPage> createState() => _ImageViewerPageState();
+}
+
+class _ImageViewerPageState extends State<_ImageViewerPage> {
+  final TransformationController _tc = TransformationController();
+  Offset? _doubleTapPos;
+
+  @override
+  void dispose() {
+    _tc.dispose();
+    super.dispose();
+  }
+
+  void _toggleZoom() {
+    // simple toggle between fit and ~2.5x zoom
+    final m = _tc.value;
+    final isZoomed = m.storage[0] > 1.01; // scaleX
+    if (isZoomed) {
+      _tc.value = Matrix4.identity();
+    } else {
+      _tc.value = Matrix4.identity()..scale(2.5);
+      // (Keeping it simple; zoom centers the image. Fine for most use cases.)
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.pop(context),
+      onDoubleTapDown: (d) => _doubleTapPos = d.localPosition,
+      onDoubleTap: _toggleZoom,
+      child: Material(
+        color: Colors.black.withOpacity(0.95),
+        child: Stack(
+          children: [
+            Center(
+              child: Hero(
+                tag: widget.heroTag,
+                child: InteractiveViewer(
+                  transformationController: _tc,
+                  minScale: 1.0,
+                  maxScale: 5.0,
+                  child: Image.network(
+                    widget.url,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (ctx, child, progress) {
+                      if (progress == null) return child;
+                      final total = progress.expectedTotalBytes;
+                      final loaded = progress.cumulativeBytesLoaded;
+                      return SizedBox.expand(
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            value: total != null ? loaded / total : null,
+                          ),
+                        ),
+                      );
+                    },
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.broken_image_outlined,
+                      color: Colors.white70,
+                      size: 64,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Close button
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: IconButton(
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -2,6 +2,7 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod routes;
+
 use crate::{
     models::AppState,
     routes::{meal_plan, recipes, shopping},
@@ -55,6 +56,8 @@ pub fn build_app(state: AppState) -> Router {
         .on_failure(|_class: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
+
+    // Serve /media from MEDIA_DIR for both small & full images
     let media_service = ServeDir::new(state.media_dir.clone());
 
     Router::new()

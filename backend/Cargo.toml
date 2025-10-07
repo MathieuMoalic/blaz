@@ -17,3 +17,5 @@ anyhow = "1.0.100"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["v4"] }
+image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+webp  = "0.3"

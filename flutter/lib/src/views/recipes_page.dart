@@ -167,12 +167,13 @@ class RecipesPageState extends State<RecipesPage> {
                   builder: (context, c) {
                     int cols = 2;
                     final w = c.maxWidth;
-                    if (w >= 1200)
+                    if (w >= 1200) {
                       cols = 5;
-                    else if (w >= 900)
+                    } else if (w >= 900) {
                       cols = 4;
-                    else if (w >= 600)
+                    } else if (w >= 600) {
                       cols = 3;
+                    }
 
                     return GridView.builder(
                       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
@@ -185,7 +186,10 @@ class RecipesPageState extends State<RecipesPage> {
                       itemCount: filtered.length,
                       itemBuilder: (_, i) {
                         final r = filtered[i];
-                        final thumb = mediaUrl(r.imagePath);
+                        final thumb = mediaUrl(
+                          r.imagePathSmall ?? r.imagePathFull,
+                        );
+
                         return _RecipeCard(
                           title: r.title,
                           imageUrl: thumb,
@@ -330,7 +334,7 @@ class _EmptyState extends StatelessWidget {
 class _AppTitle extends StatelessWidget {
   final String text;
   final Widget? trailing;
-  const _AppTitle(this.text, {this.trailing, super.key});
+  const _AppTitle(this.text, {this.trailing});
 
   @override
   Widget build(BuildContext context) {
