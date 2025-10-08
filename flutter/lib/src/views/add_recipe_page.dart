@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:path_provider/path_provider.dart';
 import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -22,9 +23,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
   final _ingredientsRaw = TextEditingController();
   final _instructionsRaw = TextEditingController();
 
-  XFile? _picked; // the selected file (path on mobile/desktop, memory on web)
-  Uint8List? _preview; // for preview on web
-
+  XFile? _picked; // selected file
+  Uint8List? _preview; // preview bytes (web or when Android only returns URI)
   bool _busy = false;
 
   @override
@@ -40,7 +40,6 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
   List<String> _lines(String s) =>
       s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-
   Future<void> _pickImage() async {
     final group = const XTypeGroup(
       label: 'images',
@@ -48,16 +47,14 @@ class _AddRecipePageState extends State<AddRecipePage> {
     );
 
     final x = await openFile(acceptedTypeGroups: [group]);
-    if (x == null) return; // user canceled
+    if (x == null) return;
 
-    Uint8List? bytes;
-    if (kIsWeb) {
-      bytes = await x.readAsBytes(); // web gives bytes only
-    }
+    // Always read bytes for consistent uploads + preview
+    final bytes = await x.readAsBytes();
 
     setState(() {
       _picked = x;
-      _preview = bytes; // non-null only on web
+      _preview = bytes;
     });
   }
 
@@ -81,19 +78,30 @@ class _AddRecipePageState extends State<AddRecipePage> {
         ingredients: ingredients,
         instructions: instructions,
       );
+
       if (_picked != null) {
-        if (kIsWeb) {
+        final name = _picked!.name.isNotEmpty
+            ? _picked!.name
+            : (_picked!.path.isNotEmpty ? p.basename(_picked!.path) : 'upload');
+
+        if (_preview != null) {
           await uploadRecipeImage(
             id: created.id,
-            filename: _picked!.name,
-            bytes: _preview!, // we read bytes above
+            filename: name,
+            bytes: _preview!, // <-- use bytes on Android/iOS too
+          );
+        } else if (_picked!.path.isNotEmpty) {
+          await uploadRecipeImage(
+            id: created.id,
+            path: _picked!.path, // fallback if for some reason bytes missing
+            filename: name,
           );
         } else {
-          // path is available on Android/desktop
-          final path = _picked!.path;
-          await uploadRecipeImage(id: created.id, path: path);
+          // Extremely rare: neither bytes nor path — show a friendly error
+          throw Exception('No image data available from the picker');
         }
       }
+
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
@@ -108,6 +116,18 @@ class _AddRecipePageState extends State<AddRecipePage> {
   @override
   Widget build(BuildContext context) {
     final gap = const SizedBox(height: 12);
+
+    final selectedName = _picked == null
+        ? 'No image selected'
+        : (_picked!.name.isNotEmpty
+              ? _picked!.name
+              : (_picked!.path.isNotEmpty
+                    ? p.basename(_picked!.path)
+                    : 'Selected image'));
+
+    final hasBytesPreview = _preview != null;
+    final hasFilePreview =
+        !kIsWeb && _picked != null && _picked!.path.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Add recipe')),
@@ -124,11 +144,11 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   border: OutlineInputBorder(),
                 ),
                 textInputAction: TextInputAction.next,
+                autofillHints: const <String>[], // silence Autofill logs
                 validator: (v) =>
                     (v == null || v.trim().isEmpty) ? 'Title required' : null,
               ),
               gap,
-              const SizedBox(height: 12),
               Row(
                 children: [
                   FilledButton.icon(
@@ -138,24 +158,18 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      _picked?.name ??
-                          (_picked?.path != null
-                              ? p.basename(_picked!.path)
-                              : 'No image selected'),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    child: Text(selectedName, overflow: TextOverflow.ellipsis),
                   ),
                 ],
               ),
 
-              if (_preview != null || (_picked?.path != null && !kIsWeb)) ...[
+              if (hasBytesPreview || hasFilePreview) ...[
                 const SizedBox(height: 8),
                 SizedBox(
                   height: 120,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: kIsWeb
+                    child: hasBytesPreview
                         ? Image.memory(_preview!, fit: BoxFit.cover)
                         : Image.file(File(_picked!.path), fit: BoxFit.cover),
                   ),
@@ -170,6 +184,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   border: OutlineInputBorder(),
                 ),
                 textInputAction: TextInputAction.next,
+                autofillHints: const <String>[],
               ),
               gap,
               TextField(
@@ -179,6 +194,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   border: OutlineInputBorder(),
                 ),
                 textInputAction: TextInputAction.next,
+                autofillHints: const <String>[],
               ),
               gap,
               TextField(
@@ -189,6 +205,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   alignLabelWithHint: true,
                 ),
                 maxLines: 4,
+                autofillHints: const <String>[],
               ),
               gap,
               TextField(
@@ -200,6 +217,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   alignLabelWithHint: true,
                 ),
                 maxLines: 6,
+                autofillHints: const <String>[],
               ),
               gap,
               TextField(
@@ -211,6 +229,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   alignLabelWithHint: true,
                 ),
                 maxLines: 8,
+                autofillHints: const <String>[],
               ),
               const SizedBox(height: 16),
               FilledButton.icon(

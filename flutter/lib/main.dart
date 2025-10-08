@@ -5,7 +5,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'src/views/recipes_page.dart';
 import 'src/views/add_recipe_page.dart';
-import 'src/views/meal_plan_page.dart';
+import 'src/views/meal_plan/meal_plan_page.dart';
 import 'src/views/shopping_list_page.dart';
 
 void main() async {

@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
@@ -138,28 +137,29 @@ Future<Recipe> updateRecipe({
 
 Future<Recipe> uploadRecipeImage({
   required int id,
-  String? path, // used on mobile/desktop
-  List<int>? bytes, // used on web
-  String? filename, // used on web (and as override)
+  String? path, // optional fallback
+  List<int>? bytes, // preferred on all platforms
+  String? filename,
 }) async {
   final url = _u('/recipes/$id/image');
   final req = http.MultipartRequest('POST', url);
 
-  if (kIsWeb) {
-    if (bytes == null || (filename == null || filename.isEmpty)) {
-      throw Exception('On web, provide bytes and filename');
-    }
-    final ct = lookupMimeType(filename) ?? 'application/octet-stream';
+  // Prefer bytes if provided (works on web AND mobile; sets Content-Length)
+  if (bytes != null) {
+    final name =
+        filename ??
+        (path != null && path.isNotEmpty ? p.basename(path) : 'upload');
+    final ct = lookupMimeType(name) ?? 'application/octet-stream';
     req.files.add(
       http.MultipartFile.fromBytes(
         'image',
         bytes,
-        filename: filename,
+        filename: name,
         contentType: MediaType.parse(ct),
       ),
     );
-  } else {
-    if (path == null) throw Exception('On non-web, provide a file path');
+  } else if (path != null && path.isNotEmpty) {
+    // Fallback to a file path (desktop/mobile)
     final name = filename ?? p.basename(path);
     final ct = lookupMimeType(name) ?? 'application/octet-stream';
     req.files.add(
@@ -170,6 +170,8 @@ Future<Recipe> uploadRecipeImage({
         contentType: MediaType.parse(ct),
       ),
     );
+  } else {
+    throw Exception('Provide bytes or a file path');
   }
 
   final resp = await http.Response.fromStream(await req.send());
@@ -196,28 +198,35 @@ Future<Recipe> fetchRecipe(int id) async {
 
 Future<Recipe> createRecipeFull({
   required String title,
-  String source = '',
-  String yieldText = '',
-  String notes = '',
-  List<String> ingredients = const [],
-  List<String> instructions = const [],
+  String? source,
+  String? yieldText, // mapped to JSON key "yield"
+  String? notes,
+  required List<String> ingredients,
+  required List<String> instructions,
 }) async {
-  final body = jsonEncode({
+  final uri = Uri.parse('$_baseUrl/recipes');
+
+  final body = <String, dynamic>{
     'title': title,
-    'source': source,
-    'yield': yieldText, // backend expects "yield"
-    'notes': notes,
+    'source': source, // can be null
+    'yield': yieldText, // <-- IMPORTANT: key must be exactly "yield"
+    'notes': notes, // can be null
     'ingredients': ingredients,
     'instructions': instructions,
-  });
+  };
 
   final res = await http.post(
-    Uri.parse('$_baseUrl/recipes'),
-    headers: {'content-type': 'application/json'},
-    body: body,
+    uri,
+    headers: const {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Accept': 'application/json',
+    },
+    body: jsonEncode(body),
   );
-  if (res.statusCode != 200 && res.statusCode != 201) {
-    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+
+  if (res.statusCode != 200) {
+    // Surface server error text to help debugging
+    throw Exception('createRecipeFull: ${res.statusCode} ${res.body}');
   }
   return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
 }
