@@ -10,12 +10,13 @@ class MealPlanPage extends StatefulWidget {
 }
 
 class _MealPlanPageState extends State<MealPlanPage> {
-  static const int _daysBefore = 30; // how many past days to show
-  static const int _daysAfter = 30; // how many future days to show
+  static const int _daysBefore = 30;
+  static const int _daysAfter = 30;
 
   final _fmt = DateFormat('yyyy-MM-dd');
   final Map<String, Future<List<MealPlanEntry>>> _futures = {};
   final Map<String, List<MealPlanEntry>> _cache = {};
+  final Map<int, Recipe> _recipeIndex = {}; // id -> Recipe (thumb/title)
 
   late final DateTime _today;
 
@@ -25,12 +26,26 @@ class _MealPlanPageState extends State<MealPlanPage> {
     _today = _stripTime(DateTime.now());
     final d = _fmt.format(_today);
     _futures[d] = fetchMealPlanForDay(d);
+    _warmRecipeIndex();
+  }
+
+  Future<void> _warmRecipeIndex() async {
+    try {
+      final all = await fetchRecipes();
+      if (!mounted) return;
+      setState(() {
+        for (final r in all) {
+          _recipeIndex[r.id] = r;
+        }
+      });
+    } catch (_) {
+      /* soft-fail */
+    }
   }
 
   DateTime _stripTime(DateTime d) => DateTime(d.year, d.month, d.day);
 
   String _dayForIndex(int i) {
-    // index 0 is the oldest (today - _daysBefore)
     final start = _today.subtract(const Duration(days: _daysBefore));
     final date = start.add(Duration(days: i));
     return _fmt.format(date);
@@ -44,7 +59,7 @@ class _MealPlanPageState extends State<MealPlanPage> {
     return DateFormat('EEE, MMM d').format(date);
   }
 
-  Color _dotColor(DateTime date, ThemeData theme) {
+  Color _railColor(DateTime date, ThemeData theme) {
     final diff = date.difference(_today).inDays;
     if (diff == 0) return theme.colorScheme.primary;
     if (diff < 0) return theme.colorScheme.secondary;
@@ -56,6 +71,7 @@ class _MealPlanPageState extends State<MealPlanPage> {
       _futures.clear();
       _cache.clear();
     });
+    await _warmRecipeIndex();
   }
 
   Future<void> _reloadDay(String day) async {
@@ -69,14 +85,11 @@ class _MealPlanPageState extends State<MealPlanPage> {
     });
   }
 
-  // --- Assign via search (by name/ingredients) ---
-
+  // ---------- Assign via search (name/ingredients) ----------
   bool _matchesRecipe(Recipe r, String q) {
     if (q.isEmpty) return true;
     final needle = q.toLowerCase();
     if (r.title.toLowerCase().contains(needle)) return true;
-
-    // defensively check ingredients as List<String> or comma-separated String
     try {
       final dyn = r as dynamic;
       final v = dyn.ingredients;
@@ -95,8 +108,16 @@ class _MealPlanPageState extends State<MealPlanPage> {
   }
 
   Future<void> _openRecipePicker(String day) async {
-    // load once
-    final all = await fetchRecipes();
+    final all = _recipeIndex.isNotEmpty
+        ? _recipeIndex.values.toList()
+        : await fetchRecipes();
+    if (_recipeIndex.isEmpty) {
+      setState(() {
+        for (final r in all) {
+          _recipeIndex[r.id] = r;
+        }
+      });
+    }
 
     final ctrl = TextEditingController();
     String query = '';
@@ -121,13 +142,6 @@ class _MealPlanPageState extends State<MealPlanPage> {
             void toggle(int id) {
               setSheetState(() {
                 if (!selected.add(id)) selected.remove(id);
-              });
-            }
-
-            void selectAll(bool v) {
-              setSheetState(() {
-                selected.clear();
-                if (v) for (final r in filtered) selected.add(r.id);
               });
             }
 
@@ -162,12 +176,19 @@ class _MealPlanPageState extends State<MealPlanPage> {
                           Checkbox(
                             value: triValue,
                             tristate: true,
-                            onChanged: (_) => selectAll(!allSelected),
+                            onChanged: (_) {
+                              setSheetState(() {
+                                selected.clear();
+                                if (!allSelected) {
+                                  for (final r in filtered) selected.add(r.id);
+                                }
+                              });
+                            },
                           ),
                         ],
                       ),
                     ),
-                    // Search field
+                    // Search
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                       child: TextField(
@@ -195,7 +216,7 @@ class _MealPlanPageState extends State<MealPlanPage> {
                       ),
                     ),
                     const Divider(height: 1),
-                    // List
+                    // Results
                     Expanded(
                       child: filtered.isEmpty
                           ? const Center(child: Text('No matching recipes'))
@@ -232,13 +253,6 @@ class _MealPlanPageState extends State<MealPlanPage> {
                                           ),
                                         ),
                                   title: Text(r.title),
-                                  subtitle: (r.ingredients.isEmpty)
-                                      ? null
-                                      : Text(
-                                          r.ingredients.take(3).join(', '),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
                                   trailing: Checkbox(
                                     value: checked,
                                     onChanged: (_) => toggle(r.id),
@@ -295,7 +309,6 @@ class _MealPlanPageState extends State<MealPlanPage> {
 
     if (picked == null || picked.isEmpty) return;
 
-    // Assign sequentially (clear errors shown at end)
     int ok = 0;
     final failures = <int>[];
     for (final id in picked) {
@@ -317,12 +330,12 @@ class _MealPlanPageState extends State<MealPlanPage> {
 
   @override
   Widget build(BuildContext context) {
-    final total = _daysBefore + 1 + _daysAfter; // center on today
+    final total = _daysBefore + 1 + _daysAfter;
     final theme = Theme.of(context);
 
     return Column(
       children: [
-        // Header (no calendar/today button)
+        // Header (simple)
         Container(
           height: 56,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -330,7 +343,6 @@ class _MealPlanPageState extends State<MealPlanPage> {
           child: Text('Meal plan', style: theme.textTheme.titleLarge),
         ),
 
-        // Timeline list
         Expanded(
           child: RefreshIndicator(
             onRefresh: _refreshAll,
@@ -345,9 +357,10 @@ class _MealPlanPageState extends State<MealPlanPage> {
                 return _DayTimelineBox(
                   dayLabel: _labelFor(date),
                   dayIso: dayStr,
-                  dotColor: _dotColor(date, theme),
+                  railColor: _railColor(date, theme),
                   future: _futures[dayStr]!,
                   cached: _cache[dayStr],
+                  recipeIndex: _recipeIndex,
                   onAssign: () => _openRecipePicker(dayStr),
                   onUnassign: (meal) async {
                     await unassignRecipeFromDay(
@@ -368,11 +381,12 @@ class _MealPlanPageState extends State<MealPlanPage> {
 }
 
 class _DayTimelineBox extends StatelessWidget {
-  final String dayLabel; // e.g., Today / Tue, Oct 7
+  final String dayLabel; // Today / Tue, Oct 7
   final String dayIso; // yyyy-MM-dd
-  final Color dotColor;
+  final Color railColor; // vertical rail
   final Future<List<MealPlanEntry>> future;
   final List<MealPlanEntry>? cached;
+  final Map<int, Recipe> recipeIndex; // id -> Recipe
   final VoidCallback onAssign;
   final Future<void> Function(MealPlanEntry) onUnassign;
   final void Function(List<MealPlanEntry>) onLoaded;
@@ -381,182 +395,232 @@ class _DayTimelineBox extends StatelessWidget {
     super.key,
     required this.dayLabel,
     required this.dayIso,
-    required this.dotColor,
+    required this.railColor,
     required this.future,
     required this.cached,
+    required this.recipeIndex,
     required this.onAssign,
     required this.onUnassign,
     required this.onLoaded,
   });
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Timeline rail
-          SizedBox(width: 28, child: _Rail(dotColor: dotColor)),
-          // Day card
-          Expanded(
-            child: Card(
-              elevation: 1.5,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Day header row
-                    Row(
-                      children: [
-                        Text(dayLabel, style: theme.textTheme.titleMedium),
-                        const Spacer(),
-                        IconButton(
-                          tooltip: 'Assign recipes',
-                          icon: const Icon(Icons.add_circle_outline),
-                          onPressed: onAssign,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    // Entries
-                    FutureBuilder<List<MealPlanEntry>>(
-                      future: future,
-                      builder: (context, snap) {
-                        if (snap.connectionState != ConnectionState.done) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: SizedBox(
-                              height: 24,
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+      child: IntrinsicHeight(
+        // <-- lets the rail match the card height
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Vertical rail (no dot)
+            VerticalDivider(
+              width: 20, // total horizontal space it occupies
+              thickness: 2, // line thickness
+              indent: 0,
+              endIndent: 0,
+              color: railColor.withOpacity(0.6),
+            ),
+
+            // Day card
+            Expanded(
+              child: Card(
+                elevation: 1.5,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          Text(dayLabel, style: theme.textTheme.titleMedium),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Assign recipes',
+                            icon: const Icon(Icons.add_circle_outline),
+                            onPressed: onAssign,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+
+                      // Entries
+                      FutureBuilder<List<MealPlanEntry>>(
+                        future: future,
+                        builder: (context, snap) {
+                          if (snap.connectionState != ConnectionState.done) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12),
+                              child: SizedBox(
+                                height: 24,
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
                               ),
-                            ),
-                          );
-                        }
-                        if (snap.hasError) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Text('Error: ${snap.error}'),
-                          );
-                        }
+                            );
+                          }
+                          if (snap.hasError) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text('Error: ${snap.error}'),
+                            );
+                          }
 
-                        final items = snap.data ?? const <MealPlanEntry>[];
-                        onLoaded(items);
+                          final items = snap.data ?? const <MealPlanEntry>[];
+                          onLoaded(items);
 
-                        if (items.isEmpty) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Text(
-                              'No recipes',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
+                          if (items.isEmpty) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                'No recipes',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
                               ),
+                            );
+                          }
+
+                          // Horizontal strip of thumbnails (2 fit; >2 scrolls)
+                          const tileWidth = 150.0;
+                          const tileHeight = 180.0;
+                          return SizedBox(
+                            height: tileHeight,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              primary: false,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
+                              itemCount: items.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 10),
+                              itemBuilder: (_, i) {
+                                final m = items[i];
+                                final recipe = recipeIndex[m.recipeId];
+                                final title = recipe?.title ?? m.title;
+                                final imageUrl = mediaUrl(
+                                  recipe?.imagePathSmall ??
+                                      recipe?.imagePathFull,
+                                );
+                                return _RecipeThumbTile(
+                                  width: tileWidth,
+                                  height: tileHeight,
+                                  title: title,
+                                  imageUrl: imageUrl,
+                                  onDelete: () => onUnassign(m),
+                                );
+                              },
                             ),
                           );
-                        }
-
-                        return Column(
-                          children: [
-                            for (final m in items)
-                              _MealRow(entry: m, onDelete: () => onUnassign(m)),
-                          ],
-                        );
-                      },
-                    ),
-                  ],
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-class _Rail extends StatelessWidget {
-  final Color dotColor;
-  const _Rail({required this.dotColor});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final h = c.maxHeight;
-        return Stack(
-          alignment: Alignment.topCenter,
-          children: [
-            Positioned.fill(
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: Container(
-                  width: 2,
-                  height: h,
-                  color: Theme.of(context).dividerColor,
-                ),
-              ),
-            ),
-            Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: dotColor,
-                shape: BoxShape.circle,
-                boxShadow: const [
-                  BoxShadow(blurRadius: 4, offset: Offset(0, 1)),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _MealRow extends StatelessWidget {
-  final MealPlanEntry entry;
+class _RecipeThumbTile extends StatelessWidget {
+  final double width;
+  final double height;
+  final String title;
+  final String? imageUrl;
   final VoidCallback onDelete;
-  const _MealRow({required this.entry, required this.onDelete});
+
+  const _RecipeThumbTile({
+    required this.width,
+    required this.height,
+    required this.title,
+    required this.imageUrl,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(entry.title, style: theme.textTheme.bodyLarge),
-                Text(
-                  'Recipe #${entry.recipeId}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Card(
+        elevation: 1,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // image with delete overlay
+            AspectRatio(
+              aspectRatio: 4 / 3,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  imageUrl == null
+                      ? const _ThumbPlaceholder()
+                      : Image.network(
+                          imageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              const _ThumbPlaceholder(),
+                        ),
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Material(
+                      color: Colors.black54,
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        tooltip: 'Unassign',
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                        splashRadius: 18,
+                        onPressed: onDelete,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: 'Unassign',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: onDelete,
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+              child: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+class _ThumbPlaceholder extends StatelessWidget {
+  const _ThumbPlaceholder();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.4),
+      child: const Center(child: Icon(Icons.restaurant_menu)),
     );
   }
 }
