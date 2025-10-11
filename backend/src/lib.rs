@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod ingredient_parser;
 pub mod models;
 pub mod routes;
 

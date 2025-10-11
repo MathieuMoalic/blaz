@@ -26,11 +26,16 @@ class _EditRecipePageState extends State<EditRecipePage> {
   void initState() {
     super.initState();
     final r = widget.recipe;
+
     _title = TextEditingController(text: r.title);
     _source = TextEditingController(text: r.source);
     _yieldText = TextEditingController(text: r.yieldText);
     _notes = TextEditingController(text: r.notes);
-    _ingredientsRaw = TextEditingController(text: r.ingredients.join('\n'));
+
+    // Format structured ingredients -> lines for editing
+    final ingLines = r.ingredients.map(_formatIngredientLine).join('\n');
+    _ingredientsRaw = TextEditingController(text: ingLines);
+
     _instructionsRaw = TextEditingController(text: r.instructions.join('\n'));
   }
 
@@ -45,8 +50,42 @@ class _EditRecipePageState extends State<EditRecipePage> {
     super.dispose();
   }
 
+  // ---- Helpers ----
+
   List<String> _lines(String s) =>
       s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
+  /// Pretty-print a structured Ingredient into a single editable line.
+  String _formatIngredientLine(Ingredient ing) {
+    if (ing.quantity != null && (ing.unit ?? '').isNotEmpty) {
+      final q = _formatQuantity(ing.quantity!, ing.unit!);
+      return '$q ${ing.unit} ${ing.name}';
+    } else if (ing.quantity != null) {
+      final q = _formatQuantity(ing.quantity!, '');
+      return '$q ${ing.name}';
+    } else {
+      return ing.name;
+    }
+  }
+
+  /// Nice numeric formatting:
+  /// - integers for g/ml
+  /// - trim trailing zeros
+  /// - cap to 2 decimals otherwise
+  String _formatQuantity(double v, String unit) {
+    if (unit == 'g' || unit == 'ml') {
+      return v.round().toString();
+    }
+    if (unit == 'kg' || unit == 'L') {
+      return v
+          .toStringAsFixed(2)
+          .replaceFirst(RegExp(r'\.?0+$'), ''); // 1.50 -> 1.5, 2.00 -> 2
+    }
+    final s = ((v * 100).round() / 100.0).toString();
+    return s.replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+
+  // ---- Actions ----
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
@@ -59,6 +98,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
         source: _source.text.trim(),
         yieldText: _yieldText.text.trim(),
         notes: _notes.text.trim(),
+        // Send raw lines; backend parses to structured
         ingredients: _lines(_ingredientsRaw.text),
         instructions: _lines(_instructionsRaw.text),
       );
@@ -74,7 +114,6 @@ class _EditRecipePageState extends State<EditRecipePage> {
   }
 
   Future<void> _changeImage() async {
-    // optional: change recipe image
     final typeGroup = const XTypeGroup(
       label: 'images',
       extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
@@ -84,8 +123,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
 
     setState(() => _busy = true);
     try {
-      // Works on all platforms (web/native)
-      final bytes = await file.readAsBytes();
+      final bytes = await file.readAsBytes(); // works web & native
       await uploadRecipeImage(
         id: widget.recipe.id,
         filename: file.name,
@@ -133,6 +171,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   labelText: 'Title *',
                   border: OutlineInputBorder(),
                 ),
+                textInputAction: TextInputAction.next,
                 validator: (v) =>
                     (v == null || v.trim().isEmpty) ? 'Title required' : null,
               ),
@@ -143,6 +182,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   labelText: 'Source',
                   border: OutlineInputBorder(),
                 ),
+                textInputAction: TextInputAction.next,
               ),
               gap,
               TextField(
@@ -151,6 +191,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   labelText: 'Yield',
                   border: OutlineInputBorder(),
                 ),
+                textInputAction: TextInputAction.next,
               ),
               gap,
               TextField(
@@ -167,20 +208,22 @@ class _EditRecipePageState extends State<EditRecipePage> {
                 controller: _ingredientsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Ingredients (one per line)',
+                  hintText: 'e.g.\n150 g flour\n2 carrots, diced',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
-                maxLines: 6,
+                maxLines: 8,
               ),
               gap,
               TextField(
                 controller: _instructionsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Instructions (one step per line)',
+                  hintText: 'e.g.\nWhisk eggs.\nFold in flour.\nBake 20 min.',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
-                maxLines: 8,
+                maxLines: 10,
               ),
               const SizedBox(height: 16),
               FilledButton.icon(

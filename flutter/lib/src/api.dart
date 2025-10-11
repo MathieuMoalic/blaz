@@ -60,6 +60,60 @@ Never _throw(http.Response r) =>
     throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
 
 // ---------- Recipes ----------
+
+class Ingredient {
+  final double? quantity;
+  final String? unit; // "g","kg","ml","L","tsp","tbsp" or null
+  final String name;
+
+  Ingredient({this.quantity, this.unit, required this.name});
+
+  factory Ingredient.fromJson(Map<String, dynamic> j) => Ingredient(
+    quantity: (j['quantity'] is num) ? (j['quantity'] as num).toDouble() : null,
+    unit: (j['unit'] as String?)?.isNotEmpty == true
+        ? j['unit'] as String
+        : null,
+    name: j['name'] as String,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'quantity': quantity,
+    'unit': unit,
+    'name': name,
+  };
+}
+
+extension IngredientFormat on Ingredient {
+  String toLine({double factor = 1.0}) {
+    double? q = quantity;
+    if (q != null) q = q * factor;
+
+    String trimZeros(String s) => s.replaceFirst(RegExp(r'\.?0+$'), '');
+
+    String numStr(double v, String? u) {
+      if (u == 'g' || u == 'ml') {
+        return v.round().toString();
+      }
+      if (u == 'kg' || u == 'L') {
+        return trimZeros(v.toStringAsFixed(2));
+      }
+      // default: up to 2 decimals
+      final s = ((v * 100).round() / 100.0).toString();
+      return trimZeros(s);
+    }
+
+    if (q != null && unit != null && unit!.isNotEmpty) {
+      return '${numStr(q, unit)} $unit $name';
+    } else if (q != null) {
+      final s = ((q * 100).round() / 100.0).toString();
+      return '${trimZeros(s)} $name';
+    } else {
+      // unstructured: no quantity -> nothing to scale
+      return name;
+    }
+  }
+}
+
 class Recipe {
   final int id;
   final String title;
@@ -69,7 +123,7 @@ class Recipe {
   final String notes;
   final String createdAt; // raw string from backend (SQLite CURRENT_TIMESTAMP)
   final String updatedAt;
-  final List<String> ingredients;
+  final List<Ingredient> ingredients;
   final List<String> instructions;
   final String? imagePathSmall;
   final String? imagePathFull;
@@ -88,25 +142,21 @@ class Recipe {
     this.imagePathFull,
   });
 
-  factory Recipe.fromJson(Map<String, dynamic> j) {
-    return Recipe(
-      id: (j['id'] ?? 0) as int,
-      title: (j['title'] ?? '') as String,
-      source: (j['source'] ?? '') as String,
-      yieldText: (j['yield'] ?? '') as String,
-      notes: (j['notes'] ?? '') as String,
-      createdAt: (j['created_at'] ?? '') as String,
-      updatedAt: (j['updated_at'] ?? '') as String,
-      ingredients: ((j['ingredients'] as List?) ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-      instructions: ((j['instructions'] as List?) ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-      imagePathSmall: (j['image_path_small'] as String?) ?? '',
-      imagePathFull: (j['image_path_full'] as String?) ?? '',
-    );
-  }
+  factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
+    id: j['id'] as int,
+    title: j['title'] as String,
+    source: j['source'] as String,
+    yieldText: j['yield'] as String,
+    notes: j['notes'] as String,
+    createdAt: j['created_at'] as String,
+    updatedAt: j['updated_at'] as String,
+    ingredients: (j['ingredients'] as List<dynamic>)
+        .map((e) => Ingredient.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    instructions: (j['instructions'] as List<dynamic>).cast<String>(),
+    imagePathSmall: j['image_path_small'] as String?,
+    imagePathFull: j['image_path_full'] as String?,
+  );
 }
 
 Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {

@@ -15,6 +15,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   final Set<int> _checkedIngredients = {};
   final Set<int> _checkedSteps = {};
+  double _scale = 1.0;
 
   void _toggleIngredient(int i) {
     setState(() {
@@ -63,7 +64,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       try {
         await deleteRecipe(r.id);
         if (!mounted) return;
-        // pop back to the list and signal that something changed
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(
           context,
@@ -87,21 +87,15 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     final selected = await _pickIngredientsBottomSheet(
       title: 'Add to shopping list',
-      items: r.ingredients,
+      items: r.ingredients, // pass Ingredient objects
     );
-
     if (selected == null || selected.isEmpty) return;
 
     try {
-      // Adjust if your API name/signature differs:
       await addShoppingItems(selected);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Added ${selected.length} item(s) to the shopping list',
-          ),
-        ),
+        SnackBar(content: Text('Added ${selected.length} item(s)')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -113,7 +107,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<List<String>?> _pickIngredientsBottomSheet({
     required String title,
-    required List<String> items,
+    required List<Ingredient> items,
   }) async {
     return showModalBottomSheet<List<String>>(
       context: context,
@@ -123,7 +117,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         final media = MediaQuery.of(ctx);
         final height = media.size.height * 0.7;
 
-        // local mutable state for the bottom sheet
         final selections = List<bool>.filled(items.length, true);
         bool allSelected() => selections.every((v) => v);
         bool anySelected() => selections.any((v) => v);
@@ -152,7 +145,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          // Select all / none (tri-state)
                           Row(
                             children: [
                               const Text('Select all'),
@@ -160,7 +152,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                 value: triValue,
                                 tristate: true,
                                 onChanged: (_) {
-                                  final target = !(allSelected());
+                                  final target = !allSelected();
                                   setSheetState(() {
                                     for (
                                       var i = 0;
@@ -186,7 +178,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           value: selections[i],
                           onChanged: (v) =>
                               setSheetState(() => selections[i] = v ?? false),
-                          title: Text(items[i]),
+                          title: Text(items[i].toLine(factor: _scale)),
                           controlAffinity: ListTileControlAffinity.leading,
                           dense: true,
                         ),
@@ -215,7 +207,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                   ? () {
                                       final picked = <String>[];
                                       for (var i = 0; i < items.length; i++) {
-                                        if (selections[i]) picked.add(items[i]);
+                                        if (selections[i]) {
+                                          picked.add(
+                                            items[i].toLine(factor: _scale),
+                                          );
+                                        }
                                       }
                                       Navigator.pop(ctx, picked);
                                     }
@@ -335,11 +331,39 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   ),
                   const SizedBox(height: 12),
                 ],
+
+                // Ingredients + scale
                 const SizedBox(height: 16),
-                // Ingredients
                 Text(
                   'Ingredients',
                   style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Text(
+                      'Scale',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(width: 10),
+                    DropdownButton<double>(
+                      value: _scale,
+                      onChanged: (v) => setState(() => _scale = v ?? 1.0),
+                      items: const [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+                          .map(
+                            (v) => DropdownMenuItem(
+                              value: v,
+                              child: Text('${v}x'),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () => setState(() => _scale = 1.0),
+                      child: const Text('Reset'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 if (r.ingredients.isEmpty)
@@ -347,18 +371,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 else
                   ...r.ingredients.asMap().entries.map((e) {
                     final idx = e.key;
-                    final txt = e.value;
+                    final ing = e.value;
+                    final line = ing.toLine(factor: _scale);
                     final checked = _checkedIngredients.contains(idx);
                     return _Bullet(
-                      text: txt,
+                      text: line,
                       checked: checked,
                       onTap: () => _toggleIngredient(idx),
                     );
                   }),
 
-                const SizedBox(height: 16),
-
                 // Instructions
+                const SizedBox(height: 16),
                 Text(
                   'Instructions',
                   style: Theme.of(context).textTheme.titleMedium,
@@ -374,6 +398,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       checked: _checkedSteps.contains(i),
                       onTap: () => _toggleStep(i),
                     ),
+
+                // Meta
                 if (r.notes.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Text('Notes', style: Theme.of(context).textTheme.titleMedium),
@@ -443,7 +469,7 @@ class _Bullet extends StatelessWidget {
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
           ? (base?.color ?? Colors.black).withOpacity(0.55)
-          : base.color,
+          : base?.color,
     );
     return InkWell(
       onTap: onTap,
@@ -487,7 +513,7 @@ class _Numbered extends StatelessWidget {
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
           ? (base?.color ?? Colors.black).withOpacity(0.55)
-          : base.color,
+          : base?.color,
     );
     return InkWell(
       onTap: onTap,
@@ -523,7 +549,6 @@ class _ImageViewerPage extends StatefulWidget {
 
 class _ImageViewerPageState extends State<_ImageViewerPage> {
   final TransformationController _tc = TransformationController();
-  Offset? _doubleTapPos;
 
   @override
   void dispose() {
@@ -532,22 +557,17 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
   }
 
   void _toggleZoom() {
-    // simple toggle between fit and ~2.5x zoom
     final m = _tc.value;
-    final isZoomed = m.storage[0] > 1.01; // scaleX
-    if (isZoomed) {
-      _tc.value = Matrix4.identity();
-    } else {
-      _tc.value = Matrix4.identity()..scale(2.5);
-      // (Keeping it simple; zoom centers the image. Fine for most use cases.)
-    }
+    final isZoomed = m.storage[0] > 1.01;
+    _tc.value = isZoomed
+        ? Matrix4.identity()
+        : (Matrix4.identity()..scale(2.5));
   }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => Navigator.pop(context),
-      onDoubleTapDown: (d) => _doubleTapPos = d.localPosition,
       onDoubleTap: _toggleZoom,
       child: Material(
         color: Colors.black.withOpacity(0.95),
@@ -584,7 +604,6 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
                 ),
               ),
             ),
-            // Close button
             SafeArea(
               child: Align(
                 alignment: Alignment.topRight,

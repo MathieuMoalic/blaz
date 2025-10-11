@@ -1,5 +1,5 @@
 use crate::{
-    models::{AppState, Recipe, RecipeRow},
+    models::{AppState, Ingredient, Recipe, RecipeRow},
     routes::{parse_recipe_image::extract_main_image_url, recipes::fetch_and_store_recipe_image},
 };
 use anyhow::{Result, anyhow};
@@ -21,7 +21,7 @@ pub struct ImportReq {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Extracted {
-    ingredients: Vec<String>,
+    ingredients: Vec<Ingredient>,
     instructions: Vec<String>,
 }
 
@@ -83,8 +83,7 @@ pub async fn import_from_url(
     let main_img_url = extract_main_image_url(&html, &req.url);
 
     // 4) Insert into DB (no image yet)
-    let ingredients_json =
-        serde_json::to_string(&extracted.ingredients).unwrap_or_else(|_| "[]".into());
+    let ingredients_json = serde_json::to_string(&extracted.ingredients).unwrap_or("[]".into());
     let instructions_json =
         serde_json::to_string(&extracted.instructions).unwrap_or_else(|_| "[]".into());
 
@@ -171,7 +170,7 @@ fn build_instructions() -> String {
 
 INPUT: plain text from a recipe page (any language).
 OUTPUT: STRICT JSON with exactly these keys:
-{"ingredients":[], "instructions":[]}
+{"ingredients":[{"quantity":null|number,"unit":null|"g"|"kg"|"ml"|"L"|"tsp"|"tbsp","name":string}], "instructions":[]}
 
 TASK:
 - Translate to English.
@@ -185,9 +184,11 @@ TASK:
   Example: "2 carrots, diced".
 - If data is missing, return an empty array for that key.
 - Do NOT include commentary or extra keys.
-- When a quantity range is included pick a number in the middle.
+- When a quantity is a range, replace the range with the mean value of the range.
 - Round quantities sensibly.
 - Use 0.5/0.25/0.75 style; never 1/2, 1/4, etc.
+- If no numeric quantity, set "quantity": null and "unit": null, keep the name.
+- instructions: array of steps (strings). No commentary.
 
 FORMAT EXAMPLES:
 {"ingredients":["2 cloves garlic, minced","150 g flour","2 carrots, diced"],"instructions":["Cook the garlic.","Fold in flour."]}
@@ -481,12 +482,27 @@ fn find_first_json_object(s: &str) -> Option<String> {
 }
 
 fn normalize_output(mut e: Extracted) -> Extracted {
+    // dedupe ingredients by (unit|lowercased name); ignore quantity to avoid
+    // “same item with slightly different amounts” duplicates
     let mut i_seen = HashSet::new();
-    e.ingredients.retain(|s| i_seen.insert(norm_key(s)));
+    e.ingredients.retain(|ing| i_seen.insert(norm_ing_key(ing)));
+
     let mut s_seen = HashSet::new();
     e.instructions.retain(|s| s_seen.insert(norm_key(s)));
+
     e
 }
+
+// case-insensitive line key for instructions
 fn norm_key(s: &str) -> String {
     s.trim().to_lowercase()
+}
+
+// normalized ingredient key (ignore quantity)
+fn norm_ing_key(ing: &Ingredient) -> String {
+    format!(
+        "{}|{}",
+        ing.unit.as_deref().unwrap_or("").to_lowercase(),
+        ing.name.trim().to_lowercase()
+    )
 }

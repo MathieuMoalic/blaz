@@ -3,6 +3,8 @@ use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
 use std::path::PathBuf;
 
+use crate::ingredient_parser::parse_ingredient_line;
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
@@ -12,6 +14,21 @@ pub struct AppState {
 /* ---------- API models ---------- */
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Ingredient {
+    pub quantity: Option<f64>, // e.g. 120.0
+    pub unit: Option<String>,  // "g","kg","ml","L","tsp","tbsp" (normalized)
+    pub name: String,          // "flour"
+}
+
+/* Accept either a string OR the structured object when reading existing rows */
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum IngredientRepr {
+    S(String),
+    O(Ingredient),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Recipe {
     pub id: i64,
     pub title: String,
@@ -19,9 +36,9 @@ pub struct Recipe {
     #[serde(rename = "yield")]
     pub r#yield: String,
     pub notes: String,
-    pub created_at: String, // SQLite CURRENT_TIMESTAMP (UTC) as string
+    pub created_at: String,
     pub updated_at: String,
-    pub ingredients: Vec<String>,
+    pub ingredients: Vec<Ingredient>,
     pub instructions: Vec<String>,
     pub image_path: Option<String>,
     pub image_path_small: Option<String>,
@@ -65,8 +82,8 @@ pub struct RecipeRow {
     pub notes: String,
     pub created_at: String,
     pub updated_at: String,
-    // store JSON arrays as TEXT; sqlx Json<T> maps it for us
-    pub ingredients: Json<Vec<String>>,
+    // IMPORTANT: let rows load even if they still have ["2 carrots", ...]
+    pub ingredients: Json<Vec<IngredientRepr>>,
     pub instructions: Json<Vec<String>>,
     pub image_path: Option<String>,
     pub image_path_small: Option<String>,
@@ -75,6 +92,17 @@ pub struct RecipeRow {
 
 impl From<RecipeRow> for Recipe {
     fn from(r: RecipeRow) -> Self {
+        // normalize DB payload (strings or structured) into structured vector
+        let ingredients = r
+            .ingredients
+            .0
+            .into_iter()
+            .map(|x| match x {
+                IngredientRepr::O(o) => o,
+                IngredientRepr::S(s) => parse_ingredient_line(&s),
+            })
+            .collect();
+
         Self {
             id: r.id,
             title: r.title,
@@ -83,7 +111,7 @@ impl From<RecipeRow> for Recipe {
             notes: r.notes,
             created_at: r.created_at,
             updated_at: r.updated_at,
-            ingredients: r.ingredients.0,
+            ingredients,
             instructions: r.instructions.0,
             image_path: r.image_path,
             image_path_full: r.image_path_full,

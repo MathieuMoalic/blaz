@@ -1,4 +1,7 @@
-use crate::models::{AppState, NewRecipe, Recipe, RecipeRow, UpdateRecipe};
+use crate::{
+    ingredient_parser::parse_ingredient_line,
+    models::{AppState, Ingredient, NewRecipe, Recipe, RecipeRow, UpdateRecipe},
+};
 use axum::{
     Json,
     extract::{Multipart, Path, State},
@@ -243,24 +246,27 @@ pub async fn create(
     if new.title.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let structured: Vec<Ingredient> = new
+        .ingredients
+        .iter()
+        .map(|s| parse_ingredient_line(s))
+        .collect();
+    let ingredients_json = serde_json::to_string(&structured).unwrap_or_else(|_| "[]".into());
+    let instructions_json =
+        serde_json::to_string(&new.instructions).unwrap_or_else(|_| "[]".into());
 
-    // image_path_* start as NULL; can be updated by /recipes/{id}/image
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
-        VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        RETURNING id, title, source, "yield", notes,
-                  created_at, updated_at,
-                  ingredients, instructions,
-                  image_path, image_path_small, image_path_full
-        "#,
-    )
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(r#"
+    INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
+    VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    RETURNING id, title, source, "yield", notes,
+              created_at, updated_at,
+              ingredients, instructions,
+              image_path, image_path_small, image_path_full"#)
     .bind(new.title)
     .bind(new.source)
     .bind(new.r#yield)
     .bind(new.notes)
-    .bind(serde_json::to_string(&new.ingredients).unwrap_or_else(|_| "[]".to_string()))
-    .bind(serde_json::to_string(&new.instructions).unwrap_or_else(|_| "[]".to_string()))
+    .bind(ingredients_json)    .bind(instructions_json)
     .fetch_one(&state.pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -283,7 +289,6 @@ pub async fn delete(
     }
     Ok(StatusCode::NO_CONTENT)
 }
-
 pub async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -311,11 +316,17 @@ pub async fn update(
         args.add(notes)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
-    if let Some(ing) = up.ingredients {
-        let s = serde_json::to_string(&(ing)).unwrap_or_else(|_| "[]".to_string());
+
+    // ONLY parse when ingredients were provided
+    if let Some(ing_lines) = up.ingredients.as_ref() {
+        let structured: Vec<Ingredient> =
+            ing_lines.iter().map(|s| parse_ingredient_line(s)).collect();
+
+        let s = serde_json::to_string(&structured).unwrap_or_else(|_| "[]".into());
         sets.push("ingredients = json(?)");
         args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
+
     if let Some(instr) = up.instructions {
         let s = serde_json::to_string(&instr).unwrap_or_else(|_| "[]".to_string());
         sets.push("instructions = json(?)");
@@ -325,7 +336,6 @@ pub async fn update(
     // Always touch updated_at
     sets.push("updated_at = CURRENT_TIMESTAMP");
 
-    // WHERE clause
     let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
     args.add(id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
