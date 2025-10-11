@@ -1,4 +1,7 @@
-use crate::models::{AppState, Recipe, RecipeRow};
+use crate::{
+    models::{AppState, Recipe, RecipeRow},
+    routes::{parse_recipe_image::extract_main_image_url, recipes::fetch_and_store_recipe_image},
+};
 use anyhow::{Result, anyhow};
 use axum::{Json, extract::State, http::StatusCode};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
@@ -7,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
 use tracing::error;
-
 /* ---------- Request/Response ---------- */
 
 #[derive(Deserialize)]
@@ -29,8 +31,6 @@ pub async fn import_from_url(
     State(state): State<AppState>,
     Json(req): Json<ImportReq>,
 ) -> Result<Json<Recipe>, StatusCode> {
-    use tracing::{debug, info};
-
     // 1) Fetch HTML
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(25))
@@ -71,9 +71,6 @@ pub async fn import_from_url(
         .or_else(|| std::env::var("MODEL").ok())
         .unwrap_or_else(|| "meta-llama/Llama-3.1-8B-Instruct".into());
 
-    info!(url = %req.url, %base, %model, title = %title, "import start");
-    debug!(text_preview = %text.chars().take(300).collect::<String>(), "extracted text preview (first 300 chars)");
-
     let system = build_instructions();
     let extracted = match call_llm(&client, &base, &token, &model, system, &text).await {
         Ok(ok) => ok,
@@ -82,48 +79,90 @@ pub async fn import_from_url(
             return Err(StatusCode::BAD_GATEWAY);
         }
     };
+    // keep this earlier, but don't call fetch yet—just keep the URL (if any)
+    let main_img_url = extract_main_image_url(&html, &req.url);
 
-    info!(
-        ingredients = extracted.ingredients.len(),
-        instructions = extracted.instructions.len(),
-        "extraction complete"
-    );
-
-    // 4) Insert into DB
+    // 4) Insert into DB (no image yet)
     let ingredients_json =
         serde_json::to_string(&extracted.ingredients).unwrap_or_else(|_| "[]".into());
     let instructions_json =
         serde_json::to_string(&extracted.instructions).unwrap_or_else(|_| "[]".into());
 
-    // IMPORTANT: bind empty strings (not NULL) for NOT NULL columns
-    let yield_text = String::new(); // or e.g. "—"
+    let yield_text = String::new();
     let notes_text = String::new();
 
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
+    r#"
+    INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
+    VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    RETURNING id, title, source, "yield", notes,
+              created_at, updated_at,
+              ingredients, instructions,
+              image_path, image_path_small, image_path_full
+    "#,
+)
+.bind(title)
+.bind(&req.url)
+.bind(&yield_text)
+.bind(&notes_text)
+.bind(ingredients_json)
+.bind(instructions_json)
+.fetch_one(&state.pool)
+.await
+.map_err(|e| {
+    error!(?e, url = %req.url, "insert imported recipe failed");
+    StatusCode::INTERNAL_SERVER_ERROR
+})?;
+
+    // 5) If we found a main image, fetch/convert/store and UPDATE the row
+    if let Some(img_url) = main_img_url {
+        match fetch_and_store_recipe_image(&client, &img_url, &state, row.id).await {
+            Ok((full, thumb)) => {
+                // store the relative filenames returned by fetch_and_store_recipe_image
+                if let Err(e) = sqlx::query(
+                    r#"
+                UPDATE recipes
+                   SET image_path_full  = ?,
+                       image_path_small = ?,
+                       updated_at       = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                "#,
+                )
+                .bind(&full)
+                .bind(&thumb)
+                .bind(row.id)
+                .execute(&state.pool)
+                .await
+                {
+                    tracing::warn!(?e, %img_url, %row.id, "failed to update recipe image paths");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(?e, %img_url, %row.id, "failed to fetch/convert main image");
+            }
+        }
+    }
+
+    // 6) Return the fresh row (re-select so we include image paths if they were set)
+    let final_row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
         r#"
-        INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
-        VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        RETURNING id, title, source, "yield", notes,
-                  created_at, updated_at,
-                  ingredients, instructions,
-                  image_path, image_path_small, image_path_full
-        "#,
+    SELECT id, title, source, "yield", notes,
+           created_at, updated_at,
+           ingredients, instructions,
+           image_path, image_path_small, image_path_full
+      FROM recipes
+     WHERE id = ?
+    "#,
     )
-    .bind(title)
-    .bind(&req.url)          // source = original URL
-    .bind(&yield_text)       // "" instead of NULL -> satisfies NOT NULL
-    .bind(&notes_text)       // "" instead of NULL
-    .bind(ingredients_json)
-    .bind(instructions_json)
+    .bind(row.id)
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
-        // This will print the *exact* sqlite error (like NOT NULL constraint)
-        error!(?e, url = %req.url, "insert imported recipe failed");
+        error!(?e, id = row.id, "refetch after image update failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    Ok(Json(row.into()))
+    Ok(Json(final_row.into()))
 }
 /* ---------- System prompt ---------- */
 
