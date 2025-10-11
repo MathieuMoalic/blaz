@@ -109,6 +109,33 @@ class Recipe {
   }
 }
 
+Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
+  final uri = Uri.parse('$_baseUrl/recipes/import');
+  final resp = await http.post(
+    uri,
+    headers: const {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'url': url,
+      if (model != null && model.isNotEmpty) 'model': model,
+    }),
+  );
+
+  if (resp.statusCode < 200 || resp.statusCode >= 300) {
+    // try to extract server error message
+    String msg = 'Import failed (${resp.statusCode})';
+    try {
+      final body = jsonDecode(resp.body);
+      if (body is Map && body['error'] != null) {
+        msg = '$msg: ${body['error']}';
+      }
+    } catch (_) {}
+    throw Exception(msg);
+  }
+
+  final json = jsonDecode(resp.body) as Map<String, dynamic>;
+  return Recipe.fromJson(json);
+}
+
 Future<Recipe> updateRecipe({
   required int id,
   String? title,

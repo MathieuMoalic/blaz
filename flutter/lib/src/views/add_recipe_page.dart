@@ -4,7 +4,6 @@ import 'package:path/path.dart' as p;
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:path_provider/path_provider.dart';
 import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -23,6 +22,9 @@ class _AddRecipePageState extends State<AddRecipePage> {
   final _ingredientsRaw = TextEditingController();
   final _instructionsRaw = TextEditingController();
 
+  final _importUrl = TextEditingController();
+  bool _importing = false;
+
   XFile? _picked; // selected file
   Uint8List? _preview; // preview bytes (web or when Android only returns URI)
   bool _busy = false;
@@ -40,6 +42,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
   List<String> _lines(String s) =>
       s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
   Future<void> _pickImage() async {
     final group = const XTypeGroup(
       label: 'images',
@@ -56,6 +59,32 @@ class _AddRecipePageState extends State<AddRecipePage> {
       _picked = x;
       _preview = bytes;
     });
+  }
+
+  Future<void> _importFromUrl() async {
+    final url = _importUrl.text.trim();
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please paste a recipe URL')),
+      );
+      return;
+    }
+    setState(() => _importing = true);
+    try {
+      final created = await importRecipeFromUrl(url: url);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Imported: ${created.title}')));
+      Navigator.pop(context, true); // trigger refresh in caller
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
   }
 
   Future<void> _submit() async {
@@ -137,6 +166,60 @@ class _AddRecipePageState extends State<AddRecipePage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Import from URL',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _importUrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Recipe URL',
+                                hintText: 'https://example.com/some-recipe',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.link),
+                              ),
+                              keyboardType: TextInputType.url,
+                              textInputAction: TextInputAction.done,
+                              autofillHints: const <String>[],
+                              enabled: !_importing && !_busy,
+                              onSubmitted: (_) => _importFromUrl(),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          FilledButton.icon(
+                            onPressed: (_importing || _busy)
+                                ? null
+                                : _importFromUrl,
+                            icon: _importing
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.download),
+                            label: const Text('Import'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
               TextFormField(
                 controller: _title,
                 decoration: const InputDecoration(
