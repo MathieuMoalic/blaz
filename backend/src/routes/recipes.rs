@@ -13,6 +13,7 @@ use crate::error::AppResult;
 
 const FULL_WEBP_QUALITY: f32 = 90.0;
 const THUMB_WEBP_QUALITY: f32 = 3.0;
+const THUMB_MAX_DIM: u32 = 1024; // thumbnail bounding box (px)
 
 pub async fn fetch_and_store_recipe_image(
     client: &reqwest::Client,
@@ -77,8 +78,6 @@ pub async fn upload_image(
     use image::imageops::FilterType;
     use uuid::Uuid;
     use webp::Encoder as WebpEncoder;
-
-    const THUMB_MAX_DIM: u32 = 1024; // thumbnail bounding box (px)
 
     // 1) Pull the file bytes (accept "image" or "file")
     let mut bytes: Option<Vec<u8>> = None;

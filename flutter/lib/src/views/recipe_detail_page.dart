@@ -13,6 +13,21 @@ class RecipeDetailPage extends StatefulWidget {
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
   late Future<Recipe> _future;
 
+  final Set<int> _checkedIngredients = {};
+  final Set<int> _checkedSteps = {};
+
+  void _toggleIngredient(int i) {
+    setState(() {
+      if (!_checkedIngredients.add(i)) _checkedIngredients.remove(i);
+    });
+  }
+
+  void _toggleStep(int i) {
+    setState(() {
+      if (!_checkedSteps.add(i)) _checkedSteps.remove(i);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -312,13 +327,59 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                         child: Ink.image(
                           image: NetworkImage(small),
                           fit: BoxFit.cover,
-                          height: 200,
+                          height: 250,
                           width: double.infinity,
                         ),
                       ),
                     ),
                   ),
                   const SizedBox(height: 12),
+                ],
+                const SizedBox(height: 16),
+                // Ingredients
+                Text(
+                  'Ingredients',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                if (r.ingredients.isEmpty)
+                  const Text('—')
+                else
+                  ...r.ingredients.asMap().entries.map((e) {
+                    final idx = e.key;
+                    final txt = e.value;
+                    final checked = _checkedIngredients.contains(idx);
+                    return _Bullet(
+                      text: txt,
+                      checked: checked,
+                      onTap: () => _toggleIngredient(idx),
+                    );
+                  }),
+
+                const SizedBox(height: 16),
+
+                // Instructions
+                Text(
+                  'Instructions',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                if (r.instructions.isEmpty)
+                  const Text('—')
+                else
+                  for (int i = 0; i < r.instructions.length; i++)
+                    _Numbered(
+                      step: i + 1,
+                      text: r.instructions[i],
+                      checked: _checkedSteps.contains(i),
+                      onTap: () => _toggleStep(i),
+                    ),
+                if (r.notes.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text('Notes', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 6),
+                  Text(r.notes),
+                  const SizedBox(height: 6),
                 ],
                 _MetaRow(
                   label: 'Source',
@@ -336,34 +397,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   label: 'Updated',
                   value: r.updatedAt.isEmpty ? '—' : r.updatedAt,
                 ),
-                const SizedBox(height: 16),
-                if (r.notes.isNotEmpty) ...[
-                  Text('Notes', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 6),
-                  Text(r.notes),
-                  const SizedBox(height: 16),
-                ],
-                Text(
-                  'Ingredients',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                if (r.ingredients.isEmpty)
-                  const Text('—')
-                else
-                  ...r.ingredients.map((s) => _Bullet(s)).toList(),
-                const SizedBox(height: 16),
-                Text(
-                  'Instructions',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                if (r.instructions.isEmpty)
-                  const Text('—')
-                else ...[
-                  for (int i = 0; i < r.instructions.length; i++)
-                    _Numbered(step: i + 1, text: r.instructions[i]),
-                ],
               ],
             ),
           );
@@ -395,17 +428,41 @@ class _MetaRow extends StatelessWidget {
 
 class _Bullet extends StatelessWidget {
   final String text;
-  const _Bullet(this.text);
+  final bool checked;
+  final VoidCallback onTap;
+  const _Bullet({
+    required this.text,
+    required this.checked,
+    required this.onTap,
+  });
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('•  '),
-          Expanded(child: Text(text)),
-        ],
+    final base = Theme.of(context).textTheme.bodyMedium;
+    final style = base?.copyWith(
+      decoration: checked ? TextDecoration.lineThrough : null,
+      color: checked
+          ? (base?.color ?? Colors.black).withOpacity(0.55)
+          : base.color,
+    );
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('•  '),
+            Expanded(
+              child: AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 120),
+                style: style ?? const TextStyle(),
+                child: Text(text),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -414,17 +471,42 @@ class _Bullet extends StatelessWidget {
 class _Numbered extends StatelessWidget {
   final int step;
   final String text;
-  const _Numbered({required this.step, required this.text});
+  final bool checked;
+  final VoidCallback onTap;
+  const _Numbered({
+    required this.step,
+    required this.text,
+    required this.checked,
+    required this.onTap,
+  });
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$step. '),
-          Expanded(child: Text(text)),
-        ],
+    final base = Theme.of(context).textTheme.bodyMedium;
+    final style = base?.copyWith(
+      decoration: checked ? TextDecoration.lineThrough : null,
+      color: checked
+          ? (base?.color ?? Colors.black).withOpacity(0.55)
+          : base.color,
+    );
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('$step. '),
+            Expanded(
+              child: AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 120),
+                style: style ?? const TextStyle(),
+                child: Text(text),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
