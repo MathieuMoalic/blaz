@@ -1,3 +1,4 @@
 .direnv
 backend/blaz.sqlite*
 backend/media
+.env

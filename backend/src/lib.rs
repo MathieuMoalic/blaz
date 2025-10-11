@@ -5,7 +5,7 @@ pub mod routes;
 
 use crate::{
     models::AppState,
-    routes::{meal_plan, recipes, shopping},
+    routes::{meal_plan, parse_recipe, recipes, shopping},
 };
 use axum::http::{Request, Response, header};
 use axum::{
@@ -70,6 +70,7 @@ pub fn build_app(state: AppState) -> Router {
                 .patch(recipes::update),
         )
         .route("/recipes/{id}/image", post(recipes::upload_image))
+        .route("/recipes/import", post(parse_recipe::import_from_url))
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),

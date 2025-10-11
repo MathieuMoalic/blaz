@@ -19,3 +19,5 @@ tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", features = ["jpeg", "png", "webp"] }
 webp  = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+scraper = "0.19"
