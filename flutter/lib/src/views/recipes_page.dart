@@ -77,24 +77,31 @@ class RecipesPageState extends State<RecipesPage> {
 
   bool _matches(Recipe r, String q) {
     if (q.isEmpty) return true;
-    final title = (r.title).toLowerCase();
-    if (title.contains(q)) return true;
+    final needle = q.toLowerCase();
 
-    // Try ingredients if available (List<String> or comma-separated String).
-    try {
-      final dyn = r as dynamic;
-      final v = dyn.ingredients;
-      if (v == null) return false;
-      if (v is List) {
-        for (final e in v) {
-          if (e.toString().toLowerCase().contains(q)) return true;
-        }
-      } else if (v is String) {
-        for (final part in v.split(',')) {
-          if (part.trim().toLowerCase().contains(q)) return true;
-        }
+    // Title
+    if (r.title.toLowerCase().contains(needle)) return true;
+
+    // Ingredients (structured)
+    for (final ing in r.ingredients) {
+      if (ing.name.toLowerCase().contains(needle)) return true;
+      if ((ing.unit ?? '').toLowerCase().contains(needle)) return true;
+
+      // quantity match (if user types "200" etc.)
+      if (ing.quantity != null) {
+        final qs = ing.quantity!.toString();
+        if (qs.contains(needle)) return true;
       }
-    } catch (_) {}
+
+      // fallback: match the formatted line too
+      if (ing.toLine().toLowerCase().contains(needle)) return true;
+    }
+
+    // Instructions
+    for (final step in r.instructions) {
+      if (step.toLowerCase().contains(needle)) return true;
+    }
+
     return false;
   }
 
