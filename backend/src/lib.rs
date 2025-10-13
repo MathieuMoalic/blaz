@@ -8,7 +8,7 @@ use crate::{
     models::AppState,
     routes::{meal_plan, parse_recipe, recipes, shopping},
 };
-use axum::http::{Request, Response, header};
+use axum::http::{HeaderValue, Method, Request, Response, header};
 use axum::{
     Json, Router,
     extract::ConnectInfo,
@@ -58,6 +58,40 @@ pub fn build_app(state: AppState) -> Router {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
 
+    // CORS: dev (no BLAZ_DOMAIN) = allow all; prod (BLAZ_DOMAIN set) = allowlist
+    let cors = match std::env::var("BLAZ_DOMAIN") {
+        Err(_) => {
+            // DEV — permissive
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        }
+        Ok(domains) => {
+            // PROD-ish — comma-separated domains supported, e.g. "app.example.com,admin.example.com"
+            let origins: Vec<HeaderValue> = domains
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .flat_map(|d| [format!("https://{d}"), format!("http://{d}")])
+                .filter_map(|s| s.parse::<HeaderValue>().ok())
+                .collect();
+
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PATCH,
+                    Method::DELETE,
+                    Method::OPTIONS,
+                ])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+                .expose_headers([header::LOCATION])
+                .max_age(std::time::Duration::from_secs(60 * 60))
+        }
+    };
+
     // Serve /media from MEDIA_DIR for both small & full images
     let media_service = ServeDir::new(state.media_dir.clone());
 
@@ -82,13 +116,9 @@ pub fn build_app(state: AppState) -> Router {
             "/shopping/{id}",
             patch(shopping::toggle_done).delete(shopping::delete),
         )
+        .route("/shopping/merge", post(shopping::merge_items))
         .nest_service("/media", media_service)
         .with_state(state)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(cors)
         .layer(trace)
 }

@@ -362,6 +362,22 @@ Future<List<ShoppingItem>> fetchShoppingList() async {
       .toList();
 }
 
+Future<List<ShoppingItem>> mergeShoppingIngredients(
+  List<Ingredient> items,
+) async {
+  final uri = _u('/shopping/merge');
+  final r = await http.post(
+    uri,
+    headers: {'content-type': 'application/json'},
+    body: jsonEncode({'items': items.map((e) => e.toJson()).toList()}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .map((e) => ShoppingItem.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
 Future<ShoppingItem> createShoppingItem(String text) async {
   final r = await http.post(
     _u('/shopping'),
