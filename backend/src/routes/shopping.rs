@@ -26,6 +26,127 @@ pub struct MergeReq {
 
 /* ---------- Helpers ---------- */
 
+/// If the `name` starts with something like "100 ml water" or "1,5kg flour",
+/// pull qty+unit out of the name and return (qty, unit, clean_name).
+fn strip_leading_qty_unit(name: &str) -> (Option<f64>, Option<String>, String) {
+    let s = name.trim().to_lowercase().replace(',', ".");
+    // very small parser: "<num> <unit> <rest>" or "<num><unit> <rest>", optional "of"
+    // supported units: g, kg, ml, l, tsp, tbsp (+ simple plurals)
+    let units = [
+        "g",
+        "kg",
+        "ml",
+        "l",
+        "tsp",
+        "tbsp",
+        "gram",
+        "kilogram",
+        "milliliter",
+        "millilitre",
+        "liter",
+        "litre",
+        "teaspoon",
+        "tablespoon",
+    ];
+
+    // split once to check patterns quickly
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() >= 2 {
+        // case A: "100ml water" or "100 ml water"
+        let (num_str, unit_str, rest_start_idx) =
+            if let Some(idx) = parts[0].find(|c: char| !c.is_ascii_digit() && c != '.') {
+                // token like "100ml"
+                let (n, u) = parts[0].split_at(idx);
+                (n, u, 1usize)
+            } else {
+                // token like "100" then maybe "ml"
+                if parts.len() >= 3 && units.contains(&parts[1].trim_end_matches('s')) {
+                    (parts[0], parts[1], 2usize)
+                } else {
+                    ("", "", 0usize)
+                }
+            };
+
+        if !num_str.is_empty() && !unit_str.is_empty() {
+            if let Ok(q) = num_str.parse::<f64>() {
+                let mut unit = unit_str.trim_end_matches('s').to_string();
+                // map aliases
+                unit = match unit.as_str() {
+                    "gram" => "g".into(),
+                    "kilogram" => "kg".into(),
+                    "milliliter" | "millilitre" => "ml".into(),
+                    "liter" | "litre" => "l".into(),
+                    "teaspoon" => "tsp".into(),
+                    "tablespoon" => "tbsp".into(),
+                    _ => unit,
+                };
+                // skip optional "of"
+                let mut i = rest_start_idx;
+                if parts.get(rest_start_idx).map(|s| *s) == Some("of") {
+                    i += 1;
+                }
+                if i < parts.len() {
+                    let clean = parts[i..].join(" ");
+                    return (Some(q), Some(unit), clean);
+                }
+            }
+        }
+    }
+    (None, None, name.trim().to_string())
+}
+
+/// Try to parse a free-text line like "100 ml water" or "2 tbsp olive oil".
+/// Returns (normalized_name, canonical_unit, canonical_qty) if it looks structured.
+/// Supported units: g, kg, ml, L, tsp, tbsp (+ common plurals/aliases).
+fn parse_free_text_item(s: &str) -> Option<(String, Option<String>, Option<f64>)> {
+    let raw = s.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    // tokenize; normalize commas in numbers to dots
+    let parts: Vec<String> = raw
+        .split_whitespace()
+        .map(|t| t.trim().replace(',', "."))
+        .collect();
+
+    if parts.len() < 3 {
+        return None;
+    }
+
+    // qty
+    let qty: f64 = parts[0].parse().ok()?;
+
+    // unit (singularize simple plurals)
+    let unit_raw = parts[1].trim().trim_end_matches('s').to_lowercase();
+    let unit = match unit_raw.as_str() {
+        "g" | "gram" => Some("g".to_string()),
+        "kg" | "kilogram" => Some("kg".to_string()),
+        "ml" | "milliliter" | "millilitre" => Some("ml".to_string()),
+        "l" | "liter" | "litre" => Some("l".to_string()),
+        "tsp" | "teaspoon" => Some("tsp".to_string()),
+        "tbsp" | "tablespoon" => Some("tbsp".to_string()),
+        _ => None,
+    }?;
+
+    // name (skip optional "of")
+    let name_tokens = if parts.get(2).map(|s| s.as_str()) == Some("of") {
+        &parts[3..]
+    } else {
+        &parts[2..]
+    };
+    if name_tokens.is_empty() {
+        return None;
+    }
+    let name_raw = name_tokens.join(" ");
+
+    // Reuse your existing helpers
+    let name_norm = normalize_name(&name_raw);
+    let (unit_norm, qty_norm) = to_canonical_unit(Some(unit.as_ref()), Some(qty));
+
+    Some((name_norm, unit_norm, qty_norm))
+}
+
 fn normalize_name(s: &str) -> String {
     // trim, lowercase, collapse internal whitespace
     let mut out = String::with_capacity(s.len());
@@ -97,19 +218,62 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingI
 }
 
 // POST /shopping { text }
+// POST /shopping { text }
 pub async fn create(
     State(state): State<AppState>,
     Json(new): Json<NewItem>,
 ) -> AppResult<Json<ShoppingItem>> {
-    let name_norm = normalize_name(&new.text);
-    if name_norm.is_empty() {
-        // <-- explicit return with conversion into AppError
+    let text = new.text.trim();
+    if text.is_empty() {
         return Err(anyhow::anyhow!("empty shopping item").into());
     }
 
+    // If the line looks structured, upsert by (unit,name) and sum quantity.
+    if let Some((name_norm, unit_norm, qty_norm)) = parse_free_text_item(text) {
+        let key = make_key(&name_norm, unit_norm.as_deref());
+
+        sqlx::query(
+            r#"
+            INSERT INTO shopping_items (name, unit, quantity, done, key)
+            VALUES (?, ?, ?, 0, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              quantity = COALESCE(shopping_items.quantity, 0)
+                       + COALESCE(excluded.quantity, 0)
+            "#,
+        )
+        .bind(&name_norm)
+        .bind(&unit_norm)
+        .bind(qty_norm)
+        .bind(&key)
+        .execute(&state.pool)
+        .await?;
+
+        let row = sqlx::query_as::<_, ShoppingItem>(
+            r#"
+            SELECT id,
+                   CASE
+                     WHEN quantity IS NOT NULL AND unit IS NOT NULL AND unit <> ''
+                       THEN TRIM(printf('%g', quantity)) || ' ' || unit || ' ' || name
+                     WHEN quantity IS NOT NULL
+                       THEN TRIM(printf('%g', quantity)) || ' ' || name
+                     ELSE name
+                   END AS text,
+                   done
+              FROM shopping_items
+             WHERE key = ?
+            "#,
+        )
+        .bind(&key)
+        .fetch_one(&state.pool)
+        .await?;
+
+        return Ok(Json(row));
+    }
+
+    // Fallback: plain-text item (no qty/unit) — original behavior
+    let name_norm = normalize_name(text);
     let key = make_key(&name_norm, None);
 
-    // Insert if not present (unit/quantity = NULL for plain-text items)
     sqlx::query(
         r#"
         INSERT INTO shopping_items (name, unit, quantity, done, key)
@@ -122,7 +286,6 @@ pub async fn create(
     .execute(&state.pool)
     .await?;
 
-    // Return the row in the view shape (id, text, done)
     let row = sqlx::query_as::<_, ShoppingItem>(
         r#"
         SELECT id,
@@ -197,23 +360,49 @@ pub async fn merge_items(
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItem>>> {
     for it in req.items {
-        let name_norm = it.name.trim().to_lowercase();
-        if name_norm.is_empty() {
-            continue;
+        // 1) start from provided fields
+        let mut qty = it.quantity;
+        let mut unit = it.unit.map(|u| u.trim().to_lowercase());
+
+        // 2) strip any leading "<qty> <unit>" from the *name* if present
+        let (qty_from_name, unit_from_name, clean_name) = strip_leading_qty_unit(&it.name);
+        let base_name = normalize_name(&clean_name);
+
+        // prefer explicit fields; fall back to parsed-from-name
+        if qty.is_none() {
+            qty = qty_from_name;
         }
-        let (unit_norm, qty_norm) = to_canonical_unit(it.unit.as_deref(), it.quantity);
-        let key = format!("{}|{}", unit_norm.clone().unwrap_or_default(), name_norm);
+        if unit.is_none() {
+            unit = unit_from_name;
+        }
+
+        // 3) canonicalize units & quantities
+        let (mut unit_norm, mut qty_norm) = to_canonical_unit(unit.as_deref(), qty);
+
+        // 4) if there's no real quantity, treat as *unitless* so it merges with plain items
+        if qty_norm.is_none() {
+            unit_norm = None;
+        }
+
+        // 5) key and upsert (avoid turning NULL into 0)
+        let key = make_key(&base_name, unit_norm.as_deref());
 
         sqlx::query(
             r#"
             INSERT INTO shopping_items (name, unit, quantity, done, key)
             VALUES (?, ?, ?, 0, ?)
             ON CONFLICT(key) DO UPDATE SET
-              quantity = COALESCE(shopping_items.quantity, 0)
-                       + COALESCE(excluded.quantity, 0)
+              quantity = CASE
+                WHEN excluded.quantity IS NULL THEN shopping_items.quantity
+                WHEN shopping_items.quantity IS NULL THEN excluded.quantity
+                ELSE shopping_items.quantity + excluded.quantity
+              END,
+              -- keep normalized name and canonical unit
+              name = excluded.name,
+              unit = excluded.unit
             "#,
         )
-        .bind(&name_norm)
+        .bind(&base_name)
         .bind(&unit_norm)
         .bind(qty_norm)
         .bind(&key)
@@ -221,21 +410,22 @@ pub async fn merge_items(
         .await?;
     }
 
+    // Return list in the usual "view" shape
     let rows: Vec<ShoppingItem> = sqlx::query_as::<_, ShoppingItem>(
         r#"
-    SELECT
-      id,
-      CASE
-        WHEN quantity IS NOT NULL AND unit IS NOT NULL AND unit <> ''
-          THEN TRIM(printf('%g', quantity)) || ' ' || unit || ' ' || name
-        WHEN quantity IS NOT NULL
-          THEN TRIM(printf('%g', quantity)) || ' ' || name
-        ELSE name
-      END AS text,
-      done
-    FROM shopping_items
-    ORDER BY id
-    "#,
+        SELECT
+          id,
+          CASE
+            WHEN quantity IS NOT NULL AND unit IS NOT NULL AND unit <> ''
+              THEN TRIM(printf('%g', quantity)) || ' ' || unit || ' ' || name
+            WHEN quantity IS NOT NULL
+              THEN TRIM(printf('%g', quantity)) || ' ' || name
+            ELSE name
+          END AS text,
+          done
+        FROM shopping_items
+        ORDER BY id
+        "#,
     )
     .fetch_all(&state.pool)
     .await?;

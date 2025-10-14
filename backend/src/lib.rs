@@ -9,6 +9,7 @@ use crate::{
     routes::{meal_plan, parse_recipe, recipes, shopping},
 };
 use axum::http::{HeaderValue, Method, Request, Response, header};
+use axum::middleware::{Next, from_fn};
 use axum::{
     Json, Router,
     extract::ConnectInfo,
@@ -26,6 +27,80 @@ use tracing::{Span, info_span};
 
 async fn healthz() -> Json<&'static str> {
     Json("ok")
+}
+/// Logs request & response bodies (dev-friendly).
+/// Skips multipart requests and likely-binary responses, truncates previews.
+async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
+    // Request body logging decision
+    let req_ct = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let log_req_body = !req_ct.starts_with("multipart/");
+
+    // Split and optionally read + replace the request body
+    let (req_parts, req_body) = req.into_parts();
+    let req = if log_req_body {
+        match axum::body::to_bytes(req_body, 64 * 1024).await {
+            Ok(bytes) => {
+                let preview = if bytes.len() > 16 * 1024 {
+                    format!(
+                        "{}… [truncated]",
+                        String::from_utf8_lossy(&bytes[..16 * 1024])
+                    )
+                } else {
+                    String::from_utf8_lossy(&bytes).to_string()
+                };
+                tracing::info!(request_body = %preview, "request body");
+                Request::from_parts(req_parts, Body::from(bytes))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed reading request body");
+                Request::from_parts(req_parts, Body::empty())
+            }
+        }
+    } else {
+        Request::from_parts(req_parts, req_body)
+    };
+
+    // Call handler
+    let res: Response<Body> = next.run(req).await;
+
+    // Response body logging decision
+    let res_ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let log_res_body =
+        !res_ct.starts_with("image/") && !res_ct.starts_with("application/octet-stream");
+
+    // Split and optionally read + replace the response body
+    let (res_parts, res_body) = res.into_parts();
+    if log_res_body {
+        match axum::body::to_bytes(res_body, 64 * 1024).await {
+            Ok(bytes) => {
+                let preview = if bytes.len() > 16 * 1024 {
+                    format!(
+                        "{}… [truncated]",
+                        String::from_utf8_lossy(&bytes[..16 * 1024])
+                    )
+                } else {
+                    String::from_utf8_lossy(&bytes).to_string()
+                };
+                tracing::info!(response_body = %preview, "response body");
+                Response::from_parts(res_parts, Body::from(bytes))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed reading response body");
+                Response::from_parts(res_parts, Body::empty())
+            }
+        }
+    } else {
+        Response::from_parts(res_parts, res_body)
+    }
 }
 
 pub fn build_app(state: AppState) -> Router {
@@ -119,6 +194,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/shopping/merge", post(shopping::merge_items))
         .nest_service("/media", media_service)
         .with_state(state)
+        .layer(from_fn(log_payloads))
         .layer(cors)
         .layer(trace)
 }
