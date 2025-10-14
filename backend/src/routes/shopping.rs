@@ -26,123 +26,127 @@ pub struct MergeReq {
 
 /* ---------- Helpers ---------- */
 
-/// If the `name` starts with something like "100 ml water" or "1,5kg flour",
-/// pull qty+unit out of the name and return (qty, unit, clean_name).
+/// If `name` starts with "<qty> [unit] <rest>", pull qty+unit out and return them
+/// along with the cleaned name. Unit is optional here.
 fn strip_leading_qty_unit(name: &str) -> (Option<f64>, Option<String>, String) {
     let s = name.trim().to_lowercase().replace(',', ".");
-    // very small parser: "<num> <unit> <rest>" or "<num><unit> <rest>", optional "of"
-    // supported units: g, kg, ml, l, tsp, tbsp (+ simple plurals)
-    let units = [
-        "g",
-        "kg",
-        "ml",
-        "l",
-        "tsp",
-        "tbsp",
-        "gram",
-        "kilogram",
-        "milliliter",
-        "millilitre",
-        "liter",
-        "litre",
-        "teaspoon",
-        "tablespoon",
-    ];
-
-    // split once to check patterns quickly
     let parts: Vec<&str> = s.split_whitespace().collect();
-    if parts.len() >= 2 {
-        // case A: "100ml water" or "100 ml water"
-        let (num_str, unit_str, rest_start_idx) =
-            if let Some(idx) = parts[0].find(|c: char| !c.is_ascii_digit() && c != '.') {
-                // token like "100ml"
-                let (n, u) = parts[0].split_at(idx);
-                (n, u, 1usize)
-            } else {
-                // token like "100" then maybe "ml"
-                if parts.len() >= 3 && units.contains(&parts[1].trim_end_matches('s')) {
-                    (parts[0], parts[1], 2usize)
-                } else {
-                    ("", "", 0usize)
-                }
-            };
+    if parts.is_empty() {
+        return (None, None, name.trim().to_string());
+    }
 
-        if !num_str.is_empty() && !unit_str.is_empty() {
-            if let Ok(q) = num_str.parse::<f64>() {
-                let mut unit = unit_str.trim_end_matches('s').to_string();
-                // map aliases
-                unit = match unit.as_str() {
-                    "gram" => "g".into(),
-                    "kilogram" => "kg".into(),
-                    "milliliter" | "millilitre" => "ml".into(),
-                    "liter" | "litre" => "l".into(),
-                    "teaspoon" => "tsp".into(),
-                    "tablespoon" => "tbsp".into(),
-                    _ => unit,
-                };
-                // skip optional "of"
-                let mut i = rest_start_idx;
-                if parts.get(rest_start_idx).map(|s| *s) == Some("of") {
-                    i += 1;
-                }
-                if i < parts.len() {
-                    let clean = parts[i..].join(" ");
-                    return (Some(q), Some(unit), clean);
-                }
+    // parse number or range in the first token
+    let mut qty: Option<f64> = None;
+    if let Some(p0) = parts.first() {
+        if let Some((a, b)) = p0.split_once('-').or_else(|| p0.split_once('–')) {
+            if let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) {
+                qty = Some((x + y) / 2.0);
             }
+        } else if let Ok(x) = p0.parse::<f64>() {
+            qty = Some(x);
         }
     }
-    (None, None, name.trim().to_string())
+    if qty.is_none() {
+        return (None, None, name.trim().to_string());
+    }
+
+    // optional unit in the second token
+    let mut unit: Option<String> = None;
+    let mut i = 1;
+    if let Some(p1) = parts.get(1) {
+        let u = p1.trim().trim_end_matches('s').to_lowercase();
+        unit = match u.as_str() {
+            "g" | "gram" => Some("g".into()),
+            "kg" | "kilogram" => Some("kg".into()),
+            "ml" | "milliliter" | "millilitre" => Some("ml".into()),
+            "l" | "liter" | "litre" => Some("L".into()),
+            "tsp" | "teaspoon" => Some("tsp".into()),
+            "tbsp" | "tablespoon" => Some("tbsp".into()),
+            _ => None,
+        };
+        if unit.is_some() {
+            i = 2;
+        }
+    }
+
+    // optional "of"
+    if parts.get(i).copied() == Some("of") {
+        i += 1;
+    }
+    if i >= parts.len() {
+        return (qty, unit, String::new());
+    }
+    let clean = parts[i..].join(" ");
+    (qty, unit, clean)
 }
 
-/// Try to parse a free-text line like "100 ml water" or "2 tbsp olive oil".
-/// Returns (normalized_name, canonical_unit, canonical_qty) if it looks structured.
-/// Supported units: g, kg, ml, L, tsp, tbsp (+ common plurals/aliases).
+/// Try to parse a free-text line like:
+/// "100 ml water", "1 banana", "0.5 bananas", "2-3 apples", "1 cup of sugar"
+/// Returns (normalized_name, canonical_unit (or None), quantity).
 fn parse_free_text_item(s: &str) -> Option<(String, Option<String>, Option<f64>)> {
     let raw = s.trim();
     if raw.is_empty() {
         return None;
     }
 
-    // tokenize; normalize commas in numbers to dots
-    let parts: Vec<String> = raw
+    // tokens; normalize commas to dots for decimals
+    let tokens: Vec<String> = raw
         .split_whitespace()
         .map(|t| t.trim().replace(',', "."))
         .collect();
-
-    if parts.len() < 3 {
+    if tokens.is_empty() {
         return None;
     }
 
-    // qty
-    let qty: f64 = parts[0].parse().ok()?;
+    // 1) parse number (supports "a-b" or "a–b" ranges)
+    let mut qty: Option<f64> = None;
+    let t0 = tokens.first().map(|s| s.as_str()).unwrap_or("");
+    let mut name_start_idx = 1;
 
-    // unit (singularize simple plurals)
-    let unit_raw = parts[1].trim().trim_end_matches('s').to_lowercase();
-    let unit = match unit_raw.as_str() {
-        "g" | "gram" => Some("g".to_string()),
-        "kg" | "kilogram" => Some("kg".to_string()),
-        "ml" | "milliliter" | "millilitre" => Some("ml".to_string()),
-        "l" | "liter" | "litre" => Some("l".to_string()),
-        "tsp" | "teaspoon" => Some("tsp".to_string()),
-        "tbsp" | "tablespoon" => Some("tbsp".to_string()),
-        _ => None,
-    }?;
-
-    // name (skip optional "of")
-    let name_tokens = if parts.get(2).map(|s| s.as_str()) == Some("of") {
-        &parts[3..]
+    if let Some((a, b)) = t0.split_once('-').or_else(|| t0.split_once('–')) {
+        if let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) {
+            qty = Some((x + y) / 2.0);
+        }
+    } else if let Ok(x) = t0.parse::<f64>() {
+        qty = Some(x);
     } else {
-        &parts[2..]
-    };
-    if name_tokens.is_empty() {
+        // doesn’t start with a number -> not a structured line
         return None;
     }
-    let name_raw = name_tokens.join(" ");
 
-    // Reuse your existing helpers
+    // 2) parse unit (optional)
+    let mut unit: Option<String> = None;
+    if let Some(t1) = tokens.get(1) {
+        let u = t1.trim().trim_end_matches('s').to_lowercase();
+        unit = match u.as_str() {
+            "g" | "gram" => Some("g".into()),
+            "kg" | "kilogram" => Some("kg".into()),
+            "ml" | "milliliter" | "millilitre" => Some("ml".into()),
+            "l" | "liter" | "litre" => Some("L".into()),
+            "tsp" | "teaspoon" => Some("tsp".into()),
+            "tbsp" | "tablespoon" => Some("tbsp".into()),
+            _ => None,
+        };
+        if unit.is_some() {
+            name_start_idx = 2;
+        }
+    }
+
+    // optional "of"
+    if tokens.get(name_start_idx).map(|s| s.as_str()) == Some("of") {
+        name_start_idx += 1;
+    }
+
+    if name_start_idx >= tokens.len() {
+        return None;
+    }
+
+    // 3) normalize name
+    let name_raw = tokens[name_start_idx..].join(" ");
     let name_norm = normalize_name(&name_raw);
-    let (unit_norm, qty_norm) = to_canonical_unit(Some(unit.as_ref()), Some(qty));
+
+    // 4) canonicalize quantity+unit (kg->g, L->ml, tbsp/tsp->ml etc.)
+    let (unit_norm, qty_norm) = to_canonical_unit(unit.as_deref(), qty);
 
     Some((name_norm, unit_norm, qty_norm))
 }
@@ -377,7 +381,7 @@ pub async fn merge_items(
         }
 
         // 3) canonicalize units & quantities
-        let (mut unit_norm, mut qty_norm) = to_canonical_unit(unit.as_deref(), qty);
+        let (mut unit_norm, qty_norm) = to_canonical_unit(unit.as_deref(), qty);
 
         // 4) if there's no real quantity, treat as *unitless* so it merges with plain items
         if qty_norm.is_none() {
