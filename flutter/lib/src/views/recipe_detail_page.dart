@@ -90,17 +90,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       items: r.ingredients, // pass Ingredient objects
     );
     if (selected == null || selected.isEmpty) return;
-    await mergeShoppingIngredients(
-      r.ingredients
-          .map(
-            (ing) => Ingredient(
-              quantity: ing.quantity == null ? null : ing.quantity! * _scale,
-              unit: ing.unit,
-              name: ing.name,
-            ),
-          )
-          .toList(),
-    );
+    await addShoppingItems(selected);
 
     try {
       await addShoppingItems(selected);
