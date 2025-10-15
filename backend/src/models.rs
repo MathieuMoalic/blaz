@@ -9,6 +9,8 @@ use crate::ingredient_parser::parse_ingredient_line;
 pub struct AppState {
     pub pool: SqlitePool,
     pub media_dir: PathBuf,
+    pub jwt_encoding: jsonwebtoken::EncodingKey,
+    pub jwt_decoding: jsonwebtoken::DecodingKey,
 }
 
 /* ---------- API models ---------- */

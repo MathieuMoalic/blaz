@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
+import 'login_page.dart';
+import '../auth.dart';
+
+enum _MenuAction { logout }
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -79,25 +83,18 @@ class RecipesPageState extends State<RecipesPage> {
     if (q.isEmpty) return true;
     final needle = q.toLowerCase();
 
-    // Title
     if (r.title.toLowerCase().contains(needle)) return true;
 
-    // Ingredients (structured)
     for (final ing in r.ingredients) {
       if (ing.name.toLowerCase().contains(needle)) return true;
       if ((ing.unit ?? '').toLowerCase().contains(needle)) return true;
-
-      // quantity match (if user types "200" etc.)
       if (ing.quantity != null) {
         final qs = ing.quantity!.toString();
         if (qs.contains(needle)) return true;
       }
-
-      // fallback: match the formatted line too
       if (ing.toLine().toLowerCase().contains(needle)) return true;
     }
 
-    // Instructions
     for (final step in r.instructions) {
       if (step.toLowerCase().contains(needle)) return true;
     }
@@ -111,19 +108,52 @@ class RecipesPageState extends State<RecipesPage> {
       children: [
         _AppTitle(
           'Recipes',
-          trailing: IconButton(
-            tooltip: 'Add recipe',
-            icon: const Icon(Icons.add),
-            onPressed: () async {
-              final created = await Navigator.of(context).push<bool>(
-                MaterialPageRoute(builder: (_) => const AddRecipePage()),
-              );
-              if (created == true) {
-                await refresh();
-              }
-            },
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Add recipe',
+                icon: const Icon(Icons.add),
+                onPressed: () async {
+                  final created = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute(builder: (_) => const AddRecipePage()),
+                  );
+                  if (created == true) {
+                    await refresh();
+                  }
+                },
+              ),
+              PopupMenuButton<_MenuAction>(
+                tooltip: 'Account',
+                icon: const Icon(Icons.account_circle),
+                onSelected: (choice) async {
+                  switch (choice) {
+                    case _MenuAction.logout:
+                      await Auth.logout();
+                      if (!context.mounted) return;
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (_) => const LoginPage()),
+                        (_) => false,
+                      );
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem<_MenuAction>(
+                    value: _MenuAction.logout,
+                    child: ListTile(
+                      leading: Icon(Icons.logout),
+                      title: Text('Logout'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
+
         // Filter field
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -150,6 +180,7 @@ class RecipesPageState extends State<RecipesPage> {
             ),
           ),
         ),
+
         Expanded(
           child: RefreshIndicator(
             onRefresh: refresh,
@@ -196,7 +227,6 @@ class RecipesPageState extends State<RecipesPage> {
                         final thumb = mediaUrl(
                           r.imagePathSmall ?? r.imagePathFull,
                         );
-
                         return _RecipeCard(
                           title: r.title,
                           imageUrl: thumb,
@@ -255,7 +285,6 @@ class _RecipeCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Image
                   imageUrl == null
                       ? _placeholder()
                       : Image.network(
@@ -269,7 +298,6 @@ class _RecipeCard extends StatelessWidget {
                           },
                           errorBuilder: (_, __, ___) => _placeholder(),
                         ),
-                  // Tucked action (top-right)
                   Positioned(
                     top: 8,
                     right: 8,
@@ -291,7 +319,6 @@ class _RecipeCard extends StatelessWidget {
                 ],
               ),
             ),
-            // Title below
             Padding(
               padding: const EdgeInsets.all(12),
               child: Text(

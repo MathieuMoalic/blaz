@@ -10,7 +10,77 @@ const String _baseUrl = String.fromEnvironment(
   defaultValue: 'http://127.0.0.1:8080',
 );
 
-// ---------- Models ----------
+/* =========================
+ * Auth glue
+ * ========================= */
+
+String? _authToken;
+
+/// Called by the app once a user logs in/out to attach/detach the bearer token.
+void setAuthToken(String? t) {
+  _authToken = t;
+}
+
+/// Merge Authorization header with any extra headers.
+Map<String, String> _headers([Map<String, String>? extra]) {
+  final h = <String, String>{};
+  if (_authToken != null && _authToken!.isNotEmpty) {
+    h['Authorization'] = 'Bearer $_authToken';
+  }
+  if (extra != null) h.addAll(extra);
+  return h;
+}
+
+/* =========================
+ * URL + media helpers
+ * ========================= */
+
+Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
+  '$_baseUrl$path',
+).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
+
+String? mediaUrl(String? rel) {
+  if (rel == null || rel.isEmpty) return null;
+  final base = _baseUrl.replaceAll(RegExp(r'/+$'), '');
+  final path = rel.startsWith('/') ? rel.substring(1) : rel;
+  return '$base/media/$path';
+}
+
+Never _throw(http.Response r) =>
+    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
+
+/* =========================
+ * Auth API
+ * ========================= */
+
+Future<void> register({required String email, required String password}) async {
+  final r = await http.post(
+    _u('/auth/register'),
+    headers: _headers(const {'content-type': 'application/json'}),
+    body: jsonEncode({'email': email, 'password': password}),
+  );
+  // 201 Created (ok) or 409 Conflict (already exists) are both acceptable here
+  if (r.statusCode != 201 && r.statusCode != 409) _throw(r);
+}
+
+Future<String> login({required String email, required String password}) async {
+  final r = await http.post(
+    _u('/auth/login'),
+    headers: _headers(const {'content-type': 'application/json'}),
+    body: jsonEncode({'email': email, 'password': password}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final j = jsonDecode(r.body) as Map<String, dynamic>;
+  final token = (j['token'] as String?) ?? '';
+  if (token.isEmpty) {
+    throw Exception('Login succeeded but no token returned');
+  }
+  return token;
+}
+
+/* =========================
+ * Models
+ * ========================= */
 
 class MealPlanEntry {
   final int id;
@@ -43,23 +113,6 @@ class ShoppingItem {
   );
   Map<String, dynamic> toJson() => {'id': id, 'text': text, 'done': done};
 }
-
-// ---------- Helpers ----------
-Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
-  '$_baseUrl$path',
-).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
-
-String? mediaUrl(String? rel) {
-  if (rel == null || rel.isEmpty) return null;
-  final base = _baseUrl.replaceAll(RegExp(r'/+$'), '');
-  final path = rel.startsWith('/') ? rel.substring(1) : rel;
-  return '$base/media/$path';
-}
-
-Never _throw(http.Response r) =>
-    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
-
-// ---------- Recipes ----------
 
 class Ingredient {
   final double? quantity;
@@ -97,7 +150,6 @@ extension IngredientFormat on Ingredient {
       if (u == 'kg' || u == 'L') {
         return trimZeros(v.toStringAsFixed(2));
       }
-      // default: up to 2 decimals
       final s = ((v * 100).round() / 100.0).toString();
       return trimZeros(s);
     }
@@ -108,7 +160,6 @@ extension IngredientFormat on Ingredient {
       final s = ((q * 100).round() / 100.0).toString();
       return '${trimZeros(s)} $name';
     } else {
-      // unstructured: no quantity -> nothing to scale
       return name;
     }
   }
@@ -118,10 +169,9 @@ class Recipe {
   final int id;
   final String title;
   final String source;
-  final String
-  yieldText; // "yield" is a Dart keyword in some contexts, avoid clash
+  final String yieldText; // key "yield"
   final String notes;
-  final String createdAt; // raw string from backend (SQLite CURRENT_TIMESTAMP)
+  final String createdAt;
   final String updatedAt;
   final List<Ingredient> ingredients;
   final List<String> instructions;
@@ -159,11 +209,15 @@ class Recipe {
   );
 }
 
+/* =========================
+ * Recipes
+ * ========================= */
+
 Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
   final uri = Uri.parse('$_baseUrl/recipes/import');
   final resp = await http.post(
     uri,
-    headers: const {'Content-Type': 'application/json'},
+    headers: _headers(const {'Content-Type': 'application/json'}),
     body: jsonEncode({
       'url': url,
       if (model != null && model.isNotEmpty) 'model': model,
@@ -171,7 +225,6 @@ Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
   );
 
   if (resp.statusCode < 200 || resp.statusCode >= 300) {
-    // try to extract server error message
     String msg = 'Import failed (${resp.statusCode})';
     try {
       final body = jsonDecode(resp.body);
@@ -205,7 +258,7 @@ Future<Recipe> updateRecipe({
   };
   final r = await http.patch(
     _u('/recipes/$id'),
-    headers: {'content-type': 'application/json'},
+    headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode(body),
   );
   if (r.statusCode != 200) _throw(r);
@@ -220,6 +273,11 @@ Future<Recipe> uploadRecipeImage({
 }) async {
   final url = _u('/recipes/$id/image');
   final req = http.MultipartRequest('POST', url);
+
+  // attach bearer token if present
+  if (_authToken != null && _authToken!.isNotEmpty) {
+    req.headers['Authorization'] = 'Bearer $_authToken';
+  }
 
   // Prefer bytes if provided (works on web AND mobile; sets Content-Length)
   if (bytes != null) {
@@ -236,7 +294,6 @@ Future<Recipe> uploadRecipeImage({
       ),
     );
   } else if (path != null && path.isNotEmpty) {
-    // Fallback to a file path (desktop/mobile)
     final name = filename ?? p.basename(path);
     final ct = lookupMimeType(name) ?? 'application/octet-stream';
     req.files.add(
@@ -257,7 +314,7 @@ Future<Recipe> uploadRecipeImage({
 }
 
 Future<List<Recipe>> fetchRecipes() async {
-  final res = await http.get(Uri.parse('$_baseUrl/recipes'));
+  final res = await http.get(_u('/recipes'), headers: _headers());
   if (res.statusCode != 200) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
@@ -266,7 +323,7 @@ Future<List<Recipe>> fetchRecipes() async {
 }
 
 Future<Recipe> fetchRecipe(int id) async {
-  final res = await http.get(Uri.parse('$_baseUrl/recipes/$id'));
+  final res = await http.get(_u('/recipes/$id'), headers: _headers());
   if (res.statusCode != 200) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
@@ -285,45 +342,47 @@ Future<Recipe> createRecipeFull({
 
   final body = <String, dynamic>{
     'title': title,
-    'source': source, // can be null
-    'yield': yieldText, // <-- IMPORTANT: key must be exactly "yield"
-    'notes': notes, // can be null
+    'source': source,
+    'yield': yieldText,
+    'notes': notes,
     'ingredients': ingredients,
     'instructions': instructions,
   };
 
   final res = await http.post(
     uri,
-    headers: const {
+    headers: _headers(const {
       'Content-Type': 'application/json; charset=utf-8',
       'Accept': 'application/json',
-    },
+    }),
     body: jsonEncode(body),
   );
 
   if (res.statusCode != 200) {
-    // Surface server error text to help debugging
     throw Exception('createRecipeFull: ${res.statusCode} ${res.body}');
   }
   return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
 }
 
 Future<Recipe> getRecipe(int id) async {
-  final r = await http.get(_u('/recipes/$id'));
+  final r = await http.get(_u('/recipes/$id'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
   return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
 Future<void> deleteRecipe(int id) async {
-  final res = await http.delete(Uri.parse('$_baseUrl/recipes/$id'));
-  if (res.statusCode != 204) {
+  final res = await http.delete(_u('/recipes/$id'), headers: _headers());
+  if (res.statusCode != 200 && res.statusCode != 204) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
 }
 
-// ---------- Meal plan ----------
+/* =========================
+ * Meal plan
+ * ========================= */
+
 Future<List<MealPlanEntry>> fetchMealPlanForDay(String day) async {
-  final r = await http.get(_u('/meal-plan', {'day': day}));
+  final r = await http.get(_u('/meal-plan', {'day': day}), headers: _headers());
   if (r.statusCode != 200) _throw(r);
   final List data = jsonDecode(r.body) as List;
   return data
@@ -337,7 +396,7 @@ Future<MealPlanEntry> assignRecipeToDay({
 }) async {
   final r = await http.post(
     _u('/meal-plan'),
-    headers: {'content-type': 'application/json'},
+    headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode({'day': day, 'recipe_id': recipeId}),
   );
   if (r.statusCode != 200) _throw(r);
@@ -348,13 +407,19 @@ Future<void> unassignRecipeFromDay({
   required String day,
   required int recipeId,
 }) async {
-  final r = await http.delete(_u('/meal-plan/$day/$recipeId'));
+  final r = await http.delete(
+    _u('/meal-plan/$day/$recipeId'),
+    headers: _headers(),
+  );
   if (r.statusCode != 200) _throw(r);
 }
 
-// ---------- Shopping ----------
+/* =========================
+ * Shopping
+ * ========================= */
+
 Future<List<ShoppingItem>> fetchShoppingList() async {
-  final r = await http.get(_u('/shopping'));
+  final r = await http.get(_u('/shopping'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
   final List data = jsonDecode(r.body) as List;
   return data
@@ -368,7 +433,7 @@ Future<List<ShoppingItem>> mergeShoppingIngredients(
   final uri = _u('/shopping/merge');
   final r = await http.post(
     uri,
-    headers: {'content-type': 'application/json'},
+    headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode({'items': items.map((e) => e.toJson()).toList()}),
   );
   if (r.statusCode != 200) _throw(r);
@@ -381,7 +446,7 @@ Future<List<ShoppingItem>> mergeShoppingIngredients(
 Future<ShoppingItem> createShoppingItem(String text) async {
   final r = await http.post(
     _u('/shopping'),
-    headers: {'content-type': 'application/json'},
+    headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode({'text': text}),
   );
   if (r.statusCode != 200) _throw(r);
@@ -394,7 +459,7 @@ Future<ShoppingItem> toggleShoppingItem({
 }) async {
   final r = await http.patch(
     _u('/shopping/$id'),
-    headers: {'content-type': 'application/json'},
+    headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode({'done': done}),
   );
   if (r.statusCode != 200) _throw(r);
@@ -402,7 +467,7 @@ Future<ShoppingItem> toggleShoppingItem({
 }
 
 Future<void> deleteShoppingItem(int id) async {
-  final r = await http.delete(_u('/shopping/$id'));
+  final r = await http.delete(_u('/shopping/$id'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
 }
 
@@ -453,8 +518,6 @@ Future<List<ShoppingItem>> addShoppingItems(
   }
 
   if (failures.isNotEmpty) {
-    // Some (or all) failed — surface a clear error.
-    // Callers can still rely on the returned list when no exception is thrown.
     throw Exception(
       'Failed to add ${failures.length} item(s): ${failures.join(', ')}',
     );

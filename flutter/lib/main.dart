@@ -7,11 +7,14 @@ import 'src/views/recipes_page.dart';
 import 'src/views/add_recipe_page.dart';
 import 'src/views/meal_plan/meal_plan_page.dart';
 import 'src/views/shopping_list_page.dart';
+import 'src/views/login_page.dart';
+import 'src/auth.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // optional: frameless desktop window like you had
+  await Auth.init();
+
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
     await windowManager.ensureInitialized();
     const opts = WindowOptions(
@@ -47,7 +50,7 @@ class BlazApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       theme: ThemeData(useMaterial3: true, colorScheme: light),
       darkTheme: ThemeData(useMaterial3: true, colorScheme: dark),
-      home: const HomeShell(),
+      home: Auth.token == null ? const LoginPage() : const HomeShell(),
       debugShowCheckedModeBanner: false,
     );
   }

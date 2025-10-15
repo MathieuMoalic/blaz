@@ -6,16 +6,14 @@ pub mod routes;
 
 use crate::{
     models::AppState,
-    routes::{meal_plan, parse_recipe, recipes, shopping},
+    routes::{auth, meal_plan, parse_recipe, recipes, shopping},
 };
+use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{HeaderValue, Method, Request, Response, header};
 use axum::middleware::{Next, from_fn};
-use axum::{
-    Json, Router,
-    extract::ConnectInfo,
-    routing::{delete, get, patch},
-};
-use axum::{body::Body, routing::post};
+use axum::routing::{delete, get, patch, post};
+use axum::{Json, Router};
 use std::time::Duration;
 use tower_http::services::ServeDir;
 use tower_http::{
@@ -28,20 +26,17 @@ use tracing::{Span, info_span};
 async fn healthz() -> Json<&'static str> {
     Json("ok")
 }
-/// Logs request & response bodies (dev-friendly).
-/// Skips multipart requests and likely-binary responses, truncates previews.
+
 async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
-    // Request body logging decision
-    let req_ct = req
+    let req_ct: String = req
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let log_req_body = !req_ct.starts_with("multipart/");
+        .unwrap_or("")
+        .to_string();
 
-    // Split and optionally read + replace the request body
     let (req_parts, req_body) = req.into_parts();
-    let req = if log_req_body {
+    let req = if !req_ct.starts_with("multipart/") {
         match axum::body::to_bytes(req_body, 64 * 1024).await {
             Ok(bytes) => {
                 let preview = if bytes.len() > 16 * 1024 {
@@ -64,22 +59,17 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
         Request::from_parts(req_parts, req_body)
     };
 
-    // Call handler
     let res: Response<Body> = next.run(req).await;
 
-    // Response body logging decision
     let res_ct = res
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let log_res_body =
-        !res_ct.starts_with("image/") && !res_ct.starts_with("application/octet-stream");
 
-    // Split and optionally read + replace the response body
     let (res_parts, res_body) = res.into_parts();
-    if log_res_body {
+    if !res_ct.starts_with("image/") && !res_ct.starts_with("application/octet-stream") {
         match axum::body::to_bytes(res_body, 64 * 1024).await {
             Ok(bytes) => {
                 let preview = if bytes.len() > 16 * 1024 {
@@ -133,17 +123,12 @@ pub fn build_app(state: AppState) -> Router {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
 
-    // CORS: dev (no BLAZ_DOMAIN) = allow all; prod (BLAZ_DOMAIN set) = allowlist
     let cors = match std::env::var("BLAZ_DOMAIN") {
-        Err(_) => {
-            // DEV — permissive
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any)
-        }
+        Err(_) => CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any),
         Ok(domains) => {
-            // PROD-ish — comma-separated domains supported, e.g. "app.example.com,admin.example.com"
             let origins: Vec<HeaderValue> = domains
                 .split(',')
                 .map(str::trim)
@@ -167,10 +152,7 @@ pub fn build_app(state: AppState) -> Router {
         }
     };
 
-    // Serve /media from MEDIA_DIR for both small & full images
-    let media_service = ServeDir::new(state.media_dir.clone());
-
-    Router::new()
+    let api = Router::new()
         .route("/healthz", get(healthz))
         .route("/recipes", get(recipes::list).post(recipes::create))
         .route(
@@ -192,6 +174,13 @@ pub fn build_app(state: AppState) -> Router {
             patch(shopping::toggle_done).delete(shopping::delete),
         )
         .route("/shopping/merge", post(shopping::merge_items))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login));
+
+    let media_service = ServeDir::new(state.media_dir.clone());
+
+    Router::new()
+        .merge(api)
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(from_fn(log_payloads))
