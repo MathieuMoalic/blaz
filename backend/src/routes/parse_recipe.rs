@@ -61,14 +61,14 @@ pub async fn import_from_url(
     let title = extract_title(&html).unwrap_or_else(|| "Imported recipe".to_string());
 
     // 3) Call HF router
-    let base = std::env::var("BASE_URL")
+    let base = std::env::var("BLAZ_LLM_API_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "https://router.huggingface.co/v1".into());
-    let token = std::env::var("HF_TOKEN").unwrap_or_default();
+    let token = std::env::var("BLAZ_LLM_API_KEY").unwrap_or_default();
     let model = req
         .model
-        .or_else(|| std::env::var("MODEL").ok())
+        .or_else(|| std::env::var("BLAZ_LLM_MODEL").ok())
         .unwrap_or_else(|| "meta-llama/Llama-3.1-8B-Instruct".into());
 
     let system = build_instructions();

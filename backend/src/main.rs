@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
         .run(&pool)
         .await?;
 
-    let media_dir = std::env::var("MEDIA_DIR").unwrap_or_else(|_| "media".into());
+    let media_dir = std::env::var("BLAZ_MEDIA_DIR").unwrap_or_else(|_| "media".into());
     let media_dir = std::path::PathBuf::from(media_dir);
     tokio::fs::create_dir_all(&media_dir).await.ok(); // best-effort
     let state = AppState { pool, media_dir };
