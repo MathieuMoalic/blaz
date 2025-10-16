@@ -5,7 +5,7 @@ import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 
 /// Compile-time base URL (override with --dart-define API_BASE_URL=...)
-const String _baseUrl = String.fromEnvironment(
+const String baseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: 'http://127.0.0.1:8080',
 );
@@ -31,17 +31,29 @@ Map<String, String> _headers([Map<String, String>? extra]) {
   return h;
 }
 
+Future<bool> serverAllowsRegistration() async {
+  final uri = Uri.parse('$baseUrl/auth/meta');
+  final res = await http.get(uri);
+  if (res.statusCode != 200) {
+    // If the endpoint is missing or errors, default to allowing
+    return true;
+  }
+  final Map<String, dynamic> data =
+      jsonDecode(res.body) as Map<String, dynamic>;
+  return data['allow_registration'] == true;
+}
+
 /* =========================
  * URL + media helpers
  * ========================= */
 
 Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
-  '$_baseUrl$path',
+  '$baseUrl$path',
 ).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
 
 String? mediaUrl(String? rel) {
   if (rel == null || rel.isEmpty) return null;
-  final base = _baseUrl.replaceAll(RegExp(r'/+$'), '');
+  final base = baseUrl.replaceAll(RegExp(r'/+$'), '');
   final path = rel.startsWith('/') ? rel.substring(1) : rel;
   return '$base/media/$path';
 }
@@ -214,7 +226,7 @@ class Recipe {
  * ========================= */
 
 Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
-  final uri = Uri.parse('$_baseUrl/recipes/import');
+  final uri = Uri.parse('$baseUrl/recipes/import');
   final resp = await http.post(
     uri,
     headers: _headers(const {'Content-Type': 'application/json'}),
@@ -338,7 +350,7 @@ Future<Recipe> createRecipeFull({
   required List<String> ingredients,
   required List<String> instructions,
 }) async {
-  final uri = Uri.parse('$_baseUrl/recipes');
+  final uri = Uri.parse('$baseUrl/recipes');
 
   final body = <String, dynamic>{
     'title': title,

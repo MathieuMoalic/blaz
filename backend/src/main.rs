@@ -5,6 +5,16 @@ use blaz::{build_app, db::make_pool, models::AppState};
 use sqlx::migrate::Migrator;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
+fn env_bool(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(v) => {
+            let s = v.trim().to_ascii_lowercase();
+            matches!(s.as_str(), "1" | "true" | "yes" | "on")
+        }
+        Err(_) => default,
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -25,6 +35,10 @@ async fn main() -> anyhow::Result<()> {
     let media_dir = std::path::PathBuf::from(media_dir);
     tokio::fs::create_dir_all(&media_dir).await.ok();
 
+    // Feature flag: default ON for dev convenience
+    // Set BLAZ_ALLOW_REGISTRATION=false to disable new signups.
+    let allow_registration = env_bool("BLAZ_ALLOW_REGISTRATION", true);
+
     let secret = std::env::var("BLAZ_JWT_SECRET").unwrap_or_else(|_| "dev-secret-change-me".into());
 
     let state = AppState {
@@ -32,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         media_dir,
         jwt_encoding: jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
         jwt_decoding: jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
+        allow_registration,
     };
 
     let app = build_app(state);

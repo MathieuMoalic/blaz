@@ -11,6 +11,7 @@ pub struct AppState {
     pub media_dir: PathBuf,
     pub jwt_encoding: jsonwebtoken::EncodingKey,
     pub jwt_decoding: jsonwebtoken::DecodingKey,
+    pub allow_registration: bool,
 }
 
 /* ---------- API models ---------- */

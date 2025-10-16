@@ -38,6 +38,10 @@ pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
 ) -> Result<StatusCode, StatusCode> {
+    if !state.allow_registration {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     let email = req.email.trim();
     let password = req.password.trim();
     if email.is_empty() || !email.contains('@') || password.len() < 8 {

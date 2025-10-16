@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import '../api.dart';
 import '../auth.dart';
-import '../../main.dart';
+import '../home_shell.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -17,6 +16,13 @@ class _LoginPageState extends State<LoginPage> {
   bool _registerMode = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Ensure we don’t start in register mode if admin disabled it.
+    _registerMode = _registerMode && Auth.allowRegistration;
+  }
+
+  @override
   void dispose() {
     _email.dispose();
     _password.dispose();
@@ -28,13 +34,16 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _busy = true);
     try {
       if (_registerMode) {
-        await register(email: _email.text.trim(), password: _password.text);
+        await Auth.register(
+          email: _email.text.trim(),
+          password: _password.text,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Account created. Please sign in.')),
+        );
       }
-      final token = await login(
-        email: _email.text.trim(),
-        password: _password.text,
-      );
-      await Auth.save(token);
+      await Auth.login(email: _email.text.trim(), password: _password.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const HomeShell()),
@@ -52,6 +61,8 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final canRegister = Auth.allowRegistration;
+
     return Scaffold(
       appBar: AppBar(title: Text(_registerMode ? 'Create account' : 'Sign in')),
       body: SafeArea(
@@ -81,6 +92,7 @@ class _LoginPageState extends State<LoginPage> {
                 obscureText: true,
                 validator: (v) =>
                     (v == null || v.length < 8) ? 'Min 8 characters' : null,
+                onFieldSubmitted: (_) => _submit(),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
@@ -95,16 +107,24 @@ class _LoginPageState extends State<LoginPage> {
                 label: Text(_registerMode ? 'Register & Sign in' : 'Sign in'),
               ),
               const SizedBox(height: 8),
-              TextButton(
-                onPressed: _busy
-                    ? null
-                    : () => setState(() => _registerMode = !_registerMode),
-                child: Text(
-                  _registerMode
-                      ? 'I already have an account'
-                      : 'Create an account',
+              if (canRegister)
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() => _registerMode = !_registerMode),
+                  child: Text(
+                    _registerMode
+                        ? 'I already have an account'
+                        : 'Create an account',
+                  ),
+                )
+              else
+                Text(
+                  'Registration is disabled by the administrator.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
             ],
           ),
         ),

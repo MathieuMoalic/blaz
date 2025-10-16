@@ -6,14 +6,17 @@ pub mod routes;
 
 use crate::{
     models::AppState,
-    routes::{auth, meal_plan, parse_recipe, recipes, shopping},
+    routes::{auth_meta, meal_plan, parse_recipe, recipes, shopping},
 };
 use axum::body::Body;
-use axum::extract::ConnectInfo;
 use axum::http::{HeaderValue, Method, Request, Response, header};
 use axum::middleware::{Next, from_fn};
-use axum::routing::{delete, get, patch, post};
-use axum::{Json, Router};
+use axum::{
+    Json, Router,
+    extract::ConnectInfo,
+    routing::{delete, get, patch, post},
+};
+use routes::auth;
 use std::time::Duration;
 use tower_http::services::ServeDir;
 use tower_http::{
@@ -27,14 +30,18 @@ async fn healthz() -> Json<&'static str> {
     Json("ok")
 }
 
+/// Logs request & response bodies (dev-friendly).
+/// Skips multipart requests and likely-binary responses, truncates previews.
 async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
-    let req_ct: String = req
+    // Decide if we log the request body (avoid multipart)
+    let req_ct = req
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
 
+    // Split parts/body
     let (req_parts, req_body) = req.into_parts();
     let req = if !req_ct.starts_with("multipart/") {
         match axum::body::to_bytes(req_body, 64 * 1024).await {
@@ -59,15 +66,16 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
         Request::from_parts(req_parts, req_body)
     };
 
+    // Call handler
     let res: Response<Body> = next.run(req).await;
 
+    // Response body logging decision
     let res_ct = res
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-
     let (res_parts, res_body) = res.into_parts();
     if !res_ct.starts_with("image/") && !res_ct.starts_with("application/octet-stream") {
         match axum::body::to_bytes(res_body, 64 * 1024).await {
@@ -123,12 +131,17 @@ pub fn build_app(state: AppState) -> Router {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
 
+    // CORS: dev (no BLAZ_DOMAIN) = allow all; prod (BLAZ_DOMAIN set) = allowlist
     let cors = match std::env::var("BLAZ_DOMAIN") {
-        Err(_) => CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any),
+        Err(_) => {
+            // DEV — permissive
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        }
         Ok(domains) => {
+            // PROD-ish — comma-separated domains supported
             let origins: Vec<HeaderValue> = domains
                 .split(',')
                 .map(str::trim)
@@ -152,8 +165,12 @@ pub fn build_app(state: AppState) -> Router {
         }
     };
 
-    let api = Router::new()
+    // Serve /media from MEDIA_DIR
+    let media_service = ServeDir::new(state.media_dir.clone());
+
+    Router::new()
         .route("/healthz", get(healthz))
+        // Recipes
         .route("/recipes", get(recipes::list).post(recipes::create))
         .route(
             "/recipes/{id}",
@@ -163,11 +180,13 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route("/recipes/{id}/image", post(recipes::upload_image))
         .route("/recipes/import", post(parse_recipe::import_from_url))
+        // Meal plan
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),
         )
         .route("/meal-plan/{day}/{recipe_id}", delete(meal_plan::unassign))
+        // Shopping
         .route("/shopping", get(shopping::list).post(shopping::create))
         .route(
             "/shopping/{id}",
@@ -175,12 +194,10 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route("/shopping/merge", post(shopping::merge_items))
         .route("/auth/register", post(auth::register))
-        .route("/auth/login", post(auth::login));
-
-    let media_service = ServeDir::new(state.media_dir.clone());
-
-    Router::new()
-        .merge(api)
+        .route("/auth/login", post(auth::login))
+        // Auth meta (for frontend to decide showing Register)
+        .route("/auth/meta", get(auth_meta::meta))
+        // Static media
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(from_fn(log_payloads))
