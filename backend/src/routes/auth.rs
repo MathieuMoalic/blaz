@@ -1,7 +1,8 @@
+use crate::error::AppResult; // NEW
 use crate::models::AppState;
 use argon2::Argon2;
 use axum::{Json, extract::State, http::StatusCode};
-use jsonwebtoken::{Algorithm, Header, Validation, decode, encode};
+use jsonwebtoken::{Algorithm, Header, encode};
 use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -37,15 +38,16 @@ fn now_ts() -> usize {
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
-) -> Result<StatusCode, StatusCode> {
+) -> AppResult<StatusCode> {
+    // CHANGED
     if !state.allow_registration {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(StatusCode::FORBIDDEN.into());
     }
 
     let email = req.email.trim();
     let password = req.password.trim();
     if email.is_empty() || !email.contains('@') || password.len() < 8 {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST.into());
     }
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
@@ -64,10 +66,10 @@ pub async fn register(
         Err(e) => {
             if let sqlx::Error::Database(db) = &e {
                 if db.is_unique_violation() {
-                    return Err(StatusCode::CONFLICT);
+                    return Err(StatusCode::CONFLICT.into());
                 }
             }
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(StatusCode::INTERNAL_SERVER_ERROR.into())
         }
     }
 }
@@ -75,7 +77,8 @@ pub async fn register(
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
-) -> Result<Json<LoginResp>, StatusCode> {
+) -> AppResult<Json<LoginResp>> {
+    // CHANGED
     let row = sqlx::query("SELECT id, password_hash FROM users WHERE email = ?")
         .bind(req.email.trim())
         .fetch_optional(&state.pool)
@@ -90,7 +93,7 @@ pub async fn login(
         .verify_password(req.password.as_bytes(), &parsed)
         .is_err()
     {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED.into());
     }
 
     let exp = now_ts() + 7 * 24 * 3600;
@@ -101,43 +104,4 @@ pub async fn login(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(LoginResp { token }))
-}
-
-use axum::body::Body;
-use axum::{
-    http::{Method, Request, Response, StatusCode as S, header},
-    middleware::Next,
-};
-
-/// Middleware: require `Authorization: Bearer <jwt>` for protected routes
-pub async fn require_auth(
-    State(state): State<AppState>,
-    req: Request<Body>,
-    next: Next,
-) -> Response<Body> {
-    if req.method() == Method::OPTIONS {
-        return next.run(req).await;
-    }
-    let unauth = || {
-        Response::builder()
-            .status(S::UNAUTHORIZED)
-            .body(Body::empty())
-            .unwrap()
-    };
-
-    let auth = match req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        Some(v) if v.starts_with("Bearer ") => &v[7..],
-        _ => return unauth(),
-    };
-    let mut val = Validation::new(Algorithm::HS256);
-    val.validate_exp = true;
-
-    match decode::<Claims>(auth, &state.jwt_decoding, &val) {
-        Ok(_) => next.run(req).await,
-        Err(_) => unauth(),
-    }
 }

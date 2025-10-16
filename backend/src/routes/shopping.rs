@@ -5,6 +5,7 @@ use axum::{
 
 use serde::Deserialize;
 
+use crate::units::{normalize_name, to_canonical_qty_unit};
 use crate::{
     error::AppResult,
     models::{AppState, NewItem, ShoppingItem, ToggleItem},
@@ -83,7 +84,7 @@ fn strip_leading_qty_unit(name: &str) -> (Option<f64>, Option<String>, String) {
 /// Try to parse a free-text line like:
 /// "100 ml water", "1 banana", "0.5 bananas", "2-3 apples", "1 cup of sugar"
 /// Returns (normalized_name, canonical_unit (or None), quantity).
-fn parse_free_text_item(s: &str) -> Option<(String, Option<String>, Option<f64>)> {
+fn parse_free_text_item(s: &str) -> Option<(String, Option<&str>, Option<f64>)> {
     let raw = s.trim();
     if raw.is_empty() {
         return None;
@@ -146,45 +147,9 @@ fn parse_free_text_item(s: &str) -> Option<(String, Option<String>, Option<f64>)
     let name_norm = normalize_name(&name_raw);
 
     // 4) canonicalize quantity+unit (kg->g, L->ml, tbsp/tsp->ml etc.)
-    let (unit_norm, qty_norm) = to_canonical_unit(unit.as_deref(), qty);
+    let (unit_norm, qty_norm) = to_canonical_qty_unit(unit.as_deref(), qty);
 
     Some((name_norm, unit_norm, qty_norm))
-}
-
-fn normalize_name(s: &str) -> String {
-    // trim, lowercase, collapse internal whitespace
-    let mut out = String::with_capacity(s.len());
-    let mut ws = false;
-    for ch in s.trim().to_lowercase().chars() {
-        if ch.is_whitespace() {
-            if !ws {
-                out.push(' ');
-                ws = true;
-            }
-        } else {
-            ws = false;
-            out.push(ch);
-        }
-    }
-    out.trim().to_string()
-}
-
-/// Convert to canonical base units used for merging.
-/// - kg -> g
-/// - L  -> ml
-/// - tbsp -> ml (15)
-/// - tsp  -> ml (5)
-fn to_canonical_unit(unit: Option<&str>, qty: Option<f64>) -> (Option<String>, Option<f64>) {
-    let u = unit
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty());
-    match (u.as_deref(), qty) {
-        (Some("kg"), Some(q)) => (Some("g".into()), Some(q * 1000.0)),
-        (Some("l"), Some(q)) => (Some("ml".into()), Some(q * 1000.0)),
-        (Some("tbsp"), Some(q)) => (Some("ml".into()), Some(q * 15.0)),
-        (Some("tsp"), Some(q)) => (Some("ml".into()), Some(q * 5.0)),
-        (u, q) => (u.map(|s| s.to_string()), q),
-    }
 }
 
 /// Unique key used for merging rows: "<unit>|<name>" with normalized name/unit.
@@ -234,7 +199,7 @@ pub async fn create(
 
     // If the line looks structured, upsert by (unit,name) and sum quantity.
     if let Some((name_norm, unit_norm, qty_norm)) = parse_free_text_item(text) {
-        let key = make_key(&name_norm, unit_norm.as_deref());
+        let key = make_key(&name_norm, unit_norm);
 
         sqlx::query(
             r#"
@@ -246,7 +211,7 @@ pub async fn create(
             "#,
         )
         .bind(&name_norm)
-        .bind(&unit_norm)
+        .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
         .execute(&state.pool)
@@ -381,7 +346,7 @@ pub async fn merge_items(
         }
 
         // 3) canonicalize units & quantities
-        let (mut unit_norm, qty_norm) = to_canonical_unit(unit.as_deref(), qty);
+        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(unit.as_deref(), qty);
 
         // 4) if there's no real quantity, treat as *unitless* so it merges with plain items
         if qty_norm.is_none() {
@@ -389,7 +354,7 @@ pub async fn merge_items(
         }
 
         // 5) key and upsert (avoid turning NULL into 0)
-        let key = make_key(&base_name, unit_norm.as_deref());
+        let key = make_key(&base_name, unit_norm);
 
         sqlx::query(
             r#"
@@ -407,7 +372,7 @@ pub async fn merge_items(
             "#,
         )
         .bind(&base_name)
-        .bind(&unit_norm)
+        .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
         .execute(&state.pool)

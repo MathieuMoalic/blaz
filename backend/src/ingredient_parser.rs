@@ -1,4 +1,5 @@
 use crate::models::Ingredient;
+use crate::units;
 use regex::Regex;
 
 // Regex for lines like:
@@ -27,19 +28,6 @@ static ING_RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
     .unwrap()
 });
 
-/// Canonicalize a parsed unit to one of: g, kg, ml, L, tsp, tbsp.
-fn canon_unit(u: &str) -> Option<&'static str> {
-    match u.to_ascii_lowercase().as_str() {
-        "g" | "gram" | "grams" => Some("g"),
-        "kg" | "kilogram" | "kilograms" => Some("kg"),
-        "ml" | "milliliter" | "millilitre" | "milliliters" | "millilitres" => Some("ml"),
-        "l" | "liter" | "litre" | "liters" | "litres" => Some("L"), // canonical uppercase L
-        "tsp" | "teaspoon" | "teaspoons" => Some("tsp"),
-        "tbsp" | "tablespoon" | "tablespoons" => Some("tbsp"),
-        _ => None,
-    }
-}
-
 /// Convert a single free-text ingredient line into a structured `Ingredient`.
 pub fn parse_ingredient_line(s: &str) -> Ingredient {
     let s = s.trim();
@@ -65,7 +53,9 @@ pub fn parse_ingredient_line(s: &str) -> Ingredient {
         }
 
         let unit_raw = caps.name("u").map(|m| m.as_str());
-        let unit = unit_raw.and_then(canon_unit).map(|u| u.to_string());
+        let unit = unit_raw
+            .and_then(units::canon_unit_str)
+            .map(|u| u.to_string());
 
         // Clean up the remainder as the ingredient name
         let mut name = caps
@@ -73,7 +63,7 @@ pub fn parse_ingredient_line(s: &str) -> Ingredient {
             .map(|m| m.as_str())
             .unwrap_or("")
             .to_string();
-        name = name.trim().trim_matches(',').to_string();
+        name = units::norm_whitespace(&name);
 
         return Ingredient {
             quantity,

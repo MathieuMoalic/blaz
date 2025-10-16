@@ -1,4 +1,5 @@
 use crate::{
+    error::AppResult,
     models::{AppState, Ingredient, Recipe, RecipeRow},
     routes::{parse_recipe_image::extract_main_image_url, recipes::fetch_and_store_recipe_image},
 };
@@ -10,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
 use tracing::error;
-/* ---------- Request/Response ---------- */
 
 #[derive(Deserialize)]
 pub struct ImportReq {
@@ -30,7 +30,8 @@ struct Extracted {
 pub async fn import_from_url(
     State(state): State<AppState>,
     Json(req): Json<ImportReq>,
-) -> Result<Json<Recipe>, StatusCode> {
+) -> AppResult<Json<Recipe>> {
+    // CHANGED
     // 1) Fetch HTML
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(25))
@@ -76,10 +77,9 @@ pub async fn import_from_url(
         Ok(ok) => ok,
         Err(e) => {
             error!(?e, "llm extract failed");
-            return Err(StatusCode::BAD_GATEWAY);
+            return Err(StatusCode::BAD_GATEWAY.into());
         }
     };
-    // keep this earlier, but don't call fetch yet—just keep the URL (if any)
     let main_img_url = extract_main_image_url(&html, &req.url);
 
     // 4) Insert into DB (no image yet)
@@ -117,7 +117,6 @@ pub async fn import_from_url(
     if let Some(img_url) = main_img_url {
         match fetch_and_store_recipe_image(&client, &img_url, &state, row.id).await {
             Ok((full, thumb)) => {
-                // store the relative filenames returned by fetch_and_store_recipe_image
                 if let Err(e) = sqlx::query(
                     r#"
                 UPDATE recipes
@@ -163,6 +162,7 @@ pub async fn import_from_url(
 
     Ok(Json(final_row.into()))
 }
+// 5) If we found a main image, fetch/convert/store and UPDATE the row
 /* ---------- System prompt ---------- */
 
 fn build_instructions() -> String {

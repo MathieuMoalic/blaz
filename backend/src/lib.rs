@@ -1,8 +1,10 @@
 pub mod db;
 pub mod error;
+pub mod image_io;
 pub mod ingredient_parser;
 pub mod models;
 pub mod routes;
+pub mod units;
 
 use crate::{
     models::AppState,
@@ -101,6 +103,38 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
     }
 }
 
+// CORS: dev (no BLAZ_DOMAIN) = allow all; prod (BLAZ_DOMAIN set) = allowlist
+fn cors_layer() -> CorsLayer {
+    match std::env::var("BLAZ_DOMAIN") {
+        Err(_) => CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any),
+        Ok(domains) => {
+            let origins: Vec<HeaderValue> = domains
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .flat_map(|d| [format!("https://{d}"), format!("http://{d}")])
+                .filter_map(|s| s.parse::<HeaderValue>().ok())
+                .collect();
+
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PATCH,
+                    Method::DELETE,
+                    Method::OPTIONS,
+                ])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+                .expose_headers([header::LOCATION])
+                .max_age(Duration::from_secs(60 * 60))
+        }
+    }
+}
+
 pub fn build_app(state: AppState) -> Router {
     let trace = TraceLayer::new_for_http()
         .make_span_with(|req: &Request<Body>| {
@@ -130,40 +164,6 @@ pub fn build_app(state: AppState) -> Router {
         .on_failure(|_class: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
-
-    // CORS: dev (no BLAZ_DOMAIN) = allow all; prod (BLAZ_DOMAIN set) = allowlist
-    let cors = match std::env::var("BLAZ_DOMAIN") {
-        Err(_) => {
-            // DEV — permissive
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any)
-        }
-        Ok(domains) => {
-            // PROD-ish — comma-separated domains supported
-            let origins: Vec<HeaderValue> = domains
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .flat_map(|d| [format!("https://{d}"), format!("http://{d}")])
-                .filter_map(|s| s.parse::<HeaderValue>().ok())
-                .collect();
-
-            CorsLayer::new()
-                .allow_origin(origins)
-                .allow_methods([
-                    Method::GET,
-                    Method::POST,
-                    Method::PATCH,
-                    Method::DELETE,
-                    Method::OPTIONS,
-                ])
-                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
-                .expose_headers([header::LOCATION])
-                .max_age(std::time::Duration::from_secs(60 * 60))
-        }
-    };
 
     // Serve /media from MEDIA_DIR
     let media_service = ServeDir::new(state.media_dir.clone());
@@ -201,6 +201,6 @@ pub fn build_app(state: AppState) -> Router {
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(from_fn(log_payloads))
-        .layer(cors)
+        .layer(cors_layer())
         .layer(trace)
 }

@@ -1,3 +1,4 @@
+use crate::image_io::to_full_and_thumb_webp;
 use crate::{
     ingredient_parser::parse_ingredient_line,
     models::{AppState, Ingredient, NewRecipe, Recipe, RecipeRow, UpdateRecipe},
@@ -7,16 +8,11 @@ use axum::{
     extract::{Multipart, Path, State},
     http::StatusCode,
 };
-use image::GenericImageView;
 use sqlx::Arguments;
 use sqlx::sqlite::SqliteArguments;
 use tracing::error;
 
 use crate::error::AppResult;
-
-const FULL_WEBP_QUALITY: f32 = 90.0;
-const THUMB_WEBP_QUALITY: f32 = 3.0;
-const THUMB_MAX_DIM: u32 = 1024; // thumbnail bounding box (px)
 
 pub async fn fetch_and_store_recipe_image(
     client: &reqwest::Client,
@@ -24,9 +20,7 @@ pub async fn fetch_and_store_recipe_image(
     state: &crate::models::AppState,
     recipe_id: i64,
 ) -> anyhow::Result<(String, String)> {
-    use image::GenericImageView;
     use std::io;
-    use webp::Encoder as WebpEncoder;
 
     // 1) download
     let bytes = client
@@ -45,20 +39,7 @@ pub async fn fetch_and_store_recipe_image(
             let img = image::load_from_memory(&bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("decode error: {e}")))?;
 
-            let full_mem = WebpEncoder::from_image(&img)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("webp enc init: {e}")))?
-                .encode(90.0);
-            let (w, h) = img.dimensions();
-            let thumb_img = if w <= 1024 && h <= 1024 {
-                img
-            } else {
-                img.resize(1024, 1024, image::imageops::FilterType::Triangle)
-            };
-            let thumb_mem = WebpEncoder::from_image(&thumb_img)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("webp enc init: {e}")))?
-                .encode(3.0);
-
-            Ok((full_mem.to_vec(), thumb_mem.to_vec()))
+            to_full_and_thumb_webp(&img)
         })
         .await??;
 
@@ -78,9 +59,7 @@ pub async fn upload_image(
     Path(id): Path<i64>,
     mut multipart: Multipart,
 ) -> AppResult<Json<Recipe>> {
-    use image::imageops::FilterType;
     use uuid::Uuid;
-    use webp::Encoder as WebpEncoder;
 
     // 1) Pull the file bytes (accept "image" or "file")
     let mut bytes: Option<Vec<u8>> = None;
@@ -134,29 +113,7 @@ pub async fn upload_image(
                 std::io::Error::new(std::io::ErrorKind::Other, format!("decode error: {e}"))
             })?;
 
-            // FULL (original size) -> WebP (quality)
-            let full_mem = WebpEncoder::from_image(&img)
-                .map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, format!("webp enc init: {e}"))
-                })?
-                .encode(FULL_WEBP_QUALITY);
-            let full_out = full_mem.to_vec();
-
-            // THUMB: resize if needed, then WebP (lower quality)
-            let (w, h) = img.dimensions();
-            let thumb_img = if w <= THUMB_MAX_DIM && h <= THUMB_MAX_DIM {
-                img
-            } else {
-                img.resize(THUMB_MAX_DIM, THUMB_MAX_DIM, FilterType::Triangle)
-            };
-            let thumb_mem = WebpEncoder::from_image(&thumb_img)
-                .map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, format!("webp enc init: {e}"))
-                })?
-                .encode(THUMB_WEBP_QUALITY);
-            let thumb_out = thumb_mem.to_vec();
-
-            Ok((full_out, thumb_out))
+            to_full_and_thumb_webp(&img)
         })
         .await??;
 
@@ -199,7 +156,8 @@ pub async fn upload_image(
     Ok(Json(recipe))
 }
 
-pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Recipe>>, StatusCode> {
+pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
+    // CHANGED
     let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(
         r#"
         SELECT id, title, source, "yield", notes,
@@ -217,10 +175,8 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Recipe>>, St
     Ok(Json(rows.into_iter().map(Recipe::from).collect()))
 }
 
-pub async fn get(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Json<Recipe>, StatusCode> {
+pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Recipe>> {
+    // CHANGED
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
         r#"
         SELECT id, title, source, "yield", notes,
@@ -242,9 +198,10 @@ pub async fn get(
 pub async fn create(
     State(state): State<AppState>,
     Json(new): Json<NewRecipe>,
-) -> Result<Json<Recipe>, StatusCode> {
+) -> AppResult<Json<Recipe>> {
+    // CHANGED
     if new.title.trim().is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST.into());
     }
     let structured: Vec<Ingredient> = new
         .ingredients
@@ -274,10 +231,8 @@ pub async fn create(
     Ok(Json(row.into()))
 }
 
-pub async fn delete(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, StatusCode> {
+pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<StatusCode> {
+    // CHANGED
     let res = sqlx::query(r#"DELETE FROM recipes WHERE id = ?"#)
         .bind(id)
         .execute(&state.pool)
@@ -285,15 +240,17 @@ pub async fn delete(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if res.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(StatusCode::NOT_FOUND.into());
     }
     Ok(StatusCode::NO_CONTENT)
 }
+
 pub async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(up): Json<UpdateRecipe>,
-) -> Result<Json<Recipe>, StatusCode> {
+) -> AppResult<Json<Recipe>> {
+    // CHANGED
     let mut sets: Vec<&'static str> = Vec::new();
     let mut args = SqliteArguments::default();
 
@@ -317,7 +274,6 @@ pub async fn update(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
-    // ONLY parse when ingredients were provided
     if let Some(ing_lines) = up.ingredients.as_ref() {
         let structured: Vec<Ingredient> =
             ing_lines.iter().map(|s| parse_ingredient_line(s)).collect();
@@ -333,7 +289,6 @@ pub async fn update(
         args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
-    // Always touch updated_at
     sets.push("updated_at = CURRENT_TIMESTAMP");
 
     let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
@@ -349,10 +304,9 @@ pub async fn update(
         })?;
 
     if res.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(StatusCode::NOT_FOUND.into());
     }
 
-    // Return fresh row
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
         r#"
         SELECT id, title, source, "yield", notes,
