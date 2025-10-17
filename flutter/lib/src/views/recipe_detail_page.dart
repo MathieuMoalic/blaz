@@ -17,6 +17,17 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   final Set<int> _checkedSteps = {};
   double _scale = 1.0;
 
+  @override
+  void initState() {
+    super.initState();
+    _future = fetchRecipe(widget.recipeId);
+  }
+
+  // ---- Helpers ----
+
+  String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   void _toggleIngredient(int i) {
     setState(() {
       if (!_checkedIngredients.add(i)) _checkedIngredients.remove(i);
@@ -29,17 +40,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     });
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _future = fetchRecipe(widget.recipeId);
-  }
-
   Future<void> _refresh() async {
     final f = fetchRecipe(widget.recipeId);
     setState(() => _future = f);
     await f;
   }
+
+  // ---- Actions ----
 
   Future<void> _confirmDelete(Recipe r) async {
     final ok = await showDialog<bool>(
@@ -102,6 +109,31 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to add: $e')));
+    }
+  }
+
+  Future<void> _assignToMealPlan(Recipe r) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked == null) return;
+
+    final day = _ymd(picked);
+    try {
+      final entry = await assignRecipeToDay(day: day, recipeId: r.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Assigned to ${entry.day}')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to assign: $e')));
     }
   }
 
@@ -250,12 +282,23 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
   }
 
+  // ---- UI ----
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Recipe'),
         actions: [
+          IconButton(
+            tooltip: 'Add to meal plan',
+            icon: const Icon(Icons.event_available),
+            onPressed: () async {
+              final r = await _future;
+              if (!mounted) return;
+              _assignToMealPlan(r);
+            },
+          ),
           IconButton(
             tooltip: 'Add ingredients to shopping list',
             icon: const Icon(Icons.shopping_cart_outlined),
@@ -331,6 +374,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   ),
                   const SizedBox(height: 12),
                 ],
+
                 // Ingredients + scale
                 const SizedBox(height: 16),
                 Text(
@@ -379,6 +423,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       onTap: () => _toggleIngredient(idx),
                     );
                   }),
+
                 // Instructions
                 const SizedBox(height: 16),
                 Text(
@@ -396,6 +441,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       checked: _checkedSteps.contains(i),
                       onTap: () => _toggleStep(i),
                     ),
+
                 // Meta
                 if (r.notes.isNotEmpty) ...[
                   const SizedBox(height: 16),
