@@ -11,41 +11,26 @@ const String baseUrl = String.fromEnvironment(
 );
 
 /* =========================
- * Auth glue
+ * Auth glue (single source)
  * ========================= */
 
 String? _authToken;
 
 /// Called by the app once a user logs in/out to attach/detach the bearer token.
 void setAuthToken(String? t) {
-  _authToken = t;
+  _authToken = (t != null && t.isNotEmpty) ? t : null;
 }
 
 /// Merge Authorization header with any extra headers.
 Map<String, String> _headers([Map<String, String>? extra]) {
   final h = <String, String>{};
-  if (_authToken != null && _authToken!.isNotEmpty) {
-    h['Authorization'] = 'Bearer $_authToken';
-  }
+  if (_authToken != null) h['Authorization'] = 'Bearer $_authToken';
   if (extra != null) h.addAll(extra);
   return h;
 }
 
-Future<bool> serverAllowsRegistration() async {
-  final uri = Uri.parse('$baseUrl/auth/meta');
-  final res = await http.get(uri);
-  if (res.statusCode != 200) {
-    // If the endpoint is missing or errors, default to allowing
-    return true;
-  }
-  final Map<String, dynamic> data =
-      jsonDecode(res.body) as Map<String, dynamic>;
-  return data['allow_registration'] == true;
-}
-
-/* =========================
- * URL + media helpers
- * ========================= */
+Never _throw(http.Response r) =>
+    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
 
 Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
   '$baseUrl$path',
@@ -58,12 +43,21 @@ String? mediaUrl(String? rel) {
   return '$base/media/$path';
 }
 
-Never _throw(http.Response r) =>
-    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
-
 /* =========================
  * Auth API
  * ========================= */
+
+Future<bool> serverAllowsRegistration() async {
+  final uri = Uri.parse('$baseUrl/auth/meta');
+  final res = await http.get(uri);
+  if (res.statusCode != 200) {
+    // If the endpoint is missing or errors, default to allowing
+    return true;
+  }
+  final Map<String, dynamic> data =
+      jsonDecode(res.body) as Map<String, dynamic>;
+  return data['allow_registration'] == true;
+}
 
 Future<void> register({required String email, required String password}) async {
   final r = await http.post(
@@ -374,12 +368,6 @@ Future<Recipe> createRecipeFull({
     throw Exception('createRecipeFull: ${res.statusCode} ${res.body}');
   }
   return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
-}
-
-Future<Recipe> getRecipe(int id) async {
-  final r = await http.get(_u('/recipes/$id'), headers: _headers());
-  if (r.statusCode != 200) _throw(r);
-  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
 Future<void> deleteRecipe(int id) async {

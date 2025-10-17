@@ -14,20 +14,10 @@ Future<Set<int>?> showRecipePickerSheet({
     if (q.isEmpty) return true;
     final needle = q.toLowerCase();
     if (r.title.toLowerCase().contains(needle)) return true;
-    try {
-      final dyn = r as dynamic;
-      final v = dyn.ingredients;
-      if (v == null) return false;
-      if (v is List) {
-        for (final e in v) {
-          if (e.toString().toLowerCase().contains(needle)) return true;
-        }
-      } else if (v is String) {
-        for (final part in v.split(',')) {
-          if (part.trim().toLowerCase().contains(needle)) return true;
-        }
-      }
-    } catch (_) {}
+    for (final ing in r.ingredients) {
+      if (ing.name.toLowerCase().contains(needle)) return true;
+      if (ing.toLine().toLowerCase().contains(needle)) return true;
+    }
     return false;
   }
 

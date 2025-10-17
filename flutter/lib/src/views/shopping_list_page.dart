@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import '../widgets/app_title.dart';
 
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
@@ -43,7 +44,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const _Title('Shopping list'),
+        const AppTitle('Shopping list'),
         Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -72,8 +73,9 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 if (snap.connectionState != ConnectionState.done) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (snap.hasError)
+                if (snap.hasError) {
                   return Center(child: Text('Error: ${snap.error}'));
+                }
                 final items = snap.data ?? const [];
                 if (items.isEmpty) return const Center(child: Text('No items'));
                 return ListView.separated(
@@ -104,20 +106,6 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _Title extends StatelessWidget {
-  final String t;
-  const _Title(this.t);
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 48,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Text(t, style: Theme.of(context).textTheme.titleLarge),
     );
   }
 }

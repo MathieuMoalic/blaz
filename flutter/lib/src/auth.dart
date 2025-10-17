@@ -11,6 +11,8 @@ class Auth {
 
   static Future<void> init() async {
     _token = _readToken();
+    // Keep API layer in sync with stored token (fixes missing Authorization headers)
+    api.setAuthToken(_token);
     try {
       allowRegistration = await api.serverAllowsRegistration();
     } catch (_) {
@@ -32,11 +34,13 @@ class Auth {
   static Future<void> save(String token) async {
     _token = token;
     _writeToken(token);
+    api.setAuthToken(token); // keep api.dart in sync
   }
 
   static Future<void> logout() async {
     _token = null;
     _writeToken('');
+    api.setAuthToken(null);
   }
 
   // --- storage (web localStorage) ---
@@ -64,7 +68,7 @@ class Auth {
     } catch (_) {}
   }
 
-  // --- HTTP helpers ---
+  // --- Auth actions (delegate network to api/login, inline register for UX) ---
   static Future<bool> register({
     required String email,
     required String password,
@@ -85,20 +89,7 @@ class Auth {
     required String email,
     required String password,
   }) async {
-    final uri = Uri.parse('${api.baseUrl}/auth/login');
-    final res = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode} $uri: ${res.body}');
-    }
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final token = data['token'] as String?;
-    if (token == null || token.isEmpty) {
-      throw Exception('Missing token in response.');
-    }
+    final token = await api.login(email: email, password: password);
     await save(token);
   }
 }

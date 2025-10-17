@@ -5,6 +5,7 @@ import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
 import 'login_page.dart';
 import '../auth.dart';
+import '../widgets/app_title.dart';
 
 enum _MenuAction { logout }
 
@@ -87,11 +88,6 @@ class RecipesPageState extends State<RecipesPage> {
 
     for (final ing in r.ingredients) {
       if (ing.name.toLowerCase().contains(needle)) return true;
-      if ((ing.unit ?? '').toLowerCase().contains(needle)) return true;
-      if (ing.quantity != null) {
-        final qs = ing.quantity!.toString();
-        if (qs.contains(needle)) return true;
-      }
       if (ing.toLine().toLowerCase().contains(needle)) return true;
     }
 
@@ -106,7 +102,7 @@ class RecipesPageState extends State<RecipesPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _AppTitle(
+        AppTitle(
           'Recipes',
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
@@ -138,8 +134,8 @@ class RecipesPageState extends State<RecipesPage> {
                       break;
                   }
                 },
-                itemBuilder: (context) => [
-                  const PopupMenuItem<_MenuAction>(
+                itemBuilder: (context) => const [
+                  PopupMenuItem<_MenuAction>(
                     value: _MenuAction.logout,
                     child: ListTile(
                       leading: Icon(Icons.logout),
@@ -361,29 +357,6 @@ class _EmptyState extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _AppTitle extends StatelessWidget {
-  final String text;
-  final Widget? trailing;
-  const _AppTitle(this.text, {this.trailing});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 48,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(text, style: Theme.of(context).textTheme.titleLarge),
-          ),
-          if (trailing != null) trailing!,
-        ],
-      ),
     );
   }
 }

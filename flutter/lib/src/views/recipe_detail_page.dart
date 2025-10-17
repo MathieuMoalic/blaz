@@ -87,10 +87,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     final selected = await _pickIngredientsBottomSheet(
       title: 'Add to shopping list',
-      items: r.ingredients, // pass Ingredient objects
+      items: r.ingredients,
     );
     if (selected == null || selected.isEmpty) return;
-    await addShoppingItems(selected);
 
     try {
       await addShoppingItems(selected);
@@ -332,7 +331,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   ),
                   const SizedBox(height: 12),
                 ],
-
                 // Ingredients + scale
                 const SizedBox(height: 16),
                 Text(
@@ -381,7 +379,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       onTap: () => _toggleIngredient(idx),
                     );
                   }),
-
                 // Instructions
                 const SizedBox(height: 16),
                 Text(
@@ -399,7 +396,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       checked: _checkedSteps.contains(i),
                       onTap: () => _toggleStep(i),
                     ),
-
                 // Meta
                 if (r.notes.isNotEmpty) ...[
                   const SizedBox(height: 16),

@@ -30,22 +30,19 @@ void main() async {
 
 class BlazApp extends StatelessWidget {
   const BlazApp({super.key});
+
+  ThemeData _theme(Brightness b) => ThemeData(
+    useMaterial3: true,
+    colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal, brightness: b),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final light = ColorScheme.fromSeed(
-      seedColor: Colors.teal,
-      brightness: Brightness.light,
-    );
-    final dark = ColorScheme.fromSeed(
-      seedColor: Colors.teal,
-      brightness: Brightness.dark,
-    );
-
     return MaterialApp(
       title: 'Blaz',
       themeMode: ThemeMode.dark,
-      theme: ThemeData(useMaterial3: true, colorScheme: light),
-      darkTheme: ThemeData(useMaterial3: true, colorScheme: dark),
+      theme: _theme(Brightness.light),
+      darkTheme: _theme(Brightness.dark),
       home: Auth.token == null ? const LoginPage() : const HomeShell(),
       debugShowCheckedModeBanner: false,
     );

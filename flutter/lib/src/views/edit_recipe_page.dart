@@ -31,11 +31,9 @@ class _EditRecipePageState extends State<EditRecipePage> {
     _source = TextEditingController(text: r.source);
     _yieldText = TextEditingController(text: r.yieldText);
     _notes = TextEditingController(text: r.notes);
-
-    // Format structured ingredients -> lines for editing
-    final ingLines = r.ingredients.map(_formatIngredientLine).join('\n');
-    _ingredientsRaw = TextEditingController(text: ingLines);
-
+    _ingredientsRaw = TextEditingController(
+      text: r.ingredients.map((ing) => ing.toLine()).join('\n'),
+    );
     _instructionsRaw = TextEditingController(text: r.instructions.join('\n'));
   }
 
@@ -50,42 +48,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
     super.dispose();
   }
 
-  // ---- Helpers ----
-
   List<String> _lines(String s) =>
       s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-
-  /// Pretty-print a structured Ingredient into a single editable line.
-  String _formatIngredientLine(Ingredient ing) {
-    if (ing.quantity != null && (ing.unit ?? '').isNotEmpty) {
-      final q = _formatQuantity(ing.quantity!, ing.unit!);
-      return '$q ${ing.unit} ${ing.name}';
-    } else if (ing.quantity != null) {
-      final q = _formatQuantity(ing.quantity!, '');
-      return '$q ${ing.name}';
-    } else {
-      return ing.name;
-    }
-  }
-
-  /// Nice numeric formatting:
-  /// - integers for g/ml
-  /// - trim trailing zeros
-  /// - cap to 2 decimals otherwise
-  String _formatQuantity(double v, String unit) {
-    if (unit == 'g' || unit == 'ml') {
-      return v.round().toString();
-    }
-    if (unit == 'kg' || unit == 'L') {
-      return v
-          .toStringAsFixed(2)
-          .replaceFirst(RegExp(r'\.?0+$'), ''); // 1.50 -> 1.5, 2.00 -> 2
-    }
-    final s = ((v * 100).round() / 100.0).toString();
-    return s.replaceFirst(RegExp(r'\.?0+$'), '');
-  }
-
-  // ---- Actions ----
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
