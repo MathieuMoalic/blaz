@@ -165,7 +165,6 @@ pub fn build_app(state: AppState) -> Router {
             tracing::error!(latency_ms = %latency.as_millis(), "request failed");
         });
 
-    // Serve /media from MEDIA_DIR
     let media_service = ServeDir::new(state.media_dir.clone());
 
     Router::new()
@@ -179,6 +178,10 @@ pub fn build_app(state: AppState) -> Router {
                 .patch(recipes::update),
         )
         .route("/recipes/{id}/image", post(recipes::upload_image))
+        .route(
+            "/recipes/{id}/macros/estimate",
+            post(recipes::estimate_macros),
+        ) // NEW
         .route("/recipes/import", post(parse_recipe::import_from_url))
         // Meal plan
         .route(
@@ -195,9 +198,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/shopping/merge", post(shopping::merge_items))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
-        // Auth meta (for frontend to decide showing Register)
         .route("/auth/meta", get(auth_meta::meta))
-        // Static media
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(from_fn(log_payloads))

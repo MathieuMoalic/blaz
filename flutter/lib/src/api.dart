@@ -11,26 +11,73 @@ const String baseUrl = String.fromEnvironment(
 );
 
 /* =========================
- * Auth glue (single source)
+ * Auth glue
  * ========================= */
 
 String? _authToken;
 
-/// Called by the app once a user logs in/out to attach/detach the bearer token.
 void setAuthToken(String? t) {
-  _authToken = (t != null && t.isNotEmpty) ? t : null;
+  _authToken = t;
 }
 
-/// Merge Authorization header with any extra headers.
 Map<String, String> _headers([Map<String, String>? extra]) {
   final h = <String, String>{};
-  if (_authToken != null) h['Authorization'] = 'Bearer $_authToken';
+  if (_authToken != null && _authToken!.isNotEmpty) {
+    h['Authorization'] = 'Bearer $_authToken';
+  }
   if (extra != null) h.addAll(extra);
   return h;
 }
 
-Never _throw(http.Response r) =>
-    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
+Future<bool> serverAllowsRegistration() async {
+  final uri = Uri.parse('$baseUrl/auth/meta');
+  final res = await http.get(uri);
+  if (res.statusCode != 200) {
+    return true;
+  }
+  final Map<String, dynamic> data =
+      jsonDecode(res.body) as Map<String, dynamic>;
+  return data['allow_registration'] == true;
+}
+
+Future<String> login({required String email, required String password}) async {
+  final r = await http.post(
+    _u('/auth/login'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'email': email.trim(), 'password': password}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final data = jsonDecode(r.body) as Map<String, dynamic>;
+  final token = data['token'] as String;
+  setAuthToken(token); // keep it for subsequent calls
+  return token;
+}
+
+Future<void> register({required String email, required String password}) async {
+  final r = await http.post(
+    _u('/auth/register'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'email': email.trim(), 'password': password}),
+  );
+  if (r.statusCode != 201) _throw(r);
+}
+
+/// Add multiple plain-text shopping items (one request per line).
+Future<void> addShoppingItems(List<String> lines) async {
+  // Fire them sequentially to keep server load modest (or use Future.wait for parallel).
+  for (final text in lines) {
+    final r = await http.post(
+      _u('/shopping'),
+      headers: _headers({'content-type': 'application/json'}),
+      body: jsonEncode({'text': text}),
+    );
+    if (r.statusCode != 200) _throw(r);
+  }
+}
+
+/* =========================
+ * URL + media helpers
+ * ========================= */
 
 Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
   '$baseUrl$path',
@@ -43,50 +90,55 @@ String? mediaUrl(String? rel) {
   return '$base/media/$path';
 }
 
-/* =========================
- * Auth API
- * ========================= */
-
-Future<bool> serverAllowsRegistration() async {
-  final uri = Uri.parse('$baseUrl/auth/meta');
-  final res = await http.get(uri);
-  if (res.statusCode != 200) {
-    // If the endpoint is missing or errors, default to allowing
-    return true;
-  }
-  final Map<String, dynamic> data =
-      jsonDecode(res.body) as Map<String, dynamic>;
-  return data['allow_registration'] == true;
-}
-
-Future<void> register({required String email, required String password}) async {
-  final r = await http.post(
-    _u('/auth/register'),
-    headers: _headers(const {'content-type': 'application/json'}),
-    body: jsonEncode({'email': email, 'password': password}),
-  );
-  // 201 Created (ok) or 409 Conflict (already exists) are both acceptable here
-  if (r.statusCode != 201 && r.statusCode != 409) _throw(r);
-}
-
-Future<String> login({required String email, required String password}) async {
-  final r = await http.post(
-    _u('/auth/login'),
-    headers: _headers(const {'content-type': 'application/json'}),
-    body: jsonEncode({'email': email, 'password': password}),
-  );
-  if (r.statusCode != 200) _throw(r);
-  final j = jsonDecode(r.body) as Map<String, dynamic>;
-  final token = (j['token'] as String?) ?? '';
-  if (token.isEmpty) {
-    throw Exception('Login succeeded but no token returned');
-  }
-  return token;
-}
+Never _throw(http.Response r) =>
+    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
 
 /* =========================
  * Models
  * ========================= */
+
+class RecipeMacros {
+  final double protein; // grams
+  final double fat; // grams (total)
+  final double carbs; // grams (excluding fiber)
+
+  const RecipeMacros({
+    required this.protein,
+    required this.fat,
+    required this.carbs,
+  });
+
+  static double _num(dynamic v) => (v as num).toDouble();
+
+  /// Accepts either:
+  /// { "macros": {"protein": 30, "fat": 20, "carbs": 50} }
+  /// or flat:    {"protein": 30, "fat": 20, "carbs": 50}
+  /// or *_g keys.
+  factory RecipeMacros.fromAny(Map<String, dynamic> j) {
+    Map<String, dynamic>? m = (j['macros'] is Map)
+        ? (j['macros'] as Map).cast<String, dynamic>()
+        : null;
+    m ??= j;
+
+    double read(String a, String b) {
+      if (m![a] is num) return _num(m[a]);
+      if (m[b] is num) return _num(m[b]);
+      throw Exception('missing $a/$b');
+    }
+
+    return RecipeMacros(
+      protein: read('protein', 'protein_g'),
+      fat: read('fat', 'fat_g'),
+      carbs: read('carbs', 'carbs_g'),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'protein': protein,
+    'fat': fat,
+    'carbs': carbs,
+  };
+}
 
 class MealPlanEntry {
   final int id;
@@ -115,14 +167,14 @@ class ShoppingItem {
   factory ShoppingItem.fromJson(Map<String, dynamic> j) => ShoppingItem(
     id: (j['id'] as num).toInt(),
     text: j['text'] as String,
-    done: (j['done'] as num).toInt() != 0, // backend returns 0/1
+    done: (j['done'] as num).toInt() != 0,
   );
   Map<String, dynamic> toJson() => {'id': id, 'text': text, 'done': done};
 }
 
 class Ingredient {
   final double? quantity;
-  final String? unit; // "g","kg","ml","L","tsp","tbsp" or null
+  final String? unit;
   final String name;
 
   Ingredient({this.quantity, this.unit, required this.name});
@@ -175,7 +227,7 @@ class Recipe {
   final int id;
   final String title;
   final String source;
-  final String yieldText; // key "yield"
+  final String yieldText;
   final String notes;
   final String createdAt;
   final String updatedAt;
@@ -183,6 +235,9 @@ class Recipe {
   final List<String> instructions;
   final String? imagePathSmall;
   final String? imagePathFull;
+
+  // NEW:
+  final RecipeMacros? macros;
 
   Recipe({
     required this.id,
@@ -196,6 +251,7 @@ class Recipe {
     required this.instructions,
     this.imagePathSmall,
     this.imagePathFull,
+    this.macros, // NEW
   });
 
   factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
@@ -212,12 +268,30 @@ class Recipe {
     instructions: (j['instructions'] as List<dynamic>).cast<String>(),
     imagePathSmall: j['image_path_small'] as String?,
     imagePathFull: j['image_path_full'] as String?,
+    macros: (() {
+      try {
+        if (j['macros'] is Map ||
+            j['protein'] is num ||
+            j['protein_g'] is num) {
+          return RecipeMacros.fromAny(j);
+        }
+      } catch (_) {}
+      return null;
+    })(),
   );
 }
 
 /* =========================
  * Recipes
  * ========================= */
+Future<Recipe> estimateRecipeMacros(int id) async {
+  final r = await http.post(
+    _u('/recipes/$id/macros/estimate'),
+    headers: _headers(),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
 
 Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
   final uri = Uri.parse('$baseUrl/recipes/import');
@@ -273,19 +347,17 @@ Future<Recipe> updateRecipe({
 
 Future<Recipe> uploadRecipeImage({
   required int id,
-  String? path, // optional fallback
-  List<int>? bytes, // preferred on all platforms
+  String? path,
+  List<int>? bytes,
   String? filename,
 }) async {
   final url = _u('/recipes/$id/image');
   final req = http.MultipartRequest('POST', url);
 
-  // attach bearer token if present
   if (_authToken != null && _authToken!.isNotEmpty) {
     req.headers['Authorization'] = 'Bearer $_authToken';
   }
 
-  // Prefer bytes if provided (works on web AND mobile; sets Content-Length)
   if (bytes != null) {
     final name =
         filename ??
@@ -339,7 +411,7 @@ Future<Recipe> fetchRecipe(int id) async {
 Future<Recipe> createRecipeFull({
   required String title,
   String? source,
-  String? yieldText, // mapped to JSON key "yield"
+  String? yieldText,
   String? notes,
   required List<String> ingredients,
   required List<String> instructions,
@@ -370,6 +442,12 @@ Future<Recipe> createRecipeFull({
   return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
 }
 
+Future<Recipe> getRecipe(int id) async {
+  final r = await http.get(_u('/recipes/$id'), headers: _headers());
+  if (r.statusCode != 200) _throw(r);
+  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+
 Future<void> deleteRecipe(int id) async {
   final res = await http.delete(_u('/recipes/$id'), headers: _headers());
   if (res.statusCode != 200 && res.statusCode != 204) {
@@ -378,7 +456,7 @@ Future<void> deleteRecipe(int id) async {
 }
 
 /* =========================
- * Meal plan
+ * Meal plan & Shopping (unchanged)
  * ========================= */
 
 Future<List<MealPlanEntry>> fetchMealPlanForDay(String day) async {
@@ -413,10 +491,6 @@ Future<void> unassignRecipeFromDay({
   );
   if (r.statusCode != 200) _throw(r);
 }
-
-/* =========================
- * Shopping
- * ========================= */
 
 Future<List<ShoppingItem>> fetchShoppingList() async {
   final r = await http.get(_u('/shopping'), headers: _headers());
@@ -469,59 +543,4 @@ Future<ShoppingItem> toggleShoppingItem({
 Future<void> deleteShoppingItem(int id) async {
   final r = await http.delete(_u('/shopping/$id'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
-}
-
-/// Add multiple shopping items at once.
-/// - Trims whitespace and drops empties
-/// - De-dupes within the input
-/// - If [avoidDuplicates] is true (default), skips items already present
-///   in the current shopping list (case-insensitive text match)
-/// - Returns the list of successfully created items
-/// - Throws if any item fails to create (none are rolled back)
-Future<List<ShoppingItem>> addShoppingItems(
-  List<String> items, {
-  bool avoidDuplicates = true,
-}) async {
-  // Clean & de-dupe input (case-insensitive)
-  final cleaned = <String>[];
-  final seen = <String>{};
-  for (final raw in items) {
-    final s = raw.trim();
-    if (s.isEmpty) continue;
-    final key = s.toLowerCase();
-    if (seen.add(key)) cleaned.add(s);
-  }
-
-  // Optionally skip ones already in the shopping list
-  List<String> toCreate = List.of(cleaned);
-  if (avoidDuplicates) {
-    final existing = await fetchShoppingList();
-    final existingKeys = existing
-        .map((e) => e.text.trim().toLowerCase())
-        .toSet();
-    toCreate.removeWhere((s) => existingKeys.contains(s.trim().toLowerCase()));
-  }
-
-  if (toCreate.isEmpty) return <ShoppingItem>[];
-
-  final created = <ShoppingItem>[];
-  final failures = <String>[];
-
-  // Create sequentially (simple + avoids spamming backend)
-  for (final text in toCreate) {
-    try {
-      final item = await createShoppingItem(text);
-      created.add(item);
-    } catch (e) {
-      failures.add('$text ($e)');
-    }
-  }
-
-  if (failures.isNotEmpty) {
-    throw Exception(
-      'Failed to add ${failures.length} item(s): ${failures.join(', ')}',
-    );
-  }
-
-  return created;
 }

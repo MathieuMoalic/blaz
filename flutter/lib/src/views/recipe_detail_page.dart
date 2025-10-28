@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../api.dart';
+import 'package:intl/intl.dart';
+import '../api.dart' as api;
 import 'edit_recipe_page.dart';
 
 class RecipeDetailPage extends StatefulWidget {
@@ -11,22 +12,32 @@ class RecipeDetailPage extends StatefulWidget {
 }
 
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
-  late Future<Recipe> _future;
+  // Precise Atwater factors (kcal per gram).
+  static const double kcalPerGProt = 4.27;
+  static const double kcalPerGCarb = 3.87;
+  static const double kcalPerGFat = 8.79;
+
+  late Future<api.Recipe> _future;
 
   final Set<int> _checkedIngredients = {};
   final Set<int> _checkedSteps = {};
   double _scale = 1.0;
 
+  bool _estimatingMacros = false;
+
   @override
   void initState() {
     super.initState();
-    _future = fetchRecipe(widget.recipeId);
+    _future = api.fetchRecipe(widget.recipeId);
   }
 
-  // ---- Helpers ----
+  // ---- Helpers --------------------------------------------------------------
 
-  String _ymd(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  Future<void> _refresh() async {
+    final f = api.fetchRecipe(widget.recipeId);
+    setState(() => _future = f);
+    await f;
+  }
 
   void _toggleIngredient(int i) {
     setState(() {
@@ -40,15 +51,113 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     });
   }
 
-  Future<void> _refresh() async {
-    final f = fetchRecipe(widget.recipeId);
-    setState(() => _future = f);
-    await f;
+  String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  double _calcCalories(api.RecipeMacros m) {
+    return m.protein * kcalPerGProt +
+        m.carbs * kcalPerGCarb +
+        m.fat * kcalPerGFat;
   }
 
-  // ---- Actions ----
+  String _fmtTs(String s) {
+    try {
+      final dt = DateTime.parse(s.replaceFirst(' ', 'T'));
+      return DateFormat.yMMMd().add_Hm().format(dt);
+    } catch (_) {
+      return s;
+    }
+  }
 
-  Future<void> _confirmDelete(Recipe r) async {
+  // ---- Actions --------------------------------------------------------------
+
+  Future<void> _addIngredients(api.Recipe r) async {
+    if (r.ingredients.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No ingredients to add')));
+      return;
+    }
+
+    final selected = await _pickIngredientsBottomSheet(
+      title: 'Add to shopping list',
+      items: r.ingredients,
+    );
+    if (selected == null || selected.isEmpty) return;
+
+    try {
+      await api.addShoppingItems(selected);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added ${selected.length} item(s)')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to add: $e')));
+    }
+  }
+
+  Future<void> _assignToMealPlan(api.Recipe r) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked == null) return;
+
+    try {
+      final entry = await api.assignRecipeToDay(
+        day: _ymd(picked),
+        recipeId: r.id,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Assigned “${r.title}” to ${entry.day}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to assign: $e')));
+    }
+  }
+
+  Future<void> _estimateMacros() async {
+    if (_estimatingMacros) return;
+    // Never mark this callback async inside setState.
+    setState(() {
+      _estimatingMacros = true;
+    });
+
+    api.Recipe? updated;
+    try {
+      updated = await api.estimateRecipeMacros(widget.recipeId);
+      if (!mounted) return;
+      // Assign future outside the setState body, then trigger rebuild.
+      _future = Future.value(updated);
+      setState(() {});
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Macros estimated')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Macro estimation failed: $e')));
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _estimatingMacros = false;
+      });
+    }
+  }
+
+  Future<void> _confirmDelete(api.Recipe r) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -69,7 +178,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
     if (ok == true) {
       try {
-        await deleteRecipe(r.id);
+        await api.deleteRecipe(r.id);
         if (!mounted) return;
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(
@@ -84,62 +193,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
   }
 
-  Future<void> _addIngredients(Recipe r) async {
-    if (r.ingredients.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('No ingredients to add')));
-      return;
-    }
-
-    final selected = await _pickIngredientsBottomSheet(
-      title: 'Add to shopping list',
-      items: r.ingredients,
-    );
-    if (selected == null || selected.isEmpty) return;
-
-    try {
-      await addShoppingItems(selected);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${selected.length} item(s)')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to add: $e')));
-    }
-  }
-
-  Future<void> _assignToMealPlan(Recipe r) async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: now,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 2),
-    );
-    if (picked == null) return;
-
-    final day = _ymd(picked);
-    try {
-      final entry = await assignRecipeToDay(day: day, recipeId: r.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Assigned to ${entry.day}')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to assign: $e')));
-    }
-  }
-
   Future<List<String>?> _pickIngredientsBottomSheet({
     required String title,
-    required List<Ingredient> items,
+    required List<api.Ingredient> items,
   }) async {
     return showModalBottomSheet<List<String>>(
       context: context,
@@ -282,7 +338,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
   }
 
-  // ---- UI ----
+  // ---- UI -------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -292,7 +348,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         actions: [
           IconButton(
             tooltip: 'Add to meal plan',
-            icon: const Icon(Icons.event_available),
+            icon: const Icon(Icons.event_outlined),
             onPressed: () async {
               final r = await _future;
               if (!mounted) return;
@@ -331,7 +387,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           ),
         ],
       ),
-      body: FutureBuilder<Recipe>(
+      body: FutureBuilder<api.Recipe>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
@@ -341,8 +397,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             return Center(child: Text('Error: ${snap.error}'));
           }
           final r = snap.data!;
-          final small = mediaUrl(r.imagePathSmall);
-          final full = mediaUrl(r.imagePathFull);
+          final small = api.mediaUrl(r.imagePathSmall);
+          final full = api.mediaUrl(r.imagePathFull);
           final heroTag = 'recipe-image-${r.id}';
 
           return RefreshIndicator(
@@ -376,7 +432,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 ],
 
                 // Ingredients + scale
-                const SizedBox(height: 16),
                 Text(
                   'Ingredients',
                   style: Theme.of(context).textTheme.titleMedium,
@@ -442,14 +497,16 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       onTap: () => _toggleStep(i),
                     ),
 
-                // Meta
+                // Notes
                 if (r.notes.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Text('Notes', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 6),
                   Text(r.notes),
-                  const SizedBox(height: 6),
                 ],
+
+                // Meta
+                const SizedBox(height: 16),
                 _MetaRow(
                   label: 'Source',
                   value: r.source.isEmpty ? '—' : r.source,
@@ -460,11 +517,20 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 ),
                 _MetaRow(
                   label: 'Created',
-                  value: r.createdAt.isEmpty ? '—' : r.createdAt,
+                  value: r.createdAt.isEmpty ? '—' : _fmtTs(r.createdAt),
                 ),
                 _MetaRow(
                   label: 'Updated',
-                  value: r.updatedAt.isEmpty ? '—' : r.updatedAt,
+                  value: r.updatedAt.isEmpty ? '—' : _fmtTs(r.updatedAt),
+                ),
+
+                // Macros & Calories
+                const SizedBox(height: 18),
+                _MacrosSection(
+                  macros: r.macros,
+                  estimating: _estimatingMacros,
+                  onEstimate: _estimateMacros,
+                  calcCalories: _calcCalories,
                 ),
               ],
             ),
@@ -474,6 +540,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
   }
 }
+
+// ---- Small UI helpers -------------------------------------------------------
 
 class _MetaRow extends StatelessWidget {
   final String label;
@@ -577,6 +645,97 @@ class _Numbered extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MacrosSection extends StatelessWidget {
+  final api.RecipeMacros? macros;
+  final bool estimating;
+  final VoidCallback onEstimate;
+  final double Function(api.RecipeMacros) calcCalories;
+
+  const _MacrosSection({
+    required this.macros,
+    required this.estimating,
+    required this.onEstimate,
+    required this.calcCalories,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    if (macros == null) {
+      return Row(
+        children: [
+          FilledButton.icon(
+            onPressed: estimating ? null : onEstimate,
+            icon: estimating
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.calculate_outlined),
+            label: const Text('Estimate macros'),
+          ),
+        ],
+      );
+    }
+
+    final m = macros!;
+    final kcal = calcCalories(m).clamp(0, double.infinity);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Nutrition (per recipe)', style: t.titleMedium),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                _pill(context, 'Protein', '${m.protein.toStringAsFixed(1)} g'),
+                _pill(context, 'Fat', '${m.fat.toStringAsFixed(1)} g'),
+                _pill(context, 'Carbs', '${m.carbs.toStringAsFixed(1)} g'),
+                _pill(context, 'Calories', '${kcal.toStringAsFixed(0)} kcal'),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: estimating ? null : onEstimate,
+              icon: estimating
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              label: const Text('Re-estimate'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _pill(BuildContext context, String label, String value) {
+    final c = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.surfaceVariant,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text('$label: $value'),
     );
   }
 }

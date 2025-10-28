@@ -32,6 +32,15 @@ pub enum IngredientRepr {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RecipeMacros {
+    /// "per_serving" if yield could be parsed as N servings, otherwise "per_recipe".
+    pub basis: String,
+    pub protein_g: f64,
+    pub fat_g: f64,   // saturated + unsaturated combined
+    pub carbs_g: f64, // excluding fiber
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Recipe {
     pub id: i64,
     pub title: String,
@@ -46,6 +55,7 @@ pub struct Recipe {
     pub image_path: Option<String>,
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
+    pub macros: Option<RecipeMacros>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -91,6 +101,7 @@ pub struct RecipeRow {
     pub image_path: Option<String>,
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
+    pub macros: Option<Json<RecipeMacros>>,
 }
 
 impl From<RecipeRow> for Recipe {
@@ -119,6 +130,7 @@ impl From<RecipeRow> for Recipe {
             image_path: r.image_path,
             image_path_full: r.image_path_full,
             image_path_small: r.image_path_small,
+            macros: r.macros.map(|j| j.0),
         }
     }
 }
