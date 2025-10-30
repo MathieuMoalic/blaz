@@ -10,6 +10,7 @@ use scraper::{ElementRef, Html, Node, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
+use std::time::Duration;
 use tracing::error;
 
 #[derive(Deserialize)]
@@ -34,7 +35,9 @@ pub async fn import_from_url(
     // CHANGED
     // 1) Fetch HTML
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(25))
+        .timeout(std::time::Duration::from_secs(95))
+        .connect_timeout(Duration::from_secs(10))
+        .pool_idle_timeout(Some(Duration::from_secs(30)))
         .build()
         .map_err(|e| {
             error!(?e, "reqwest client build failed");
@@ -97,21 +100,21 @@ pub async fn import_from_url(
     RETURNING id, title, source, "yield", notes,
               created_at, updated_at,
               ingredients, instructions,
-              image_path, image_path_small, image_path_full
-    "#,
-)
-.bind(title)
-.bind(&req.url)
-.bind(&yield_text)
-.bind(&notes_text)
-.bind(ingredients_json)
-.bind(instructions_json)
-.fetch_one(&state.pool)
-.await
-.map_err(|e| {
-    error!(?e, url = %req.url, "insert imported recipe failed");
-    StatusCode::INTERNAL_SERVER_ERROR
-})?;
+              image_path_small, image_path_full,
+              macros
+    "#,)
+        .bind(title)
+        .bind(&req.url)
+        .bind(&yield_text)
+        .bind(&notes_text)
+        .bind(ingredients_json)
+        .bind(instructions_json)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, url = %req.url, "insert imported recipe failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // 5) If we found a main image, fetch/convert/store and UPDATE the row
     if let Some(img_url) = main_img_url {
@@ -147,7 +150,8 @@ pub async fn import_from_url(
     SELECT id, title, source, "yield", notes,
            created_at, updated_at,
            ingredients, instructions,
-           image_path, image_path_small, image_path_full
+           image_path_small, image_path_full,
+           macros
       FROM recipes
      WHERE id = ?
     "#,
@@ -406,9 +410,12 @@ async fn call_llm(
 
     let resp = req.json(&body).send().await?;
     let status = resp.status();
-    let text = resp.text().await?;
+    let body_text = tokio::time::timeout(Duration::from_secs(80), resp.text())
+        .await
+        .map_err(|_| anyhow::anyhow!("LLM response read timed out"))??;
+
     if !status.is_success() {
-        return Err(anyhow!("hf_router {}: {}", status, text));
+        anyhow::bail!("llm router {}: {}", status, body_text);
     }
 
     #[derive(Deserialize)]
@@ -424,7 +431,7 @@ async fn call_llm(
         choices: Vec<Choice>,
     }
 
-    let parsed: ChatResp = serde_json::from_str(&text)?;
+    let parsed: ChatResp = serde_json::from_str(&body_text)?;
     let content = parsed
         .choices
         .first()

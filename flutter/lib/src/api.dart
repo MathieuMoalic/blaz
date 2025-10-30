@@ -75,6 +75,23 @@ Future<void> addShoppingItems(List<String> lines) async {
   }
 }
 
+Future<ShoppingItem> updateShoppingItem({
+  required int id,
+  bool? done,
+  String? category,
+}) async {
+  final body = <String, dynamic>{
+    if (done != null) 'done': done,
+    if (category != null) 'category': category,
+  };
+  final r = await http.patch(
+    _u('/shopping/$id'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode(body),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
 /* =========================
  * URL + media helpers
  * ========================= */
@@ -144,7 +161,7 @@ class MealPlanEntry {
   final int id;
   final String day; // yyyy-MM-dd
   final int recipeId;
-  final String title; // recipe title
+  final String title;
   MealPlanEntry({
     required this.id,
     required this.day,
@@ -163,13 +180,29 @@ class ShoppingItem {
   final int id;
   final String text;
   final bool done;
-  ShoppingItem({required this.id, required this.text, required this.done});
+  final String? category;
+  ShoppingItem({
+    required this.id,
+    required this.text,
+    required this.done,
+    this.category,
+  });
+
   factory ShoppingItem.fromJson(Map<String, dynamic> j) => ShoppingItem(
     id: (j['id'] as num).toInt(),
     text: j['text'] as String,
     done: (j['done'] as num).toInt() != 0,
+    category: (j['category'] as String?)?.isNotEmpty == true
+        ? j['category'] as String
+        : null,
   );
-  Map<String, dynamic> toJson() => {'id': id, 'text': text, 'done': done};
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'text': text,
+    'done': done,
+    'category': category,
+  };
 }
 
 class Ingredient {

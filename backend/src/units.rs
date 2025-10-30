@@ -1,6 +1,9 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+pub static SERVINGS_NUM_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)(\d+(?:[.,]\d+)?)(?:\s*[–-]\s*(\d+(?:[.,]\d+)?))?"#).unwrap());
+
 pub static DECIMAL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"^\s*(\d+(?:[.,]\d+)?)(?:\s*[–-]\s*(\d+(?:[.,]\d+)?))?\s*$"#).unwrap()
 });

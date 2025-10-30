@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use sqlx::SqlitePool;
 use sqlx::types::Json;
-use sqlx::{FromRow, SqlitePool};
 use std::path::PathBuf;
 
 use crate::ingredient_parser::parse_ingredient_line;
+
+/* ---------- App state ---------- */
 
 #[derive(Clone)]
 pub struct AppState {
@@ -52,7 +55,6 @@ pub struct Recipe {
     pub updated_at: String,
     pub ingredients: Vec<Ingredient>,
     pub instructions: Vec<String>,
-    pub image_path: Option<String>,
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
     pub macros: Option<RecipeMacros>,
@@ -91,6 +93,7 @@ pub struct RecipeRow {
     pub id: i64,
     pub title: String,
     pub source: String,
+    #[sqlx(rename = "yield")] // ensure mapping from column "yield"
     pub r#yield: String,
     pub notes: String,
     pub created_at: String,
@@ -98,7 +101,6 @@ pub struct RecipeRow {
     // IMPORTANT: let rows load even if they still have ["2 carrots", ...]
     pub ingredients: Json<Vec<IngredientRepr>>,
     pub instructions: Json<Vec<String>>,
-    pub image_path: Option<String>,
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
     pub macros: Option<Json<RecipeMacros>>,
@@ -127,7 +129,6 @@ impl From<RecipeRow> for Recipe {
             updated_at: r.updated_at,
             ingredients,
             instructions: r.instructions.0,
-            image_path: r.image_path,
             image_path_full: r.image_path_full,
             image_path_small: r.image_path_small,
             macros: r.macros.map(|j| j.0),
@@ -153,11 +154,23 @@ pub struct AssignRecipe {
 
 /* ---------- Shopping list ---------- */
 
+#[derive(Serialize, sqlx::FromRow, Clone)]
+pub struct ShoppingItemView {
+    pub id: i64,
+    pub text: String,
+    pub done: i64,
+    pub category: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, FromRow, Clone)]
 pub struct ShoppingItem {
     pub id: i64,
-    pub text: String,
+    pub name: Option<String>,
+    pub unit: Option<String>,
+    pub quantity: Option<f64>,
+    pub key: Option<String>,
     pub done: i64, // 0/1
+    pub category: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -168,4 +181,5 @@ pub struct NewItem {
 #[derive(Deserialize)]
 pub struct ToggleItem {
     pub done: bool,
+    pub category: Option<String>,
 }

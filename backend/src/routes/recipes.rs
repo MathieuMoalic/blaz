@@ -1,20 +1,17 @@
-use crate::image_io::to_full_and_thumb_webp;
-use crate::{
-    ingredient_parser::parse_ingredient_line,
-    models::{AppState, Ingredient, NewRecipe, Recipe, RecipeMacros, RecipeRow, UpdateRecipe},
-};
 use axum::{
     Json,
     extract::{Multipart, Path, State},
     http::StatusCode,
 };
+use serde::Deserialize;
 use sqlx::Arguments;
 use sqlx::sqlite::SqliteArguments;
 use tracing::error;
 
-use crate::error::AppResult;
+use crate::ingredient_parser::parse_ingredient_line;
+use crate::models::{AppState, Ingredient, NewRecipe, Recipe, RecipeRow, UpdateRecipe};
 
-use serde::Deserialize;
+use crate::error::AppResult;
 
 /* ---------- Shared LLM helper (OpenAI-compatible HF Router) ---------- */
 
@@ -124,7 +121,18 @@ async fn call_llm_json(
     anyhow::bail!("model did not return JSON: {}", content)
 }
 
-/* ---------- Image upload & standard recipe routes ---------- */
+/* =======================================================================
+Recipes
+======================================================================= */
+
+/// Keep SELECT/RETURNING columns in one place to avoid drift with structs.
+const RECIPE_COLS: &str = r#"
+    id, title, source, "yield", notes,
+    created_at, updated_at,
+    ingredients, instructions,
+    image_path_small, image_path_full,
+    macros
+"#;
 
 pub async fn fetch_and_store_recipe_image(
     client: &reqwest::Client,
@@ -151,7 +159,7 @@ pub async fn fetch_and_store_recipe_image(
             let img = image::load_from_memory(&bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("decode error: {e}")))?;
 
-            to_full_and_thumb_webp(&img)
+            crate::image_io::to_full_and_thumb_webp(&img)
         })
         .await??;
 
@@ -189,21 +197,12 @@ pub async fn upload_image(
     let bytes = match bytes {
         Some(b) => b,
         None => {
-            let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(
-                r#"
-                SELECT id, title, source, "yield", notes,
-                       created_at, updated_at,
-                       ingredients, instructions,
-                       image_path, image_path_small, image_path_full,
-                       macros
-                  FROM recipes
-                 WHERE id = ?
-                "#,
-            )
-            .bind(id)
-            .fetch_one(&state.pool)
-            .await?
-            .into();
+            let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+            let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(&sql)
+                .bind(id)
+                .fetch_one(&state.pool)
+                .await?
+                .into();
             return Ok(Json(recipe));
         }
     };
@@ -225,8 +224,7 @@ pub async fn upload_image(
             let img = image::load_from_memory(&bytes).map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::Other, format!("decode error: {e}"))
             })?;
-
-            to_full_and_thumb_webp(&img)
+            crate::image_io::to_full_and_thumb_webp(&img)
         })
         .await??;
 
@@ -251,60 +249,39 @@ pub async fn upload_image(
     .await?;
 
     // 7) Return updated recipe
-    let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        SELECT id, title, source, "yield", notes,
-               created_at, updated_at,
-               ingredients, instructions,
-               image_path, image_path_small, image_path_full,
-               macros
-          FROM recipes
-         WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await?
-    .into();
+    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?
+        .into();
 
     Ok(Json(recipe))
 }
 
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
-    let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        SELECT id, title, source, "yield", notes,
-               created_at, updated_at,
-               ingredients, instructions,
-               image_path, image_path_small, image_path_full,
-               macros
-          FROM recipes
-         ORDER BY id
-        "#,
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sql = format!("SELECT {} FROM recipes ORDER BY id", RECIPE_COLS);
+    let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.list failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(rows.into_iter().map(Recipe::from).collect()))
 }
 
 pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Recipe>> {
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        SELECT id, title, source, "yield", notes,
-               created_at, updated_at,
-               ingredients, instructions,
-               image_path, image_path_small, image_path_full,
-               macros
-          FROM recipes
-         WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::NOT_FOUND)?;
+    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, ?id, "recipes.get failed");
+            StatusCode::NOT_FOUND
+        })?;
 
     Ok(Json(row.into()))
 }
@@ -325,23 +302,28 @@ pub async fn create(
     let instructions_json =
         serde_json::to_string(&new.instructions).unwrap_or_else(|_| "[]".into());
 
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(r#"
-    INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
-    VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    RETURNING id, title, source, "yield", notes,
-              created_at, updated_at,
-              ingredients, instructions,
-              image_path, image_path_small, image_path_full,
-              macros"#)
-    .bind(new.title)
-    .bind(new.source)
-    .bind(new.r#yield)
-    .bind(new.notes)
-    .bind(ingredients_json)
-    .bind(instructions_json)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sql = format!(
+        r#"
+        INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
+        VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING {cols}
+        "#,
+        cols = RECIPE_COLS
+    );
+
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(new.title)
+        .bind(new.source)
+        .bind(new.r#yield)
+        .bind(new.notes)
+        .bind(ingredients_json)
+        .bind(instructions_json)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.create failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(row.into()))
 }
@@ -351,7 +333,10 @@ pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppRe
         .bind(id)
         .execute(&state.pool)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            error!(?e, "recipes.delete failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     if res.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND.into());
@@ -369,22 +354,31 @@ pub async fn update(
 
     if let Some(title) = up.title {
         sets.push("title = ?");
-        args.add(title)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        args.add(title).map_err(|e| {
+            error!(?e, "arg add (title) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(source) = up.source {
         sets.push("source = ?");
-        args.add(source)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        args.add(source).map_err(|e| {
+            error!(?e, "arg add (source) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(y) = up.r#yield {
         sets.push(r#""yield" = ?"#);
-        args.add(y).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        args.add(y).map_err(|e| {
+            error!(?e, "arg add (yield) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(notes) = up.notes {
         sets.push("notes = ?");
-        args.add(notes)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        args.add(notes).map_err(|e| {
+            error!(?e, "arg add (notes) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
 
     if let Some(ing_lines) = up.ingredients.as_ref() {
@@ -393,20 +387,28 @@ pub async fn update(
 
         let s = serde_json::to_string(&structured).unwrap_or_else(|_| "[]".into());
         sets.push("ingredients = json(?)");
-        args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        args.add(s).map_err(|e| {
+            error!(?e, "arg add (ingredients) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
 
     if let Some(instr) = up.instructions {
         let s = serde_json::to_string(&instr).unwrap_or_else(|_| "[]".to_string());
         sets.push("instructions = json(?)");
-        args.add(s).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        args.add(s).map_err(|e| {
+            error!(?e, "arg add (instructions) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
 
     sets.push("updated_at = CURRENT_TIMESTAMP");
 
     let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
-    args.add(id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    args.add(id).map_err(|e| {
+        error!(?e, "arg add (id) failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let res = sqlx::query_with(&sql, args)
         .execute(&state.pool)
@@ -420,24 +422,15 @@ pub async fn update(
         return Err(StatusCode::NOT_FOUND.into());
     }
 
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        SELECT id, title, source, "yield", notes,
-               created_at, updated_at,
-               ingredients, instructions,
-               image_path, image_path_small, image_path_full,
-               macros
-          FROM recipes
-         WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        error!(?e, "recipes.get after update failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.get after update failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(row.into()))
 }
@@ -446,23 +439,20 @@ pub async fn update(
 
 #[derive(Deserialize)]
 struct LlmMacros {
-    protein_g: f64,
-    fat_g: f64,
-    carbs_g: f64,
+    _protein_g: f64,
+    _fat_g: f64,
+    _carbs_g: f64,
 }
 
 fn servings_from_yield(y: &str) -> Option<f64> {
-    // Grab the first integer or decimal in the yield string.
-    // Examples: "4 servings", "Serves 2", "2–3" -> 2.5
-    use crate::units::DECIMAL_RE;
-    if let Some(cap) = DECIMAL_RE.captures(y) {
-        let a = cap.get(1)?.as_str().replace(',', ".");
-        let a: f64 = a.parse().ok()?;
-        let b = cap
-            .get(2)
-            .map(|m| m.as_str().replace(',', "."))
-            .and_then(|s| s.parse::<f64>().ok());
-        return Some(b.map(|bb| (a + bb) / 2.0).unwrap_or(a));
+    let y = y.replace(',', ".");
+    if let Some(cap) = crate::units::SERVINGS_NUM_RE.captures(&y) {
+        let a: f64 = cap.get(1)?.as_str().parse().ok()?;
+        if let Some(bm) = cap.get(2) {
+            let b: f64 = bm.as_str().parse().ok()?;
+            return Some((a + b) / 2.0);
+        }
+        return Some(a);
     }
     None
 }
@@ -472,21 +462,12 @@ pub async fn estimate_macros(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Recipe>> {
     // Load recipe (ingredients + instructions + yield)
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        SELECT id, title, source, "yield", notes,
-               created_at, updated_at,
-               ingredients, instructions,
-               image_path, image_path_small, image_path_full,
-               macros
-          FROM recipes
-         WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::NOT_FOUND)?;
+    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
 
     // Prepare prompt
     let servings = servings_from_yield(&row.r#yield);
@@ -565,11 +546,23 @@ Rules:
 
     let val = call_llm_json(&client, &base, &token, &model, system, &user)
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            error!(?e, "LLM call failed");
+            StatusCode::BAD_GATEWAY
+        })?;
 
-    let parsed: LlmMacros = serde_json::from_value(val).map_err(|_| StatusCode::BAD_GATEWAY)?;
+    #[derive(Deserialize)]
+    struct LlmOut {
+        protein_g: f64,
+        fat_g: f64,
+        carbs_g: f64,
+    }
+    let parsed: LlmOut = serde_json::from_value(val).map_err(|e| {
+        error!(?e, "LLM JSON parse failed");
+        StatusCode::BAD_GATEWAY
+    })?;
 
-    let macros = RecipeMacros {
+    let macros = crate::models::RecipeMacros {
         basis: basis.to_string(),
         protein_g: (parsed.protein_g * 10.0).round() / 10.0,
         fat_g: (parsed.fat_g * 10.0).round() / 10.0,
@@ -590,24 +583,21 @@ Rules:
     .bind(id)
     .execute(&state.pool)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        error!(?e, "recipes.update macros failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Return updated recipe
-    let final_row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-        r#"
-        SELECT id, title, source, "yield", notes,
-               created_at, updated_at,
-               ingredients, instructions,
-               image_path, image_path_small, image_path_full,
-               macros
-          FROM recipes
-         WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let final_row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.get after macros failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(final_row.into()))
 }

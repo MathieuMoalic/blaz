@@ -1,15 +1,23 @@
+use axum::http::StatusCode;
 use axum::{
     Json,
     extract::{Path, State},
 };
-
 use serde::Deserialize;
+use sqlx::Arguments;
+use sqlx::sqlite::SqliteArguments;
 
 use crate::units::{normalize_name, to_canonical_qty_unit};
-use crate::{
-    error::AppResult,
-    models::{AppState, NewItem, ShoppingItem, ToggleItem},
-};
+use crate::{error::AppResult, models::AppState};
+
+// View model returned by endpoints in this file
+#[derive(serde::Serialize, sqlx::FromRow, Clone)]
+pub struct ShoppingItemView {
+    pub id: i64,
+    pub text: String,
+    pub done: i64, // 0/1
+    pub category: Option<String>,
+}
 
 /* ---------- Request types for merge ---------- */
 
@@ -18,6 +26,7 @@ pub struct InIngredient {
     pub quantity: Option<f64>,
     pub unit: Option<String>, // "g","kg","ml","L","tsp","tbsp" or null
     pub name: String,
+    pub category: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -25,7 +34,127 @@ pub struct MergeReq {
     pub items: Vec<InIngredient>,
 }
 
+#[derive(Deserialize, Debug, Default)]
+pub struct UpdateItem {
+    #[serde(default)]
+    pub done: Option<bool>,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
 /* ---------- Helpers ---------- */
+
+fn guess_category(name_norm: &str) -> Option<&'static str> {
+    let n = name_norm;
+    // order matters; first match wins
+    const MAP: &[(&[&str], &str)] = &[
+        // Produce
+        (
+            &[
+                "apple", "banana", "tomato", "cucumber", "lettuce", "carrot", "onion", "garlic",
+                "pepper", "spinach", "potato", "avocado", "lemon", "lime", "orange", "berry",
+            ],
+            "Produce",
+        ),
+        // Dairy & Eggs
+        (
+            &[
+                "milk",
+                "yogurt",
+                "cheese",
+                "feta",
+                "mozzarella",
+                "butter",
+                "cream",
+                "egg",
+            ],
+            "Dairy",
+        ),
+        // Bakery
+        (
+            &["bread", "bun", "baguette", "roll", "tortilla", "pita"],
+            "Bakery",
+        ),
+        // Meat & Fish
+        (
+            &[
+                "chicken", "beef", "pork", "turkey", "ham", "salmon", "tuna", "shrimp", "sausage",
+                "bacon",
+            ],
+            "Meat & Fish",
+        ),
+        // Pantry (dry goods, cans)
+        (
+            &[
+                "flour",
+                "sugar",
+                "salt",
+                "rice",
+                "pasta",
+                "noodle",
+                "bean",
+                "lentil",
+                "canned",
+                "tomato paste",
+                "tomato sauce",
+                "oil",
+                "vinegar",
+                "mustard",
+                "ketchup",
+                "honey",
+            ],
+            "Pantry",
+        ),
+        // Spices
+        (
+            &[
+                "cumin",
+                "paprika",
+                "oregano",
+                "basil",
+                "thyme",
+                "coriander",
+                "curry",
+                "chili",
+                "turmeric",
+                "peppercorn",
+                "spice",
+            ],
+            "Spices",
+        ),
+        // Frozen
+        (
+            &["frozen", "ice cream", "frozen berries", "frozen peas"],
+            "Frozen",
+        ),
+        // Beverages
+        (
+            &["coffee", "tea", "juice", "soda", "water", "sparkling"],
+            "Beverages",
+        ),
+        // Household / Other
+        (
+            &[
+                "paper",
+                "towel",
+                "foil",
+                "wrap",
+                "detergent",
+                "soap",
+                "shampoo",
+                "bag",
+                "trash",
+            ],
+            "Household",
+        ),
+    ];
+    for (needles, cat) in MAP {
+        if needles.iter().any(|k| n.contains(k)) {
+            return Some(*cat);
+        }
+    }
+    None
+}
 
 /// If `name` starts with "<qty> [unit] <rest>", pull qty+unit out and return them
 /// along with the cleaned name. Unit is optional here.
@@ -164,9 +293,8 @@ fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
 /* ---------- Routes ---------- */
 
 // GET /shopping
-pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItem>>> {
-    // Format a display text from (quantity,unit,name) so the frontend can keep using ShoppingItem
-    let rows = sqlx::query_as::<_, ShoppingItem>(
+pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
+    let rows = sqlx::query_as::<_, ShoppingItemView>(
         r#"
         SELECT id,
                CASE
@@ -176,7 +304,8 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingI
                    THEN TRIM(printf('%g', quantity)) || ' ' || name
                  ELSE name
                END AS text,
-               done
+               done,
+               category
           FROM shopping_items
          ORDER BY id
         "#,
@@ -186,12 +315,16 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingI
     Ok(Json(rows))
 }
 
-// POST /shopping { text }
-// POST /shopping { text }
+// POST /shopping { "text": "..." }
+#[derive(Deserialize)]
+pub struct NewItem {
+    pub text: String,
+}
+
 pub async fn create(
     State(state): State<AppState>,
     Json(new): Json<NewItem>,
-) -> AppResult<Json<ShoppingItem>> {
+) -> AppResult<Json<ShoppingItemView>> {
     let text = new.text.trim();
     if text.is_empty() {
         return Err(anyhow::anyhow!("empty shopping item").into());
@@ -200,24 +333,28 @@ pub async fn create(
     // If the line looks structured, upsert by (unit,name) and sum quantity.
     if let Some((name_norm, unit_norm, qty_norm)) = parse_free_text_item(text) {
         let key = make_key(&name_norm, unit_norm);
+        let category_guess = guess_category(&name_norm).map(|s| s.to_string());
 
         sqlx::query(
             r#"
-            INSERT INTO shopping_items (name, unit, quantity, done, key)
-            VALUES (?, ?, ?, 0, ?)
-            ON CONFLICT(key) DO UPDATE SET
-              quantity = COALESCE(shopping_items.quantity, 0)
-                       + COALESCE(excluded.quantity, 0)
-            "#,
+    INSERT INTO shopping_items (name, unit, quantity, done, key, category)
+    VALUES (?, ?, ?, 0, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      quantity = COALESCE(shopping_items.quantity, 0)
+               + COALESCE(excluded.quantity, 0),
+      -- keep existing category if present; otherwise take the new one
+      category = COALESCE(shopping_items.category, excluded.category)
+    "#,
         )
         .bind(&name_norm)
         .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
+        .bind(&category_guess)
         .execute(&state.pool)
         .await?;
 
-        let row = sqlx::query_as::<_, ShoppingItem>(
+        let row = sqlx::query_as::<_, ShoppingItemView>(
             r#"
             SELECT id,
                    CASE
@@ -227,7 +364,8 @@ pub async fn create(
                        THEN TRIM(printf('%g', quantity)) || ' ' || name
                      ELSE name
                    END AS text,
-                   done
+                   done,
+                   category
               FROM shopping_items
              WHERE key = ?
             "#,
@@ -239,23 +377,25 @@ pub async fn create(
         return Ok(Json(row));
     }
 
-    // Fallback: plain-text item (no qty/unit) — original behavior
+    // Fallback: plain-text item (no qty/unit)
     let name_norm = normalize_name(text);
+    let category_guess = guess_category(&name_norm).map(|s| s.to_string());
     let key = make_key(&name_norm, None);
 
     sqlx::query(
         r#"
-        INSERT INTO shopping_items (name, unit, quantity, done, key)
-        VALUES (?, NULL, NULL, 0, ?)
-        ON CONFLICT(key) DO NOTHING
-        "#,
+    INSERT INTO shopping_items (name, unit, quantity, done, key, category)
+    VALUES (?, NULL, NULL, 0, ?, ?)
+    ON CONFLICT(key) DO NOTHING
+    "#,
     )
     .bind(&name_norm)
     .bind(&key)
+    .bind(&category_guess)
     .execute(&state.pool)
     .await?;
 
-    let row = sqlx::query_as::<_, ShoppingItem>(
+    let row = sqlx::query_as::<_, ShoppingItemView>(
         r#"
         SELECT id,
                CASE
@@ -265,7 +405,8 @@ pub async fn create(
                    THEN TRIM(printf('%g', quantity)) || ' ' || name
                  ELSE name
                END AS text,
-               done
+               done,
+               category
           FROM shopping_items
          WHERE key = ?
         "#,
@@ -277,18 +418,45 @@ pub async fn create(
     Ok(Json(row))
 }
 
-// PATCH /shopping/:id { done: bool }
+// PATCH /shopping/:id  body can be: {"done":true}, {"category":"Dairy"}, or both
 pub async fn toggle_done(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(t): Json<ToggleItem>,
-) -> AppResult<Json<ShoppingItem>> {
-    let done_i64 = if t.done { 1 } else { 0 };
+    Json(t): Json<UpdateItem>,
+) -> AppResult<Json<ShoppingItemView>> {
+    // Build dynamic SET clause
+    let mut sets: Vec<&'static str> = Vec::new();
+    let mut args = SqliteArguments::default();
 
-    let row = sqlx::query_as::<_, ShoppingItem>(
+    if let Some(done) = t.done {
+        sets.push("done = ?");
+        args.add(if done { 1i64 } else { 0i64 })
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
+    if let Some(cat_raw) = t.category {
+        // Normalize; empty -> NULL
+        let cat_norm = crate::units::norm_whitespace(&cat_raw);
+        if cat_norm.is_empty() {
+            sets.push("category = NULL");
+        } else {
+            sets.push("category = ?");
+            args.add(cat_norm)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+    }
+
+    if sets.is_empty() {
+        // Nothing to update
+        return Err(StatusCode::BAD_REQUEST.into());
+    }
+
+    // WHERE id = ?
+    sets.push("-- sentinel");
+    let sql = format!(
         r#"
         UPDATE shopping_items
-           SET done = ?
+           SET {sets}
          WHERE id = ?
          RETURNING id,
            CASE
@@ -298,13 +466,18 @@ pub async fn toggle_done(
                THEN TRIM(printf('%g', quantity)) || ' ' || name
              ELSE name
            END AS text,
-           done
+           done,
+           category
         "#,
-    )
-    .bind(done_i64)
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await?;
+        sets = sets[..sets.len() - 1].join(", ")
+    );
+
+    args.add(id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let row = sqlx::query_as_with::<_, ShoppingItemView, _>(&sql, args)
+        .fetch_one(&state.pool)
+        .await?;
 
     Ok(Json(row))
 }
@@ -327,7 +500,7 @@ pub async fn delete(
 pub async fn merge_items(
     State(state): State<AppState>,
     Json(req): Json<MergeReq>,
-) -> AppResult<Json<Vec<ShoppingItem>>> {
+) -> AppResult<Json<Vec<ShoppingItemView>>> {
     for it in req.items {
         // 1) start from provided fields
         let mut qty = it.quantity;
@@ -356,31 +529,41 @@ pub async fn merge_items(
         // 5) key and upsert (avoid turning NULL into 0)
         let key = make_key(&base_name, unit_norm);
 
+        let chosen_cat = it
+            .category
+            .and_then(|s| {
+                let s = crate::units::norm_whitespace(&s);
+                if s.is_empty() { None } else { Some(s) }
+            })
+            .or_else(|| guess_category(&base_name).map(|s| s.to_string()));
+
         sqlx::query(
             r#"
-            INSERT INTO shopping_items (name, unit, quantity, done, key)
-            VALUES (?, ?, ?, 0, ?)
-            ON CONFLICT(key) DO UPDATE SET
-              quantity = CASE
-                WHEN excluded.quantity IS NULL THEN shopping_items.quantity
-                WHEN shopping_items.quantity IS NULL THEN excluded.quantity
-                ELSE shopping_items.quantity + excluded.quantity
-              END,
-              -- keep normalized name and canonical unit
-              name = excluded.name,
-              unit = excluded.unit
-            "#,
+    INSERT INTO shopping_items (name, unit, quantity, done, key, category)
+    VALUES (?, ?, ?, 0, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      quantity = CASE
+        WHEN excluded.quantity IS NULL THEN shopping_items.quantity
+        WHEN shopping_items.quantity IS NULL THEN excluded.quantity
+        ELSE shopping_items.quantity + excluded.quantity
+      END,
+      -- keep normalized name and canonical unit
+      name = excluded.name,
+      unit = excluded.unit,
+      category = COALESCE(shopping_items.category, excluded.category)
+    "#,
         )
         .bind(&base_name)
-        .bind(unit_norm)
-        .bind(qty_norm)
+        .bind(unit_norm) // Option<&str>
+        .bind(qty_norm) // Option<f64>
         .bind(&key)
+        .bind(chosen_cat) // Option<String>
         .execute(&state.pool)
         .await?;
     }
 
     // Return list in the usual "view" shape
-    let rows: Vec<ShoppingItem> = sqlx::query_as::<_, ShoppingItem>(
+    let rows: Vec<ShoppingItemView> = sqlx::query_as::<_, ShoppingItemView>(
         r#"
         SELECT
           id,
@@ -391,7 +574,8 @@ pub async fn merge_items(
               THEN TRIM(printf('%g', quantity)) || ' ' || name
             ELSE name
           END AS text,
-          done
+          done,
+          category
         FROM shopping_items
         ORDER BY id
         "#,

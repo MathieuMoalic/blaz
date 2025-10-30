@@ -15,9 +15,10 @@ CREATE TABLE recipes (
   instructions       TEXT    NOT NULL,  -- JSON array of strings
 
   -- Images
-  image_path         TEXT,              -- legacy (keep if you still read it)
   image_path_small   TEXT,
-  image_path_full    TEXT
+  image_path_full    TEXT,
+
+  macros             TEXT
 );
 
 -- Meal plan
@@ -34,9 +35,6 @@ CREATE TABLE meal_plan (
 CREATE TABLE shopping_items (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
 
-  -- legacy text (optional)
-  text      TEXT,
-
   -- structured
   name      TEXT,        -- display/original name (can be empty)
   unit      TEXT,        -- canonical units: g, kg, ml, L, tsp, tbsp (or NULL)
@@ -45,10 +43,23 @@ CREATE TABLE shopping_items (
   -- canonical merge key: "<unit>|<lower(name)>" or "|<lower(name)>"
   key       TEXT UNIQUE,
 
-  done      INTEGER NOT NULL DEFAULT 0
+  done      INTEGER NOT NULL DEFAULT 0,    -- 0/1
+  category  TEXT                           
 );
 
--- Helpful indexes (optional)
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+-- =====================================================================
+-- Indexes
+-- =====================================================================
+
 CREATE INDEX IF NOT EXISTS idx_recipes_updated_at ON recipes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_meal_plan_day ON meal_plan(day);
+CREATE INDEX IF NOT EXISTS users_email_idx ON users(email);
+CREATE INDEX IF NOT EXISTS shopping_items_category_idx ON shopping_items(category);
 

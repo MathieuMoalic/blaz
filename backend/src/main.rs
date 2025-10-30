@@ -1,9 +1,8 @@
 use std::{net::SocketAddr, path::Path};
 use tokio::net::TcpListener;
 
-use blaz::{build_app, db::make_pool, models::AppState};
+use blaz::{build_app, db::make_pool, init_logging, models::AppState};
 use sqlx::migrate::Migrator;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn env_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
@@ -17,13 +16,8 @@ fn env_bool(name: &str, default: bool) -> bool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "blaz=info,axum=info,sqlx=warn".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Unified logging setup with sane defaults (can still override via RUST_LOG)
+    init_logging();
 
     let pool = make_pool().await?;
     Migrator::new(Path::new("./migrations"))

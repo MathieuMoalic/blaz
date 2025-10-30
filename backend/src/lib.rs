@@ -20,13 +20,40 @@ use axum::{
 };
 use routes::auth;
 use std::time::Duration;
+use tower::ServiceBuilder; // ⟵ new
 use tower_http::services::ServeDir;
 use tower_http::{
     classify::ServerErrorsFailureClass,
     cors::{Any, CorsLayer},
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
 use tracing::{Span, info_span};
+
+/// Initialize tracing with sensible defaults. Can be overridden by RUST_LOG.
+pub fn init_logging() {
+    use tracing_subscriber::{
+        EnvFilter, fmt::time::UtcTime, layer::SubscriberExt, util::SubscriberInitExt,
+    };
+    if std::env::var("RUST_LOG").is_err() {
+        // quiet libs by default; bump your crate as needed
+        unsafe {
+            std::env::set_var(
+                "RUST_LOG",
+                "info,blaz=info,axum=info,sqlx=warn,tower_http=info",
+            );
+        }
+    }
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_timer(UtcTime::rfc_3339())
+                .compact(),
+        )
+        .init();
+}
 
 async fn healthz() -> Json<&'static str> {
     Json("ok")
@@ -34,7 +61,16 @@ async fn healthz() -> Json<&'static str> {
 
 /// Logs request & response bodies (dev-friendly).
 /// Skips multipart requests and likely-binary responses, truncates previews.
+/// Now includes the request-id for correlation.
 async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
+    // Capture request-id (inserted by SetRequestIdLayer)
+    let req_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+        .to_string();
+
     // Decide if we log the request body (avoid multipart)
     let req_ct = req
         .headers()
@@ -56,11 +92,11 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
                 } else {
                     String::from_utf8_lossy(&bytes).to_string()
                 };
-                tracing::info!(request_body = %preview, "request body");
+                tracing::info!(request_id=%req_id, request_body=%preview, "request body");
                 Request::from_parts(req_parts, Body::from(bytes))
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed reading request body");
+                tracing::warn!(request_id=%req_id, error=%e, "failed reading request body");
                 Request::from_parts(req_parts, Body::empty())
             }
         }
@@ -90,11 +126,11 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
                 } else {
                     String::from_utf8_lossy(&bytes).to_string()
                 };
-                tracing::info!(response_body = %preview, "response body");
+                tracing::info!(request_id=%req_id, response_body=%preview, "response body");
                 Response::from_parts(res_parts, Body::from(bytes))
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed reading response body");
+                tracing::warn!(request_id=%req_id, error=%e, "failed reading response body");
                 Response::from_parts(res_parts, Body::empty())
             }
         }
@@ -136,36 +172,41 @@ fn cors_layer() -> CorsLayer {
 }
 
 pub fn build_app(state: AppState) -> Router {
+    // HTTP trace span WITHOUT user-agent; includes request_id from header.
     let trace = TraceLayer::new_for_http()
         .make_span_with(|req: &Request<Body>| {
             let method = req.method().to_string();
             let uri = req.uri().to_string();
-            let ua = req
-                .headers()
-                .get(header::USER_AGENT)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("-")
-                .to_string();
-
             let client_ip = req
                 .extensions()
                 .get::<ConnectInfo<std::net::SocketAddr>>()
                 .map(|ci| ci.0.to_string())
                 .unwrap_or_else(|| "-".into());
+            let rid = req
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("-");
 
-            info_span!("http", method = %method, uri = %uri, client_ip = %client_ip, user_agent = %ua)
+            info_span!("http", method=%method, uri=%uri, client_ip=%client_ip, request_id=%rid)
         })
         .on_request(|_req: &Request<Body>, _span: &Span| {
             tracing::info!("request started");
         })
         .on_response(|res: &Response<Body>, latency: Duration, _span: &Span| {
-            tracing::info!(status = %res.status(), latency_ms = %latency.as_millis(), "response completed");
+            tracing::info!(status=%res.status(), latency_ms=%latency.as_millis(), "response completed");
         })
         .on_failure(|_class: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
-            tracing::error!(latency_ms = %latency.as_millis(), "request failed");
+            tracing::error!(latency_ms=%latency.as_millis(), "request failed");
         });
 
     let media_service = ServeDir::new(state.media_dir.clone());
+
+    // Request-ID middleware comes first so everything downstream (logging/tracing)
+    // has access to the x-request-id header.
+    let request_id_layer = ServiceBuilder::new()
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(PropagateRequestIdLayer::x_request_id());
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -181,7 +222,7 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/recipes/{id}/macros/estimate",
             post(recipes::estimate_macros),
-        ) // NEW
+        )
         .route("/recipes/import", post(parse_recipe::import_from_url))
         // Meal plan
         .route(
@@ -196,11 +237,13 @@ pub fn build_app(state: AppState) -> Router {
             patch(shopping::toggle_done).delete(shopping::delete),
         )
         .route("/shopping/merge", post(shopping::merge_items))
+        // Auth
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/meta", get(auth_meta::meta))
         .nest_service("/media", media_service)
         .with_state(state)
+        .layer(request_id_layer) // ⟵ set and propagate x-request-id
         .layer(from_fn(log_payloads))
         .layer(cors_layer())
         .layer(trace)
