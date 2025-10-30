@@ -25,13 +25,16 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   late Future<List<ShoppingItem>> _future;
   final _ctrl = TextEditingController();
 
-  /// Hide rows immediately when checked; they’ll vanish before the network round-trip.
+  /// Local cache of items for instant UI updates.
+  List<ShoppingItem> _cache = const <ShoppingItem>[];
+
+  /// Hide rows immediately when checked; they vanish before the network round-trip.
   final Set<int> _hidden = <int>{};
 
   @override
   void initState() {
     super.initState();
-    _future = fetchShoppingList();
+    _future = _load();
   }
 
   @override
@@ -40,20 +43,49 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     super.dispose();
   }
 
+  Future<List<ShoppingItem>> _load() async {
+    final list = await fetchShoppingList();
+    _cache = list;
+    return list;
+  }
+
   Future<void> _refresh() async {
-    final f = fetchShoppingList();
+    final f = _load();
     setState(() => _future = f);
     await f;
     if (!mounted) return;
     setState(() => _hidden.clear());
   }
 
+  /// Helper to apply an in-place update and immediately rebuild the list view.
+  Future<void> _applyLocalUpdate(
+    List<ShoppingItem> Function(List<ShoppingItem>) transform,
+  ) async {
+    // Ensure we have current data; if first load still pending, await it.
+    final List<ShoppingItem> current;
+    current = (_cache.isEmpty ? await _future : _cache);
+    final updated = transform(List<ShoppingItem>.from(current));
+    _cache = updated;
+    setState(() => _future = Future.value(updated));
+  }
+
   Future<void> _add() async {
     final t = _ctrl.text.trim();
     if (t.isEmpty) return;
-    await createShoppingItem(t); // backend may auto-guess category
-    _ctrl.clear();
-    _refresh();
+
+    try {
+      final created = await createShoppingItem(t);
+      _ctrl.clear();
+
+      // Show immediately.
+      await _applyLocalUpdate((list) {
+        list.add(created);
+        return list;
+      });
+    } catch (_) {
+      // Fallback to a refresh if something went wrong.
+      _refresh();
+    }
   }
 
   String _catLabel(String? c) => (c == null || c.trim().isEmpty) ? 'Other' : c;
@@ -108,8 +140,9 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 if (snap.hasError) {
                   return Center(child: Text('Error: ${snap.error}'));
                 }
-                final items = (snap.data ?? const <ShoppingItem>[])
-                    // do not show completed; also hide optimistic “just checked”
+                final all = (snap.data ?? const <ShoppingItem>[]);
+                // Only show active, non-hidden items.
+                final items = all
                     .where((i) => !i.done && !_hidden.contains(i.id))
                     .toList();
 
@@ -133,7 +166,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Section header only (no per-row category label)
+                          // Section header (category printed once)
                           Container(
                             color: theme.colorScheme.surfaceContainerHighest,
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
@@ -146,14 +179,21 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             _RowTile(
                               item: it,
                               onChanged: (v) async {
-                                // Optimistically remove the row.
+                                // Optimistically hide immediately.
                                 setState(() => _hidden.add(it.id));
                                 try {
-                                  await toggleShoppingItem(
+                                  final updated = await toggleShoppingItem(
                                     id: it.id,
                                     done: v ?? false,
                                   );
+                                  // Remove it from local cache immediately too.
+                                  await _applyLocalUpdate(
+                                    (list) => list
+                                        .where((x) => x.id != updated.id)
+                                        .toList(),
+                                  );
                                 } finally {
+                                  // Ensure server state and local state stay in sync.
                                   _refresh();
                                 }
                               },
@@ -178,7 +218,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     final ctrl = TextEditingController(text: it.text);
     String cat = _catLabel(it.category);
 
-    final saved = await showModalBottomSheet<bool>(
+    final changed = await showModalBottomSheet<bool>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
@@ -215,7 +255,6 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             border: OutlineInputBorder(),
                           ),
                           textInputAction: TextInputAction.done,
-                          onSubmitted: (_) {},
                         ),
                         const SizedBox(height: 12),
                         Row(
@@ -240,7 +279,8 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                               tooltip: 'Delete item',
                               onPressed: () async {
                                 await deleteShoppingItem(it.id);
-                                if (context.mounted) Navigator.pop(ctx, true);
+                                if (!context.mounted) return;
+                                Navigator.pop(ctx, true);
                               },
                               icon: const Icon(Icons.delete_outline),
                             ),
@@ -266,12 +306,22 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             onPressed: () async {
                               final newText = ctrl.text.trim();
                               final newCat = cat == 'Other' ? '' : cat;
-                              await updateShoppingItem(
+                              final updated = await updateShoppingItem(
                                 id: it.id,
                                 text: newText.isEmpty ? it.text : newText,
                                 category: newCat,
                               );
-                              if (context.mounted) Navigator.pop(ctx, true);
+                              if (!context.mounted) return;
+                              // Close first so the sheet feels instant…
+                              Navigator.pop(ctx, true);
+                              // …then reflect the change locally right away.
+                              await _applyLocalUpdate((list) {
+                                final idx = list.indexWhere(
+                                  (x) => x.id == it.id,
+                                );
+                                if (idx != -1) list[idx] = updated;
+                                return list;
+                              });
                             },
                             child: const Text('Save'),
                           ),
@@ -287,7 +337,11 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       },
     );
 
-    if (saved == true) _refresh();
+    // If deleted or saved via the sheet, refresh grouping; otherwise do nothing.
+    if (changed == true) {
+      // Grouping may change when category changes; ensure fresh order from cache.
+      setState(() {}); // triggers rebuild using already-updated _cache
+    }
   }
 }
 

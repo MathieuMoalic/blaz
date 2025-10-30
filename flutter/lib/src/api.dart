@@ -79,20 +79,33 @@ Future<ShoppingItem> updateShoppingItem({
   required int id,
   bool? done,
   String? category,
-  String? text, // allow renaming/editing the line
+  String? text,
 }) async {
   final body = <String, dynamic>{
     if (done != null) 'done': done,
     if (category != null) 'category': category,
     if (text != null) 'text': text,
   };
+
   final r = await http.patch(
     _u('/shopping/$id'),
     headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode(body),
   );
   if (r.statusCode != 200) _throw(r);
-  return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+
+  final parsed = ShoppingItem.fromJson(
+    jsonDecode(r.body) as Map<String, dynamic>,
+  );
+  if (text != null && (parsed.text != text)) {
+    return ShoppingItem(
+      id: parsed.id,
+      text: text,
+      done: parsed.done,
+      category: parsed.category,
+    );
+  }
+  return parsed;
 }
 
 Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
