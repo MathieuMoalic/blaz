@@ -1,5 +1,3 @@
-// lib/src/views/shopping_list_page.dart
-
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../widgets/app_title.dart';
@@ -27,6 +25,9 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   late Future<List<ShoppingItem>> _future;
   final _ctrl = TextEditingController();
 
+  /// Hide rows immediately when checked; they’ll vanish before the network round-trip.
+  final Set<int> _hidden = <int>{};
+
   @override
   void initState() {
     super.initState();
@@ -43,12 +44,14 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     final f = fetchShoppingList();
     setState(() => _future = f);
     await f;
+    if (!mounted) return;
+    setState(() => _hidden.clear());
   }
 
   Future<void> _add() async {
     final t = _ctrl.text.trim();
     if (t.isEmpty) return;
-    await createShoppingItem(t); // backend will auto-guess category
+    await createShoppingItem(t); // backend may auto-guess category
     _ctrl.clear();
     _refresh();
   }
@@ -61,7 +64,6 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       final key = _catLabel(it.category);
       map.putIfAbsent(key, () => []).add(it);
     }
-    // sort items by id inside each category (stable with your ORDER BY id)
     for (final v in map.values) {
       v.sort((a, b) => a.id.compareTo(b.id));
     }
@@ -106,7 +108,11 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 if (snap.hasError) {
                   return Center(child: Text('Error: ${snap.error}'));
                 }
-                final items = snap.data ?? const <ShoppingItem>[];
+                final items = (snap.data ?? const <ShoppingItem>[])
+                    // do not show completed; also hide optimistic “just checked”
+                    .where((i) => !i.done && !_hidden.contains(i.id))
+                    .toList();
+
                 if (items.isEmpty) {
                   return const Center(child: Text('No items'));
                 }
@@ -127,81 +133,32 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          // Section header only (no per-row category label)
                           Container(
-                            color: theme.colorScheme.surfaceVariant.withOpacity(
-                              0.5,
-                            ),
+                            color: theme.colorScheme.surfaceContainerHighest,
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
                             child: Text(
                               cat,
                               style: theme.textTheme.titleMedium,
                             ),
                           ),
-                          ...rows.map((it) {
-                            return Column(
-                              children: [
-                                ListTile(
-                                  leading: Checkbox(
-                                    value: it.done,
-                                    onChanged: (v) async {
-                                      await toggleShoppingItem(
-                                        id: it.id,
-                                        done: v ?? false,
-                                      );
-                                      _refresh();
-                                    },
-                                  ),
-                                  title: Text(
-                                    it.text,
-                                    style: it.done
-                                        ? const TextStyle(
-                                            decoration:
-                                                TextDecoration.lineThrough,
-                                          )
-                                        : null,
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // Category dropdown
-                                      DropdownButton<String>(
-                                        value: _catLabel(it.category),
-                                        underline: const SizedBox(),
-                                        onChanged: (value) async {
-                                          if (value == null) return;
-                                          final newCat = value == 'Other'
-                                              ? ''
-                                              : value;
-                                          await updateShoppingItem(
-                                            id: it.id,
-                                            category: newCat,
-                                          );
-                                          _refresh();
-                                        },
-                                        items: kCategories
-                                            .map(
-                                              (c) => DropdownMenuItem(
-                                                value: c,
-                                                child: Text(c),
-                                              ),
-                                            )
-                                            .toList(),
-                                      ),
-                                      IconButton(
-                                        tooltip: 'Delete',
-                                        icon: const Icon(Icons.delete_outline),
-                                        onPressed: () async {
-                                          await deleteShoppingItem(it.id);
-                                          _refresh();
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const Divider(height: 1),
-                              ],
-                            );
-                          }),
+                          for (final it in rows)
+                            _RowTile(
+                              item: it,
+                              onChanged: (v) async {
+                                // Optimistically remove the row.
+                                setState(() => _hidden.add(it.id));
+                                try {
+                                  await toggleShoppingItem(
+                                    id: it.id,
+                                    done: v ?? false,
+                                  );
+                                } finally {
+                                  _refresh();
+                                }
+                              },
+                              onEdit: () => _editItem(context, it),
+                            ),
                         ],
                       ),
                     );
@@ -213,6 +170,168 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Future<void> _editItem(BuildContext context, ShoppingItem it) async {
+    final ctrl = TextEditingController(text: it.text);
+    String cat = _catLabel(it.category);
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final bottom = MediaQuery.of(ctx).viewInsets.bottom;
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: bottom),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                    child: Row(
+                      children: [
+                        Text(
+                          'Edit item',
+                          style: Theme.of(ctx).textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: ctrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Item',
+                            hintText: 'e.g. 2 lemons',
+                            border: OutlineInputBorder(),
+                          ),
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) {},
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            const Text('Category'),
+                            const SizedBox(width: 12),
+                            DropdownButton<String>(
+                              value: cat,
+                              onChanged: (v) =>
+                                  setSheetState(() => cat = v ?? 'Other'),
+                              items: kCategories
+                                  .map(
+                                    (c) => DropdownMenuItem(
+                                      value: c,
+                                      child: Text(c),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              tooltip: 'Delete item',
+                              onPressed: () async {
+                                await deleteShoppingItem(it.id);
+                                if (context.mounted) Navigator.pop(ctx, true);
+                              },
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () async {
+                              final newText = ctrl.text.trim();
+                              final newCat = cat == 'Other' ? '' : cat;
+                              await updateShoppingItem(
+                                id: it.id,
+                                text: newText.isEmpty ? it.text : newText,
+                                category: newCat,
+                              );
+                              if (context.mounted) Navigator.pop(ctx, true);
+                            },
+                            child: const Text('Save'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (saved == true) _refresh();
+  }
+}
+
+/// A compact, translucent row that exposes edit on tap only.
+class _RowTile extends StatelessWidget {
+  final ShoppingItem item;
+  final ValueChanged<bool?> onChanged;
+  final VoidCallback onEdit;
+
+  const _RowTile({
+    required this.item,
+    required this.onChanged,
+    required this.onEdit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            // Slight translucency so the global background peeks through.
+            color: c.surface.withOpacity(0.65),
+          ),
+          child: ListTile(
+            dense: true,
+            minVerticalPadding: 6,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            onTap: onEdit,
+            leading: Checkbox(
+              value: false, // only active items are shown
+              onChanged: onChanged,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            title: Text(
+              item.text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        const Divider(height: 1),
       ],
     );
   }

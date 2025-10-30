@@ -28,6 +28,9 @@ void main() async {
   runApp(const BlazApp());
 }
 
+const kBgAvif = 'assets/images/background.avif';
+const kBgFallback = 'assets/images/background.png';
+
 class BlazApp extends StatelessWidget {
   const BlazApp({super.key});
 
@@ -41,8 +44,37 @@ class BlazApp extends StatelessWidget {
     return MaterialApp(
       title: 'Blaz',
       themeMode: ThemeMode.dark,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: _theme(
+        Brightness.light,
+      ).copyWith(scaffoldBackgroundColor: Colors.transparent),
+      darkTheme: _theme(
+        Brightness.dark,
+      ).copyWith(scaffoldBackgroundColor: Colors.transparent),
+      builder: (context, child) {
+        final tint = Theme.of(context).brightness == Brightness.dark
+            ? Colors.black.withAlpha(80)
+            : Colors.white.withAlpha(40);
+
+        Widget bg = Image.asset(
+          kBgAvif,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) {
+            // Fallback if AVIF isn't supported or not bundled
+            return Image.asset(kBgFallback, fit: BoxFit.cover);
+          },
+        );
+
+        return Stack(
+          children: [
+            Positioned.fill(child: bg),
+            Positioned.fill(
+              child: IgnorePointer(child: ColoredBox(color: tint)),
+            ),
+            if (child != null) child,
+          ],
+        );
+      },
+
       home: Auth.token == null ? const LoginPage() : const HomeShell(),
       debugShowCheckedModeBanner: false,
     );
