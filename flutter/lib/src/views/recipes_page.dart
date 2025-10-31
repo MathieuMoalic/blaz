@@ -6,8 +6,9 @@ import 'add_recipe_page.dart';
 import 'login_page.dart';
 import '../auth.dart';
 import '../widgets/app_title.dart';
+import 'app_state_page.dart';
 
-enum _MenuAction { logout }
+enum _MenuAction { settings, logout }
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -124,6 +125,11 @@ class RecipesPageState extends State<RecipesPage> {
                 icon: const Icon(Icons.account_circle),
                 onSelected: (choice) async {
                   switch (choice) {
+                    case _MenuAction.settings:
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AppStatePage()),
+                      );
+                      break;
                     case _MenuAction.logout:
                       await Auth.logout();
                       if (!context.mounted) return;
@@ -136,10 +142,10 @@ class RecipesPageState extends State<RecipesPage> {
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem<_MenuAction>(
-                    value: _MenuAction.logout,
+                    value: _MenuAction.settings,
                     child: ListTile(
-                      leading: Icon(Icons.logout),
-                      title: Text('Logout'),
+                      leading: Icon(Icons.settings),
+                      title: Text('App settings'),
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                     ),

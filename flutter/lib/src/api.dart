@@ -589,3 +589,57 @@ Future<void> deleteShoppingItem(int id) async {
   final r = await http.delete(_u('/shopping/$id'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
 }
+
+class AppSettings {
+  final String? llmApiKey;
+  final String llmModel;
+  final String llmApiUrl;
+  final bool allowRegistration;
+  final String systemPromptImport;
+  final String systemPromptMacros;
+
+  AppSettings({
+    required this.llmApiKey,
+    required this.llmModel,
+    required this.llmApiUrl,
+    required this.allowRegistration,
+    required this.systemPromptImport,
+    required this.systemPromptMacros,
+  });
+
+  factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
+    llmApiKey: (j['llm_api_key'] as String?)?.isNotEmpty == true
+        ? j['llm_api_key'] as String
+        : null,
+    llmModel: j['llm_model'] as String,
+    llmApiUrl: j['llm_api_url'] as String,
+    allowRegistration: j['allow_registration'] == true,
+    systemPromptImport: (j['system_prompt_import'] as String?) ?? '',
+    systemPromptMacros: (j['system_prompt_macros'] as String?) ?? '',
+  );
+
+  Map<String, dynamic> toJson() => {
+    'llm_api_key': (llmApiKey == null || llmApiKey!.isEmpty) ? null : llmApiKey,
+    'llm_model': llmModel,
+    'llm_api_url': llmApiUrl,
+    'allow_registration': allowRegistration,
+    'system_prompt_import': systemPromptImport,
+    'system_prompt_macros': systemPromptMacros,
+  };
+}
+
+Future<AppSettings> fetchAppSettings() async {
+  final r = await http.get(_u('/app-state'), headers: _headers());
+  if (r.statusCode != 200) _throw(r);
+  return AppSettings.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+
+Future<AppSettings> updateAppSettings(AppSettings s) async {
+  final r = await http.put(
+    _u('/app-state'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode(s.toJson()),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return AppSettings.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}

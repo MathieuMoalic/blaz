@@ -10,7 +10,8 @@ pub struct AuthMeta {
 
 /// GET /auth/meta  -> { "allow_registration": true/false }
 pub async fn meta(State(state): State<AppState>) -> AppResult<Json<AuthMeta>> {
+    let allow = state.settings.read().await.allow_registration;
     Ok(Json(AuthMeta {
-        allow_registration: state.allow_registration,
+        allow_registration: allow,
     }))
 }

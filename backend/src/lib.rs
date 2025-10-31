@@ -8,7 +8,7 @@ pub mod units;
 
 use crate::{
     models::AppState,
-    routes::{auth_meta, meal_plan, parse_recipe, recipes, shopping},
+    routes::{app_state, auth_meta, meal_plan, parse_recipe, recipes, shopping},
 };
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, Response, header};
@@ -161,6 +161,7 @@ fn cors_layer() -> CorsLayer {
                     Method::GET,
                     Method::POST,
                     Method::PATCH,
+                    Method::PUT,
                     Method::DELETE,
                     Method::OPTIONS,
                 ])
@@ -210,7 +211,12 @@ pub fn build_app(state: AppState) -> Router {
 
     Router::new()
         .route("/healthz", get(healthz))
-        // Recipes
+        .route(
+            "/app-state",
+            get(app_state::get)
+                .patch(app_state::patch)
+                .put(app_state::patch),
+        )
         .route("/recipes", get(recipes::list).post(recipes::create))
         .route(
             "/recipes/{id}",
@@ -224,26 +230,23 @@ pub fn build_app(state: AppState) -> Router {
             post(recipes::estimate_macros),
         )
         .route("/recipes/import", post(parse_recipe::import_from_url))
-        // Meal plan
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),
         )
         .route("/meal-plan/{day}/{recipe_id}", delete(meal_plan::unassign))
-        // Shopping
         .route("/shopping", get(shopping::list).post(shopping::create))
         .route(
             "/shopping/{id}",
-            patch(shopping::toggle_done).delete(shopping::delete),
+            patch(shopping::patch_shopping_item).delete(shopping::delete),
         )
         .route("/shopping/merge", post(shopping::merge_items))
-        // Auth
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/meta", get(auth_meta::meta))
         .nest_service("/media", media_service)
         .with_state(state)
-        .layer(request_id_layer) // ⟵ set and propagate x-request-id
+        .layer(request_id_layer)
         .layer(from_fn(log_payloads))
         .layer(cors_layer())
         .layer(trace)

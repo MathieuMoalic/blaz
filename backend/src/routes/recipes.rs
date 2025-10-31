@@ -494,22 +494,6 @@ pub async fn estimate_macros(
 
     let instructions_lines = row.instructions.0;
 
-    let system = r#"You are a precise nutrition estimator.
-
-Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
-{
-  "protein_g": number,
-  "fat_g": number,     // saturated + unsaturated combined
-  "carbs_g": number    // carbohydrates EXCLUDING fiber
-}
-
-Rules:
-- Use common nutrition databases and reasonable approximations.
-- Always include ALL three keys.
-- Carbs exclude fiber (i.e., net carbs).
-- If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
-- Never add extra fields or commentary."#;
-
     let mut user = String::new();
     if let Some(sv) = servings {
         user.push_str(&format!("SERVINGS: {}\n", sv));
@@ -535,16 +519,38 @@ Rules:
         .build()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let base = std::env::var("BLAZ_LLM_API_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "https://router.huggingface.co/v1".into());
-    let token = std::env::var("BLAZ_LLM_API_KEY").unwrap_or_default();
-    let model = std::env::var("BLAZ_LLM_MODEL")
-        .ok()
-        .unwrap_or_else(|| "meta-llama/Llama-3.1-8B-Instruct".into());
+    const DEFAULT_MACROS_PROMPT: &str = r#"You are a precise nutrition estimator.
 
-    let val = call_llm_json(&client, &base, &token, &model, system, &user)
+Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
+{
+  "protein_g": number,
+  "fat_g": number,     // saturated + unsaturated combined
+  "carbs_g": number    // carbohydrates EXCLUDING fiber
+}
+
+Rules:
+- Use common nutrition databases and reasonable approximations.
+- Always include ALL three keys.
+- Carbs exclude fiber (i.e., net carbs).
+- If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
+- Never add extra fields or commentary."#;
+
+    let st = state.settings.read().await.clone();
+    let sys = {
+        let s = st.system_prompt_macros.clone();
+        if s.trim().is_empty() {
+            DEFAULT_MACROS_PROMPT.to_string()
+        } else {
+            s
+        }
+    };
+
+    // base/token/model from settings
+    let base = st.llm_api_url;
+    let token = st.llm_api_key.unwrap_or_default();
+    let model = st.llm_model;
+
+    let val = call_llm_json(&client, &base, &token, &model, &sys, &user)
         .await
         .map_err(|e| {
             error!(?e, "LLM call failed");

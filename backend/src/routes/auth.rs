@@ -39,8 +39,7 @@ pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
 ) -> AppResult<StatusCode> {
-    // CHANGED
-    if !state.allow_registration {
+    if !state.settings.read().await.allow_registration {
         return Err(StatusCode::FORBIDDEN.into());
     }
 

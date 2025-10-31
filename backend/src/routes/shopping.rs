@@ -3,9 +3,12 @@ use axum::{
     Json,
     extract::{Path, State},
 };
+use regex::Regex;
 use serde::Deserialize;
-use sqlx::Arguments;
-use sqlx::sqlite::SqliteArguments;
+use serde::Serialize;
+use sqlx::Row;
+use sqlx::sqlite::{SqliteArguments, SqliteRow};
+use sqlx::{Arguments, QueryBuilder, Sqlite};
 
 use crate::units::{normalize_name, to_canonical_qty_unit};
 use crate::{error::AppResult, models::AppState};
@@ -20,6 +23,20 @@ pub struct ShoppingItemView {
 }
 
 /* ---------- Request types for merge ---------- */
+#[derive(Serialize)]
+pub struct ShoppingItemDto {
+    pub id: i64,
+    pub text: String,
+    pub done: i64,
+    pub category: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct UpdateShoppingItem {
+    pub done: Option<bool>,
+    pub category: Option<String>,
+    pub text: Option<String>,
+}
 
 #[derive(Deserialize, Clone)]
 pub struct InIngredient {
@@ -42,7 +59,198 @@ pub struct UpdateItem {
     pub category: Option<String>,
 }
 
+#[derive(Debug)]
+struct ParsedLine {
+    quantity: Option<f64>,
+    unit: Option<String>,
+    name: String,
+}
+
 /* ---------- Helpers ---------- */
+
+fn parse_line(raw: &str) -> ParsedLine {
+    let s = raw.trim();
+    // Normalize decimal comma to dot for SQLite REAL
+    let s_norm = s.replace(',', ".");
+
+    // Regex: optional qty, optional unit, then name
+    // ^\s*(\d+(?:\.\d+)?)?\s*([A-Za-zµμ]+)?\s*(.*\S)?$
+    // Make unit fairly permissive (letters + micro symbol)
+    static RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+        Regex::new(r#"^\s*(\d+(?:\.\d+)?)?\s*([A-Za-zµμ]+)?\s*(.*\S)?$"#).unwrap()
+    });
+
+    if let Some(c) = RE.captures(&s_norm) {
+        let qty = c.get(1).and_then(|m| m.as_str().parse::<f64>().ok());
+        let unit = c.get(2).map(|m| m.as_str().to_string());
+        // If we had qty and unit but no name, or we had none of the above,
+        // just fall back to the whole string as name.
+        let name = c
+            .get(3)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default();
+
+        // If name is empty, treat entire input as name (no structured fields)
+        if name.is_empty() {
+            return ParsedLine {
+                quantity: None,
+                unit: None,
+                name: s.to_string(),
+            };
+        }
+
+        ParsedLine {
+            quantity: qty,
+            unit,
+            name,
+        }
+    } else {
+        ParsedLine {
+            quantity: None,
+            unit: None,
+            name: s.to_string(),
+        }
+    }
+}
+
+pub async fn patch_shopping_item(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<UpdateShoppingItem>,
+) -> Result<Json<ShoppingItemDto>, (StatusCode, String)> {
+    // Build dynamic UPDATE based on provided fields
+    let mut qb = QueryBuilder::<Sqlite>::new("UPDATE shopping_items SET ");
+    let mut wrote = false;
+
+    // done
+    if let Some(d) = payload.done {
+        if wrote {
+            qb.push(", ");
+        }
+        qb.push("done = ");
+        qb.push_bind(if d { 1_i64 } else { 0_i64 });
+        wrote = true;
+    }
+
+    // category (empty -> NULL)
+    if let Some(mut cat) = payload.category.clone() {
+        if wrote {
+            qb.push(", ");
+        }
+        cat = cat.trim().to_string();
+        if cat.is_empty() {
+            qb.push("category = NULL");
+        } else {
+            qb.push("category = ");
+            qb.push_bind(cat);
+        }
+        wrote = true;
+    }
+
+    // text -> parse to (quantity, unit, name)
+    if let Some(ref t) = payload.text {
+        let parsed = parse_line(t);
+
+        if wrote {
+            qb.push(", ");
+        }
+        qb.push("name = ");
+        qb.push_bind(parsed.name);
+
+        qb.push(", quantity = ");
+        if let Some(q) = parsed.quantity {
+            qb.push_bind(q);
+        } else {
+            qb.push("NULL");
+        }
+
+        qb.push(", unit = ");
+        if let Some(u) = parsed.unit {
+            // optional normalization
+            let u_norm = match u.as_str() {
+                s if s.eq_ignore_ascii_case("l") => "L".to_string(),
+                s if s.eq_ignore_ascii_case("g") => "g".to_string(),
+                s if s.eq_ignore_ascii_case("ml") => "ml".to_string(),
+                _ => u,
+            };
+            qb.push_bind(u_norm);
+        } else {
+            qb.push("NULL");
+        }
+
+        wrote = true;
+    }
+
+    if !wrote {
+        // Nothing to update — return current row
+        let row = sqlx::query(
+            r#"
+            SELECT id,
+                   CASE
+                     WHEN quantity IS NOT NULL AND unit IS NOT NULL AND unit <> ''
+                       THEN TRIM(printf('%g', quantity)) || ' ' || unit || ' ' || name
+                     WHEN quantity IS NOT NULL
+                       THEN TRIM(printf('%g', quantity)) || ' ' || name
+                     ELSE name
+                   END AS text,
+                   done,
+                   category
+              FROM shopping_items
+             WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&state.pool) // <- FIX: use pool
+        .await
+        .map_err(internal_err)?;
+
+        return Ok(Json(row_to_dto(row)));
+    }
+
+    qb.push(" WHERE id = ");
+    qb.push_bind(id);
+    qb.push(
+        r#"
+        RETURNING id,
+           CASE
+             WHEN quantity IS NOT NULL AND unit IS NOT NULL AND unit <> ''
+               THEN TRIM(printf('%g', quantity)) || ' ' || unit || ' ' || name
+             WHEN quantity IS NOT NULL
+               THEN TRIM(printf('%g', quantity)) || ' ' || name
+             ELSE name
+           END AS text,
+           done,
+           category
+        "#,
+    );
+
+    let row: SqliteRow = qb
+        .build()
+        .fetch_one(&state.pool) // <- FIX: use pool
+        .await
+        .map_err(internal_err)?;
+
+    Ok(Json(row_to_dto(row)))
+}
+
+fn row_to_dto(row: SqliteRow) -> ShoppingItemDto {
+    ShoppingItemDto {
+        id: row.get::<i64, _>("id"),
+        text: row.get::<String, _>("text"),
+        done: row.get::<i64, _>("done"),
+        category: row
+            .try_get::<String, _>("category")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    }
+}
+
+fn internal_err<E: std::error::Error>(err: E) -> (axum::http::StatusCode, String) {
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        err.to_string(),
+    )
+}
 
 fn guess_category(name_norm: &str) -> Option<&'static str> {
     let n = name_norm;

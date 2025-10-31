@@ -1,515 +1,519 @@
-use crate::{
-    error::AppResult,
-    models::{AppState, Ingredient, Recipe, RecipeRow},
-    routes::{parse_recipe_image::extract_main_image_url, recipes::fetch_and_store_recipe_image},
-};
-use anyhow::{Result, anyhow};
 use axum::{Json, extract::State, http::StatusCode};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
-use scraper::{ElementRef, Html, Node, Selector};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::collections::HashSet;
+use serde_json::{Value as JsonValue, json};
 use std::time::Duration;
-use tracing::error;
+
+use crate::{
+    models::{AppState, NewRecipe, Recipe},
+    routes::recipes,
+};
+
+/* =========================
+ * Request DTO
+ * ========================= */
 
 #[derive(Deserialize)]
-pub struct ImportReq {
+pub struct ImportFromUrlReq {
     pub url: String,
+    /// Optional model override (e.g., "deepseek/deepseek-chat-v3.1")
     #[serde(default)]
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct Extracted {
-    ingredients: Vec<Ingredient>,
-    instructions: Vec<String>,
-}
-
-/* ---------- Route ---------- */
+/* =========================
+ * Handler
+ * ========================= */
 
 pub async fn import_from_url(
     State(state): State<AppState>,
-    Json(req): Json<ImportReq>,
-) -> AppResult<Json<Recipe>> {
-    // CHANGED
-    // 1) Fetch HTML
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(95))
-        .connect_timeout(Duration::from_secs(10))
-        .pool_idle_timeout(Some(Duration::from_secs(30)))
-        .build()
-        .map_err(|e| {
-            error!(?e, "reqwest client build failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    Json(req): Json<ImportFromUrlReq>,
+) -> Result<Json<Recipe>, (StatusCode, String)> {
+    // 1) Fetch page HTML and convert to plain text
+    let (title_guess_raw, text) = fetch_page_text(&req.url)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("fetch failed: {e}")))?;
 
-    let html = client
-        .get(&req.url)
-        .header(USER_AGENT, "blaz/recipe-importer")
+    // Clean the HTML title immediately (removes branding & adjectives)
+    let title_guess = clean_title(&title_guess_raw);
+
+    if text.trim().is_empty() {
+        return Err((StatusCode::BAD_GATEWAY, "page has no readable text".into()));
+    }
+
+    // 2) Read runtime LLM settings from in-memory state
+    let settings = state.settings.read().await.clone();
+
+    let token = settings.llm_api_key.clone().unwrap_or_default();
+    if token.is_empty() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "LLM API key is not configured (set it in /app-state)".into(),
+        ));
+    }
+
+    let model = req.model.as_deref().unwrap_or(&settings.llm_model);
+    let base = settings.llm_api_url.as_str();
+    let system = settings.system_prompt_import.as_str();
+
+    // 3) Build compact user message
+    const MAX_CHARS: usize = 12_000;
+    let excerpt = if text.len() > MAX_CHARS {
+        &text[..MAX_CHARS]
+    } else {
+        &text
+    };
+    let user = format!(
+        "URL: {url}\nTITLE: {title}\n\nCONTENT:\n{content}",
+        url = req.url,
+        title = title_guess,
+        content = excerpt
+    );
+
+    // 4) Call LLM expecting JSON (robust extraction)
+    let client = reqwest::Client::new();
+    let llm_json = call_llm_json(&client, base, &token, model, system, &user)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
+
+    // 5) Tolerant normalization (optionally reads `title`)
+    let raw = ExtractRaw::from_json(&llm_json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("invalid LLM JSON: {e}")))?;
+    // Capture title before `normalize(self)` consumes `raw`
+    let title_from_llm = raw.title.clone();
+    let norm = raw.normalize();
+
+    // Prefer LLM-provided title if available, else cleaned HTML title, else fallback
+    let chosen_title = title_from_llm
+        .as_deref()
+        .map(clean_title)
+        .unwrap_or_else(|| title_guess.clone());
+
+    let final_title = if !chosen_title.trim().is_empty() {
+        chosen_title
+    } else {
+        fallback_title_from_url(&req.url).unwrap_or_else(|| "Imported recipe".to_string())
+    };
+
+    let payload = NewRecipe {
+        title: final_title,
+        source: req.url.clone(),
+        r#yield: String::new(),
+        notes: String::new(),
+        ingredients: norm.ingredients,
+        instructions: norm.instructions,
+    };
+
+    // Insert using the existing handler
+    let created = recipes::create(State(state), Json(payload))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)))?;
+
+    Ok(created)
+}
+
+/* =========================
+ * HTML fetch + plain text
+ * ========================= */
+
+async fn fetch_page_text(url: &str) -> Result<(String, String), String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .timeout(Duration::from_secs(45))
         .send()
         .await
-        .map_err(|e| {
-            error!(?e, url = %req.url, "fetch failed");
-            StatusCode::BAD_GATEWAY
-        })?
-        .text()
-        .await
-        .map_err(|e| {
-            error!(?e, url = %req.url, "read body failed");
-            StatusCode::BAD_GATEWAY
-        })?;
+        .map_err(|e| format!("request failed: {e}"))?;
 
-    // 2) Visible text + title
-    let text = extract_visible_text(&html);
-    let title = extract_title(&html).unwrap_or_else(|| "Imported recipe".to_string());
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {} fetching {}", resp.status(), url));
+    }
 
-    // 3) Call HF router
-    let base = std::env::var("BLAZ_LLM_API_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "https://router.huggingface.co/v1".into());
-    let token = std::env::var("BLAZ_LLM_API_KEY").unwrap_or_default();
-    let model = req
-        .model
-        .or_else(|| std::env::var("BLAZ_LLM_MODEL").ok())
-        .unwrap_or_else(|| "meta-llama/Llama-3.1-8B-Instruct".into());
+    let html = resp.text().await.unwrap_or_default();
+    let title = extract_title(&html).unwrap_or_default();
+    let text = html_to_plain_text(&html);
 
-    let system = build_instructions();
-    let extracted = match call_llm(&client, &base, &token, &model, system, &text).await {
-        Ok(ok) => ok,
-        Err(e) => {
-            error!(?e, "llm extract failed");
-            return Err(StatusCode::BAD_GATEWAY.into());
+    Ok((title, text))
+}
+
+fn extract_title(html: &str) -> Option<String> {
+    static TITLE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
+    let raw = TITLE_RE
+        .captures(html)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim().to_string())?;
+    Some(decode_entities_basic(&raw))
+}
+
+fn fallback_title_from_url(url: &str) -> Option<String> {
+    if let Ok(u) = reqwest::Url::parse(url) {
+        let host = u.host_str().unwrap_or_default().to_string();
+        let p = u.path().trim_matches('/');
+        if p.is_empty() {
+            Some(host)
+        } else {
+            Some(format!("{host} — {p}"))
         }
-    };
-    let main_img_url = extract_main_image_url(&html, &req.url);
+    } else {
+        None
+    }
+}
 
-    // 4) Insert into DB (no image yet)
-    let ingredients_json = serde_json::to_string(&extracted.ingredients).unwrap_or("[]".into());
-    let instructions_json =
-        serde_json::to_string(&extracted.instructions).unwrap_or_else(|_| "[]".into());
+fn html_to_plain_text(html: &str) -> String {
+    static SCRIPT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
+    static STYLE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap());
+    static TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<[^>]+>").unwrap());
+    static WS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[ \t\r\f]+").unwrap());
+    static NL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
-    let yield_text = String::new();
-    let notes_text = String::new();
+    let mut s = SCRIPT_RE.replace_all(html, " ").into_owned();
+    s = STYLE_RE.replace_all(&s, " ").into_owned();
+    s = TAG_RE.replace_all(&s, "\n").into_owned();
+    s = decode_entities_basic(&s);
+    s = WS_RE.replace_all(&s, " ").into_owned();
+    s = s.replace("\r\n", "\n").replace('\r', "\n");
+    s = NL_RE.replace_all(&s, "\n\n").into_owned();
+    s.trim().to_string()
+}
 
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-    r#"
-    INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
-    VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    RETURNING id, title, source, "yield", notes,
-              created_at, updated_at,
-              ingredients, instructions,
-              image_path_small, image_path_full,
-              macros
-    "#,)
-        .bind(title)
-        .bind(&req.url)
-        .bind(&yield_text)
-        .bind(&notes_text)
-        .bind(ingredients_json)
-        .bind(instructions_json)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|e| {
-            error!(?e, url = %req.url, "insert imported recipe failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+fn decode_entities_basic(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#039;", "'") // handle zero-padded apostrophe
+        .replace("&#x27;", "'") // common hex form for apostrophe
+        .replace("&#8211;", "–")
+        .replace("&#8212;", "—")
+        .replace("&#8226;", "•")
+        .replace("&nbsp;", " ")
+}
 
-    // 5) If we found a main image, fetch/convert/store and UPDATE the row
-    if let Some(img_url) = main_img_url {
-        match fetch_and_store_recipe_image(&client, &img_url, &state, row.id).await {
-            Ok((full, thumb)) => {
-                if let Err(e) = sqlx::query(
-                    r#"
-                UPDATE recipes
-                   SET image_path_full  = ?,
-                       image_path_small = ?,
-                       updated_at       = CURRENT_TIMESTAMP
-                 WHERE id = ?
-                "#,
-                )
-                .bind(&full)
-                .bind(&thumb)
-                .bind(row.id)
-                .execute(&state.pool)
-                .await
-                {
-                    tracing::warn!(?e, %img_url, %row.id, "failed to update recipe image paths");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(?e, %img_url, %row.id, "failed to fetch/convert main image");
-            }
+/* =========================
+ * Title normalization
+ * ========================= */
+
+fn clean_title(input: &str) -> String {
+    // 1) Decode entities and trim
+    let mut s = decode_entities_basic(input).trim().to_string();
+
+    // 2) Split on common site separators & keep the likely recipe name part
+    //    Typical patterns: "Dish Name • Site", "Dish Name | Blog", "Dish — Brand"
+    let seps = ['•', '|', '—', '–', ':'];
+    if let Some(idx) = s.find(|c| seps.contains(&c)) {
+        // keep the left side
+        s = s[..idx].trim().to_string();
+    }
+
+    // 3) Strip common marketing/dietary adjectives at the start
+    //    (you asked specifically to drop "Vegan", so it's included)
+    static ADJ_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)^(best|easy|quick|simple|ultimate|perfect|authentic|classic|vegan|keto|paleo|gluten[- ]free)\s+").unwrap()
+    });
+    loop {
+        let new = ADJ_RE.replace(&s, "").trim().to_string();
+        if new == s {
+            break;
         }
+        s = new;
     }
 
-    // 6) Return the fresh row (re-select so we include image paths if they were set)
-    let final_row: RecipeRow = sqlx::query_as::<_, RecipeRow>(
-        r#"
-    SELECT id, title, source, "yield", notes,
-           created_at, updated_at,
-           ingredients, instructions,
-           image_path_small, image_path_full,
-           macros
-      FROM recipes
-     WHERE id = ?
-    "#,
-    )
-    .bind(row.id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        error!(?e, id = row.id, "refetch after image update failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    // 4) Remove trailing "Recipe" or "Recipes"
+    static RECIPE_TAIL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+recipes?$").unwrap());
+    s = RECIPE_TAIL_RE.replace(&s, "").trim().to_string();
 
-    Ok(Json(final_row.into()))
-}
-// 5) If we found a main image, fetch/convert/store and UPDATE the row
-/* ---------- System prompt ---------- */
-
-fn build_instructions() -> String {
-    r#"You are a precise recipe data extractor and normalizer.
-
-INPUT: plain text from a recipe page (any language).
-OUTPUT: STRICT JSON with exactly these keys:
-{"ingredients":[{"quantity":null|number,"unit":null|"g"|"kg"|"ml"|"L"|"tsp"|"tbsp","name":string}], "instructions":[]}
-
-TASK:
-- Translate to English.
-- Convert ALL imperial units to metric in the INGREDIENTS.
-  * Allowed units in ingredients: g, kg, ml, L, tsp, tbsp.
-  * Never use: cup, cups, oz, ounce, ounces, fl oz, pound, lb.
-  * Keep tsp and tbsp abbreviations as written (do not spell out).
-- Keep amounts as numbers; keep ranges by converting both ends (e.g., 2–4 cups → 480–960 ml).
-- For solid items, convert oz→g (1 oz ≈ 28 g). For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml). For cups→ml (1 cup ≈ 240 ml).
-- If an ingredient has prep words (e.g., sliced, diced, minced), put them AFTER the ingredient name, separated by ", " (comma + space).
-  Example: "2 carrots, diced".
-- If data is missing, return an empty array for that key.
-- Do NOT include commentary or extra keys.
-- When a quantity is a range, replace the range with the mean value of the range.
-- Round quantities sensibly.
-- Use 0.5/0.25/0.75 style; never 1/2, 1/4, etc.
-- If no numeric quantity, set "quantity": null and "unit": null, keep the name.
-- instructions: array of steps (strings). No commentary.
-
-FORMAT EXAMPLES:
-{"ingredients":["2 cloves garlic, minced","150 g flour","2 carrots, diced"],"instructions":["Cook the garlic.","Fold in flour."]}
-
-SELF-CHECK:
-Before answering, verify no banned units appear in INGREDIENTS. If any do, fix them and re-check. Answer only with the final JSON.
-"#.to_string()
-}
-
-/* ---------- Visible-text extraction ---------- */
-
-fn extract_visible_text(html: &str) -> String {
-    let doc = Html::parse_document(html);
-    let root = Selector::parse("body")
-        .ok()
-        .and_then(|s| doc.select(&s).next())
-        .unwrap_or_else(|| doc.root_element());
-
-    let mut out = String::new();
-    collect_text(root, &mut out);
-    normalize_blocks(&out)
-}
-
-fn collect_text(el: ElementRef<'_>, out: &mut String) {
-    let name = el.value().name();
-    if is_blacklisted_tag(name)
-        || el.value().attr("hidden").is_some()
-        || el.value().attr("aria-hidden") == Some("true")
-    {
-        return;
+    // 5) Collapse whitespace & sentence-case-ish
+    s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Some(first) = s.get(..1) {
+        s = format!("{}{}", first.to_uppercase(), s.get(1..).unwrap_or(""));
     }
-    if is_block(name) && !out.ends_with('\n') {
-        out.push('\n');
+
+    s
+}
+
+/* =========================
+ * LLM call + JSON extract
+ * ========================= */
+
+fn extract_json_object(s: &str) -> Option<String> {
+    static FENCE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap());
+    if let Some(c) = FENCE.captures(s) {
+        return Some(c[1].to_string());
     }
-    for child in el.children() {
-        match child.value() {
-            Node::Text(t) => {
-                let text = t.clone().to_string();
-                if text.trim().is_empty() {
-                    continue;
+
+    // Fallback: largest balanced {...}
+    let mut best: Option<(usize, usize)> = None;
+    let mut depth = 0usize;
+    let mut start = None;
+
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '{' => {
+                depth += 1;
+                if depth == 1 {
+                    start = Some(i);
                 }
-                if !out.ends_with(|c: char| c.is_whitespace() || c == '\n')
-                    && !text.starts_with(char::is_whitespace)
-                {
-                    out.push(' ');
-                }
-                out.push_str(&text);
             }
-            Node::Element(_) => {
-                if let Some(child_el) = ElementRef::wrap(child) {
-                    collect_text(child_el, out);
+            '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(st) = start {
+                            let cand = (st, i);
+                            if best
+                                .map(|(a, b)| (b - a) < (cand.1 - cand.0))
+                                .unwrap_or(true)
+                            {
+                                best = Some(cand);
+                            }
+                        }
+                        start = None;
+                    }
                 }
             }
             _ => {}
         }
     }
-    if name == "br" {
-        out.push('\n');
-    }
-    if is_block(name) && !out.ends_with('\n') {
-        out.push('\n');
-    }
+    best.map(|(a, b)| s[a..=b].to_string())
 }
 
-fn is_blacklisted_tag(name: &str) -> bool {
-    matches!(
-        name,
-        "script"
-            | "style"
-            | "noscript"
-            | "template"
-            | "svg"
-            | "math"
-            | "head"
-            | "link"
-            | "meta"
-            | "nav"
-            | "aside"
-            | "footer"
-            | "form"
-            | "iframe"
-            | "canvas"
-            | "video"
-            | "audio"
-            | "picture"
-            | "source"
-            | "track"
-            | "object"
-            | "embed"
-            | "button"
-            | "label"
-            | "input"
-            | "select"
-            | "textarea"
-    )
-}
-fn is_block(name: &str) -> bool {
-    matches!(
-        name,
-        "p" | "div"
-            | "section"
-            | "article"
-            | "main"
-            | "header"
-            | "footer"
-            | "ul"
-            | "ol"
-            | "li"
-            | "table"
-            | "thead"
-            | "tbody"
-            | "tr"
-            | "td"
-            | "th"
-            | "figure"
-            | "figcaption"
-            | "h1"
-            | "h2"
-            | "h3"
-            | "h4"
-            | "h5"
-            | "h6"
-            | "pre"
-            | "blockquote"
-    )
-}
-fn normalize_blocks(s: &str) -> String {
-    let mut lines: Vec<String> = s
-        .lines()
-        .map(collapse_ws)
-        .filter(|l| !l.is_empty())
-        .collect();
-    lines.dedup();
-    lines.join("\n")
-}
-fn collapse_ws(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut ws = false;
-    for ch in s.chars() {
-        if ch.is_whitespace() {
-            if !ws {
-                out.push(' ');
-                ws = true;
-            }
-        } else {
-            ws = false;
-            out.push(ch);
-        }
-    }
-    out.trim().to_string()
-}
-
-/* ---------- Title helper ---------- */
-
-fn extract_title(html: &str) -> Option<String> {
-    let doc = Html::parse_document(html);
-    // Prefer <meta property="og:title">, fallback to <title>, then first <h1>
-    if let Ok(sel) = Selector::parse(r#"meta[property="og:title"]"#) {
-        if let Some(el) = doc.select(&sel).next() {
-            if let Some(c) = el.value().attr("content") {
-                let t = c.trim();
-                if !t.is_empty() {
-                    return Some(t.to_string());
-                }
-            }
-        }
-    }
-    if let Ok(sel) = Selector::parse("title") {
-        if let Some(el) = doc.select(&sel).next() {
-            let t = el.text().collect::<String>().trim().to_string();
-            if !t.is_empty() {
-                return Some(t);
-            }
-        }
-    }
-    if let Ok(sel) = Selector::parse("h1") {
-        if let Some(el) = doc.select(&sel).next() {
-            let t = el.text().collect::<String>().trim().to_string();
-            if !t.is_empty() {
-                return Some(t);
-            }
-        }
-    }
-    None
-}
-
-/* ---------- HF call (OpenAI-compatible) ---------- */
-
-async fn call_llm(
+pub async fn call_llm_json(
     client: &reqwest::Client,
     base: &str,
     token: &str,
     model: &str,
-    system: String,
-    user_text: &str,
-) -> Result<Extracted> {
-    let body = json!({
-        "model": model,
-        "messages": [
-            {"role":"system","content": system},
-            {"role":"user","content": format!("TEXT:\n{}", user_text)}
+    system: &str,
+    user: &str,
+) -> Result<JsonValue, String> {
+    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+
+    #[derive(Serialize)]
+    struct Msg<'a> {
+        role: &'a str,
+        content: &'a str,
+    }
+    #[derive(Serialize)]
+    struct Body<'a> {
+        model: &'a str,
+        messages: Vec<Msg<'a>>,
+        temperature: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        response_format: Option<JsonValue>,
+    }
+
+    let body = Body {
+        model,
+        messages: vec![
+            Msg {
+                role: "system",
+                content: system,
+            },
+            Msg {
+                role: "user",
+                content: user,
+            },
         ],
-        "temperature": 0.1,
-        "max_tokens": 900,
-        "response_format": { "type": "json_object" }
-    });
+        temperature: 0.1,
+        response_format: Some(json!({ "type": "json_object" })), // OpenAI/OpenRouter-style
+    };
 
-    let mut req = client
-        .post(format!("{}/chat/completions", base))
-        .header(CONTENT_TYPE, "application/json");
-
-    if !token.is_empty() {
-        req = req.header(AUTHORIZATION, format!("Bearer {}", token));
-    }
-
-    let resp = req.json(&body).send().await?;
-    let status = resp.status();
-    let body_text = tokio::time::timeout(Duration::from_secs(80), resp.text())
+    let resp = client
+        .post(&url)
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .timeout(Duration::from_secs(120))
+        .json(&body)
+        .send()
         .await
-        .map_err(|_| anyhow::anyhow!("LLM response read timed out"))??;
+        .map_err(|e| format!("sending LLM request: {e}"))?;
 
-    if !status.is_success() {
-        anyhow::bail!("llm router {}: {}", status, body_text);
-    }
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
 
-    #[derive(Deserialize)]
-    struct ChoiceMsg {
-        content: String,
-    }
-    #[derive(Deserialize)]
-    struct Choice {
-        message: ChoiceMsg,
-    }
-    #[derive(Deserialize)]
-    struct ChatResp {
-        choices: Vec<Choice>,
+    if status != reqwest::StatusCode::OK {
+        return Err(format!("LLM HTTP {}: {}", status, text));
     }
 
-    let parsed: ChatResp = serde_json::from_str(&body_text)?;
-    let content = parsed
-        .choices
-        .first()
-        .ok_or_else(|| anyhow!("no choices"))?
-        .message
-        .content
-        .trim()
-        .to_string();
+    let envelope: JsonValue =
+        serde_json::from_str(&text).map_err(|e| format!("decoding LLM envelope: {e}"))?;
 
-    // Parse JSON (models may still wrap; grab first {…} if needed)
-    if let Ok(ok) = serde_json::from_str::<Extracted>(&content) {
-        return Ok(normalize_output(ok));
+    let content = envelope
+        .pointer("/choices/0/message/content")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            envelope
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c0| c0.get("text"))
+                .and_then(|v| v.as_str())
+        })
+        .ok_or_else(|| "LLM response missing content".to_string())?;
+
+    // Direct JSON?
+    if let Ok(js) = serde_json::from_str::<JsonValue>(content) {
+        return Ok(js);
     }
-    if let Some(obj) = find_first_json_object(&content) {
-        let ok: Extracted = serde_json::from_str(&obj)?;
-        return Ok(normalize_output(ok));
+
+    // Try fenced or balanced JSON
+    if let Some(json_s) = extract_json_object(content) {
+        let js = serde_json::from_str::<JsonValue>(&json_s)
+            .map_err(|e| format!("parsing extracted JSON: {e}"))?;
+        return Ok(js);
     }
-    Err(anyhow!("model did not return JSON: {}", content))
+
+    let preview = if content.len() > 500 {
+        &content[..500]
+    } else {
+        content
+    };
+    Err(format!(
+        "LLM did not return valid JSON. Preview: {}",
+        preview
+    ))
 }
 
-fn find_first_json_object(s: &str) -> Option<String> {
-    let bytes = s.as_bytes();
-    let mut start = None;
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let mut esc = false;
-    for (i, &b) in bytes.iter().enumerate() {
-        match b {
-            b'\\' if in_str => {
-                esc = !esc;
-                continue;
-            }
-            b'"' if !esc => {
-                in_str = !in_str;
-            }
-            b'{' if !in_str => {
-                if start.is_none() {
-                    start = Some(i)
-                }
-                depth += 1;
-            }
-            b'}' if !in_str && depth > 0 => {
-                depth -= 1;
-                if depth == 0 {
-                    let st = start?;
-                    return Some(s[st..=i].to_string());
-                }
-            }
-            _ => {
-                esc = false;
-            }
+/* =========================
+ * Tolerant normalization (+ optional title)
+ * ========================= */
+
+#[derive(Default, Clone)]
+struct ExtractRaw {
+    title: Option<String>,
+    ingredients: JsonValue,
+    instructions: JsonValue,
+}
+
+impl ExtractRaw {
+    fn from_json(v: &JsonValue) -> Result<Self, String> {
+        let title = v
+            .get("title")
+            .and_then(|x| x.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty());
+
+        Ok(Self {
+            title,
+            ingredients: v.get("ingredients").cloned().unwrap_or(JsonValue::Null),
+            instructions: v.get("instructions").cloned().unwrap_or(JsonValue::Null),
+        })
+    }
+
+    fn normalize(self) -> ExtractOut {
+        ExtractOut {
+            ingredients: normalize_ingredients(self.ingredients),
+            instructions: normalize_instructions(self.instructions),
         }
     }
-    None
 }
 
-fn normalize_output(mut e: Extracted) -> Extracted {
-    // dedupe ingredients by (unit|lowercased name); ignore quantity to avoid
-    // “same item with slightly different amounts” duplicates
-    let mut i_seen = HashSet::new();
-    e.ingredients.retain(|ing| i_seen.insert(norm_ing_key(ing)));
-
-    let mut s_seen = HashSet::new();
-    e.instructions.retain(|s| s_seen.insert(norm_key(s)));
-
-    e
+struct ExtractOut {
+    ingredients: Vec<String>,
+    instructions: Vec<String>,
 }
 
-// case-insensitive line key for instructions
-fn norm_key(s: &str) -> String {
-    s.trim().to_lowercase()
+fn normalize_instructions(v: JsonValue) -> Vec<String> {
+    match v {
+        JsonValue::Array(items) => items
+            .into_iter()
+            .filter_map(|x| match x {
+                JsonValue::String(s) => {
+                    let t = s.trim().to_string();
+                    (!t.is_empty()).then_some(t)
+                }
+                JsonValue::Number(n) => Some(n.to_string()),
+                JsonValue::Bool(b) => Some(b.to_string()),
+                _ => None,
+            })
+            .collect(),
+        JsonValue::String(s) => s
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
-// normalized ingredient key (ignore quantity)
-fn norm_ing_key(ing: &Ingredient) -> String {
-    format!(
-        "{}|{}",
-        ing.unit.as_deref().unwrap_or("").to_lowercase(),
-        ing.name.trim().to_lowercase()
-    )
+fn normalize_ingredients(v: JsonValue) -> Vec<String> {
+    match v {
+        JsonValue::Array(items) => items
+            .into_iter()
+            .filter_map(|x| match x {
+                JsonValue::String(s) => {
+                    let t = s.trim().to_string();
+                    (!t.is_empty()).then_some(t)
+                }
+                JsonValue::Object(mut m) => {
+                    let name = m
+                        .remove("name")
+                        .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+                        .unwrap_or_default();
+                    if name.is_empty() {
+                        return None;
+                    }
+                    // Accept several aliases for quantity
+                    let q = m
+                        .remove("quantity")
+                        .or_else(|| m.remove("qty"))
+                        .or_else(|| m.remove("amount"))
+                        .and_then(|v| match v {
+                            JsonValue::Number(n) => n.as_f64(),
+                            JsonValue::String(s) => s.trim().parse::<f64>().ok(),
+                            _ => None,
+                        });
+                    let unit = m
+                        .remove("unit")
+                        .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty());
+
+                    Some(to_line(q, unit, name))
+                }
+                _ => None,
+            })
+            .collect(),
+        JsonValue::String(s) => s
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+// Render similar to the Flutter IngredientFormat.toLine rules.
+fn to_line(q: Option<f64>, unit: Option<String>, name: String) -> String {
+    fn trim_zeros(mut s: String) -> String {
+        if s.contains('.') {
+            while s.ends_with('0') {
+                s.pop();
+            }
+            if s.ends_with('.') {
+                s.pop();
+            }
+        }
+        s
+    }
+    match (q, unit) {
+        (Some(v), Some(u)) if !u.is_empty() => {
+            let s = if u == "g" || u == "ml" {
+                (v.round() as i64).to_string()
+            } else if u == "kg" || u == "L" {
+                trim_zeros(format!("{:.2}", v))
+            } else {
+                trim_zeros(format!("{}", ((v * 100.0).round() / 100.0)))
+            };
+            format!("{s} {u} {name}")
+        }
+        (Some(v), None) => {
+            let s = trim_zeros(format!("{}", ((v * 100.0).round() / 100.0)));
+            format!("{s} {name}")
+        }
+        _ => name,
+    }
 }

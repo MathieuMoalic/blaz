@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
-use sqlx::SqlitePool;
 use sqlx::types::Json;
+use sqlx::{FromRow, SqlitePool};
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::ingredient_parser::parse_ingredient_line;
 
@@ -14,7 +15,41 @@ pub struct AppState {
     pub media_dir: PathBuf,
     pub jwt_encoding: jsonwebtoken::EncodingKey,
     pub jwt_decoding: jsonwebtoken::DecodingKey,
+    /// Hot-reloadable settings (singleton row id=1), edited via /app-state
+    pub settings: Arc<RwLock<AppSettings>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AppSettings {
+    pub llm_api_key: Option<String>,
+    pub llm_model: String,
+    pub llm_api_url: String,
     pub allow_registration: bool,
+    pub system_prompt_import: String,
+    pub system_prompt_macros: String,
+}
+
+#[derive(FromRow)]
+pub struct SettingsRow {
+    pub llm_api_key: Option<String>,
+    pub llm_model: String,
+    pub llm_api_url: String,
+    pub allow_registration: i64,
+    pub system_prompt_import: String,
+    pub system_prompt_macros: String,
+}
+
+impl From<SettingsRow> for AppSettings {
+    fn from(r: SettingsRow) -> Self {
+        Self {
+            llm_api_key: r.llm_api_key,
+            llm_model: r.llm_model,
+            llm_api_url: r.llm_api_url,
+            allow_registration: r.allow_registration != 0,
+            system_prompt_import: r.system_prompt_import,
+            system_prompt_macros: r.system_prompt_macros,
+        }
+    }
 }
 
 /* ---------- API models ---------- */
