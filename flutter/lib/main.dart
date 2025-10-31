@@ -1,7 +1,10 @@
-import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
+
+import 'src/platform_io.dart'
+    if (dart.library.html) 'src/platform_stub.dart'
+    as plat;
 
 import 'src/views/login_page.dart';
 import 'src/auth.dart';
@@ -11,7 +14,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Auth.init();
 
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // Only attempt window_manager on desktop (Windows/Linux/macOS)
+  if (!kIsWeb && plat.isDesktop) {
     await windowManager.ensureInitialized();
     const opts = WindowOptions(
       titleBarStyle: TitleBarStyle.hidden,
@@ -55,13 +59,11 @@ class BlazApp extends StatelessWidget {
             ? Colors.black.withAlpha(80)
             : Colors.white.withAlpha(40);
 
-        Widget bg = Image.asset(
+        final bg = Image.asset(
           kBgAvif,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) {
-            // Fallback if AVIF isn't supported or not bundled
-            return Image.asset(kBgFallback, fit: BoxFit.cover);
-          },
+          errorBuilder: (_, __, ___) =>
+              Image.asset(kBgFallback, fit: BoxFit.cover),
         );
 
         return Stack(
@@ -74,7 +76,6 @@ class BlazApp extends StatelessWidget {
           ],
         );
       },
-
       home: Auth.token == null ? const LoginPage() : const HomeShell(),
       debugShowCheckedModeBanner: false,
     );
