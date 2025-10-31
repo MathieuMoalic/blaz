@@ -344,7 +344,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Recipe'),
         actions: [
           IconButton(
             tooltip: 'Add to meal plan',

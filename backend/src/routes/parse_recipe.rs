@@ -1,13 +1,17 @@
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use crate::{
     models::{AppState, NewRecipe, Recipe},
-    routes::recipes,
+    routes::{parse_recipe_image::extract_main_image_url, recipes},
 };
 
 /* =========================
@@ -30,19 +34,19 @@ pub async fn import_from_url(
     State(state): State<AppState>,
     Json(req): Json<ImportFromUrlReq>,
 ) -> Result<Json<Recipe>, (StatusCode, String)> {
-    // 1) Fetch page HTML and convert to plain text
-    let (title_guess_raw, text) = fetch_page_text(&req.url)
+    // 1) Fetch page HTML and convert to plain text (also return raw html)
+    let (title_guess_raw, text, html) = fetch_page_text(&req.url)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("fetch failed: {e}")))?;
 
-    // Clean the HTML title immediately (removes branding & adjectives)
+    // Clean the HTML title (remove branding & adjectives)
     let title_guess = clean_title(&title_guess_raw);
 
     if text.trim().is_empty() {
         return Err((StatusCode::BAD_GATEWAY, "page has no readable text".into()));
     }
 
-    // 2) Read runtime LLM settings from in-memory state
+    // 2) Read runtime LLM settings
     let settings = state.settings.read().await.clone();
 
     let token = settings.llm_api_key.clone().unwrap_or_default();
@@ -57,7 +61,7 @@ pub async fn import_from_url(
     let base = settings.llm_api_url.as_str();
     let system = settings.system_prompt_import.as_str();
 
-    // 3) Build compact user message
+    // 3) Compact user message
     const MAX_CHARS: usize = 12_000;
     let excerpt = if text.len() > MAX_CHARS {
         &text[..MAX_CHARS]
@@ -71,20 +75,18 @@ pub async fn import_from_url(
         content = excerpt
     );
 
-    // 4) Call LLM expecting JSON (robust extraction)
+    // 4) Call LLM -> JSON
     let client = reqwest::Client::new();
     let llm_json = call_llm_json(&client, base, &token, model, system, &user)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
 
-    // 5) Tolerant normalization (optionally reads `title`)
+    // 5) Normalize (and capture possible LLM title)
     let raw = ExtractRaw::from_json(&llm_json)
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("invalid LLM JSON: {e}")))?;
-    // Capture title before `normalize(self)` consumes `raw`
     let title_from_llm = raw.title.clone();
     let norm = raw.normalize();
 
-    // Prefer LLM-provided title if available, else cleaned HTML title, else fallback
     let chosen_title = title_from_llm
         .as_deref()
         .map(clean_title)
@@ -105,19 +107,29 @@ pub async fn import_from_url(
         instructions: norm.instructions,
     };
 
-    // Insert using the existing handler
-    let created = recipes::create(State(state), Json(payload))
+    // 6) Create recipe
+    let created = recipes::create(State(state.clone()), Json(payload))
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:?}")))?; // <- use Debug
+    let recipe_id = created.0.id;
 
-    Ok(created)
+    // 7) Import hero image using your parse_recipe_image helper (best-effort)
+    if let Err(e) = try_fetch_and_attach_image(&state, recipe_id, &req.url, &html).await {
+        tracing::warn!("image import failed for id {}: {}", recipe_id, e);
+    }
+
+    // 8) Return the fresh row (with image paths if saved)
+    let fresh = recipes::get(State(state), Path(recipe_id))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:?}")))?; // <- use Debug
+    Ok(fresh)
 }
 
 /* =========================
  * HTML fetch + plain text
  * ========================= */
 
-async fn fetch_page_text(url: &str) -> Result<(String, String), String> {
+async fn fetch_page_text(url: &str) -> Result<(String, String, String), String> {
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -134,7 +146,7 @@ async fn fetch_page_text(url: &str) -> Result<(String, String), String> {
     let title = extract_title(&html).unwrap_or_default();
     let text = html_to_plain_text(&html);
 
-    Ok((title, text))
+    Ok((title, text, html))
 }
 
 fn extract_title(html: &str) -> Option<String> {
@@ -186,8 +198,8 @@ fn decode_entities_basic(s: &str) -> String {
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
-        .replace("&#039;", "'") // handle zero-padded apostrophe
-        .replace("&#x27;", "'") // common hex form for apostrophe
+        .replace("&#039;", "'")
+        .replace("&#x27;", "'")
         .replace("&#8211;", "–")
         .replace("&#8212;", "—")
         .replace("&#8226;", "•")
@@ -199,21 +211,20 @@ fn decode_entities_basic(s: &str) -> String {
  * ========================= */
 
 fn clean_title(input: &str) -> String {
-    // 1) Decode entities and trim
     let mut s = decode_entities_basic(input).trim().to_string();
 
-    // 2) Split on common site separators & keep the likely recipe name part
-    //    Typical patterns: "Dish Name • Site", "Dish Name | Blog", "Dish — Brand"
+    // Cut at common separators (keep the left part)
     let seps = ['•', '|', '—', '–', ':'];
     if let Some(idx) = s.find(|c| seps.contains(&c)) {
-        // keep the left side
         s = s[..idx].trim().to_string();
     }
 
-    // 3) Strip common marketing/dietary adjectives at the start
-    //    (you asked specifically to drop "Vegan", so it's included)
+    // Strip adjectives / diet tags
     static ADJ_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)^(best|easy|quick|simple|ultimate|perfect|authentic|classic|vegan|keto|paleo|gluten[- ]free)\s+").unwrap()
+        Regex::new(
+            r"(?i)^(best|easy|quick|simple|ultimate|perfect|authentic|classic|vegan|keto|paleo|gluten[- ]free)\s+",
+        )
+        .unwrap()
     });
     loop {
         let new = ADJ_RE.replace(&s, "").trim().to_string();
@@ -223,17 +234,119 @@ fn clean_title(input: &str) -> String {
         s = new;
     }
 
-    // 4) Remove trailing "Recipe" or "Recipes"
     static RECIPE_TAIL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+recipes?$").unwrap());
     s = RECIPE_TAIL_RE.replace(&s, "").trim().to_string();
 
-    // 5) Collapse whitespace & sentence-case-ish
+    // Normalize whitespace & capitalize first letter
     s = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if let Some(first) = s.get(..1) {
         s = format!("{}{}", first.to_uppercase(), s.get(1..).unwrap_or(""));
     }
-
     s
+}
+
+/* =========================
+ * Image: reuse parse_recipe_image.rs
+ * ========================= */
+
+async fn try_fetch_and_attach_image(
+    state: &AppState,
+    recipe_id: i64,
+    page_url: &str,
+    html: &str,
+) -> anyhow::Result<()> {
+    if let Some(img_url) = extract_main_image_url(html, page_url) {
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(&img_url)
+            .timeout(Duration::from_secs(40))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("image HTTP {}", resp.status());
+        }
+
+        // Clone content-type into an owned String BEFORE consuming the response
+        let ct: String = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        if !ct.starts_with("image/") {
+            anyhow::bail!("not an image content-type: {}", ct);
+        }
+
+        // Now it's safe to consume the response
+        let bytes = resp.bytes().await?;
+        if bytes.is_empty() {
+            anyhow::bail!("empty image body");
+        }
+
+        let ext = guess_ext(&ct).unwrap_or_else(|| guess_ext_from_url(&img_url).unwrap_or("jpg"));
+
+        let rel_dir = format!("recipes/{}", recipe_id);
+        let full_name = format!("full.{}", ext);
+        let rel_full = format!("{}/{}", rel_dir, full_name);
+
+        let media_root = PathBuf::from(&state.media_dir);
+        let dir = media_root.join(&rel_dir);
+        tokio::fs::create_dir_all(&dir).await?;
+        let full_path = media_root.join(&rel_full);
+        tokio::fs::write(&full_path, &bytes).await?;
+
+        // For now, point "small" to the same file
+        let rel_small = rel_full.clone();
+
+        // Update DB paths
+        sqlx::query(
+            r#"
+            UPDATE recipes
+               SET image_path_small = ?,
+                   image_path_full  = ?
+             WHERE id = ?
+            "#,
+        )
+        .bind(&rel_small)
+        .bind(&rel_full)
+        .bind(recipe_id)
+        .execute(&state.pool)
+        .await?;
+
+        return Ok(());
+    }
+
+    anyhow::bail!("no image candidate found by extract_main_image_url")
+}
+
+fn guess_ext(ct: &str) -> Option<&'static str> {
+    match ct.split(';').next().unwrap_or("").trim() {
+        "image/jpeg" => Some("jpg"),
+        "image/jpg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        "image/avif" => Some("avif"),
+        "image/gif" => Some("gif"),
+        _ => None,
+    }
+}
+
+fn guess_ext_from_url(u: &str) -> Option<&'static str> {
+    let lower = u.to_lowercase();
+    for (needle, ext) in [
+        (".jpg", "jpg"),
+        (".jpeg", "jpg"),
+        (".png", "png"),
+        (".webp", "webp"),
+        (".avif", "avif"),
+        (".gif", "gif"),
+    ] {
+        if lower.contains(needle) {
+            return Some(ext);
+        }
+    }
+    None
 }
 
 /* =========================
@@ -354,12 +467,10 @@ pub async fn call_llm_json(
         })
         .ok_or_else(|| "LLM response missing content".to_string())?;
 
-    // Direct JSON?
     if let Ok(js) = serde_json::from_str::<JsonValue>(content) {
         return Ok(js);
     }
 
-    // Try fenced or balanced JSON
     if let Some(json_s) = extract_json_object(content) {
         let js = serde_json::from_str::<JsonValue>(&json_s)
             .map_err(|e| format!("parsing extracted JSON: {e}"))?;
@@ -456,7 +567,6 @@ fn normalize_ingredients(v: JsonValue) -> Vec<String> {
                     if name.is_empty() {
                         return None;
                     }
-                    // Accept several aliases for quantity
                     let q = m
                         .remove("quantity")
                         .or_else(|| m.remove("qty"))
@@ -486,7 +596,6 @@ fn normalize_ingredients(v: JsonValue) -> Vec<String> {
     }
 }
 
-// Render similar to the Flutter IngredientFormat.toLine rules.
 fn to_line(q: Option<f64>, unit: Option<String>, name: String) -> String {
     fn trim_zeros(mut s: String) -> String {
         if s.contains('.') {

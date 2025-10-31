@@ -156,14 +156,6 @@ class _MealPlanPageState extends State<MealPlanPage> {
 
     return Column(
       children: [
-        // Header
-        Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          alignment: Alignment.centerLeft,
-          child: Text('Meal plan', style: theme.textTheme.titleLarge),
-        ),
-
         Expanded(
           child: ScrollablePositionedList.builder(
             itemScrollController: _itemScrollController,

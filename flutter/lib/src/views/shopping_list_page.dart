@@ -108,7 +108,6 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
     return Column(
       children: [
-        const AppTitle('Shopping list'),
         Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
