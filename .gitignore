@@ -2,3 +2,6 @@
 backend/blaz.sqlite*
 backend/media
 .env
+blaz.sqlite
+blaz.sqlite-shm
+blaz.sqlite-wal

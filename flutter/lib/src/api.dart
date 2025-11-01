@@ -4,12 +4,64 @@ import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 
-/// Compile-time base URL (override with --dart-define API_BASE_URL=...)
-const String baseUrl = String.fromEnvironment(
+import './platform/kv_store.dart' as kv;
+
+/// Default (build-time) base URL. Can be overridden at runtime & persisted.
+const String _defaultBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: 'http://127.0.0.1:8080',
 );
 
+const _kApiBaseUrlKey = 'api_base_url';
+
+String _baseUrl = _defaultBaseUrl; // mutable at runtime
+
+/// Read-only getter so existing code that uses `api.baseUrl` keeps working.
+String get baseUrl => _baseUrl;
+
+/// Call this **before** Auth.init() (e.g., in main.dart) or inside it.
+Future<void> initApi() async {
+  final saved = await kv.getString(_kApiBaseUrlKey);
+  if (saved != null && saved.trim().isNotEmpty) {
+    _baseUrl = _normalizeBase(saved);
+  }
+}
+
+/// Verifies `/healthz` on the provided URL, then saves & activates it.
+Future<void> verifyAndSaveBaseUrl(
+  String url, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final candidate = _normalizeBase(url);
+  await _pingHealthz(candidate, timeout: timeout); // throws on error
+  _baseUrl = candidate;
+  await kv.setString(_kApiBaseUrlKey, _baseUrl);
+}
+
+/// Returns true if `/healthz` responds with 200 and body contains “ok”.
+Future<bool> testBaseUrl(
+  String url, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  try {
+    await _pingHealthz(_normalizeBase(url), timeout: timeout);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+String _normalizeBase(String u) => u.replaceAll(RegExp(r'/+$'), '');
+
+Future<void> _pingHealthz(
+  String base, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final r = await http.get(Uri.parse('$base/healthz')).timeout(timeout);
+  if (r.statusCode != 200 || !r.body.toLowerCase().contains('ok')) {
+    throw Exception('Health check failed (${r.statusCode}): ${r.body}');
+  }
+}
 /* =========================
  * Auth glue
  * ========================= */

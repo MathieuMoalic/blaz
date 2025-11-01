@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
@@ -8,7 +8,6 @@ use blaz::{
     init_logging,
     models::{AppSettings, AppState, SettingsRow},
 };
-use sqlx::migrate::Migrator;
 
 fn env_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
@@ -22,29 +21,24 @@ fn env_bool(name: &str, default: bool) -> bool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Unified logging setup with sane defaults (can still override via RUST_LOG)
+    // logging
     init_logging();
 
-    // DB pool + migrations
+    // DB pool (already runs *embedded* migrations inside make_pool)
     let pool = make_pool().await?;
-    Migrator::new(Path::new("./migrations"))
-        .await?
-        .run(&pool)
-        .await?;
 
     // Media dir
     let media_dir = std::env::var("BLAZ_MEDIA_DIR").unwrap_or_else(|_| "media".into());
     let media_dir = std::path::PathBuf::from(media_dir);
     tokio::fs::create_dir_all(&media_dir).await.ok();
 
-    // Load or initialize editable settings (singleton id=1)
+    // settings (singleton)
     let settings = load_or_init_settings(&pool).await?;
     let settings = Arc::new(RwLock::new(settings));
 
-    // JWT
+    // JWT secret
     let secret = std::env::var("BLAZ_JWT_SECRET").unwrap_or_else(|_| "dev-secret-change-me".into());
 
-    // App state
     let state = AppState {
         pool,
         media_dir,
@@ -53,10 +47,8 @@ async fn main() -> anyhow::Result<()> {
         settings,
     };
 
-    // Router
     let app = build_app(state);
 
-    // Serve
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -79,7 +71,7 @@ async fn load_or_init_settings(pool: &sqlx::SqlitePool) -> anyhow::Result<AppSet
         return Ok(row.into());
     }
 
-    // Bootstrap from environment on first run
+    // First run -> bootstrap from env
     let init = AppSettings {
         llm_api_key: std::env::var("BLAZ_LLM_API_KEY").ok(),
         llm_model: std::env::var("BLAZ_LLM_MODEL")
@@ -87,11 +79,10 @@ async fn load_or_init_settings(pool: &sqlx::SqlitePool) -> anyhow::Result<AppSet
         llm_api_url: std::env::var("BLAZ_LLM_API_URL")
             .unwrap_or_else(|_| "https://router.huggingface.co/v1".into()),
         allow_registration: env_bool("BLAZ_ALLOW_REGISTRATION", true),
-        system_prompt_import: String::new(), // default to built-in prompt
-        system_prompt_macros: String::new(), // default to built-in prompt
+        system_prompt_import: String::new(),
+        system_prompt_macros: String::new(),
     };
 
-    // Persist to DB (singleton id=1)
     sqlx::query(
         r#"
         INSERT INTO settings (

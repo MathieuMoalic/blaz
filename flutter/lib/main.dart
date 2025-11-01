@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
-
+import 'src/api.dart' as api;
 import 'src/platform_io.dart'
     if (dart.library.html) 'src/platform_stub.dart'
     as plat;
@@ -12,6 +12,7 @@ import 'src/home_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await api.initApi();
   await Auth.init();
 
   // Only attempt window_manager on desktop (Windows/Linux/macOS)

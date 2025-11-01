@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../auth.dart';
 import '../home_shell.dart';
+import 'server_url_dialog.dart'; // <-- NEW
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -14,6 +15,9 @@ class _LoginPageState extends State<LoginPage> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _registerMode = false;
+
+  // Require a successful server check per session before attempting auth.
+  bool _serverVerifiedThisSession = false;
 
   @override
   void initState() {
@@ -29,8 +33,27 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
+  Future<bool> _ensureServerUrl() async {
+    if (_serverVerifiedThisSession) return true;
+    final ok =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const ServerUrlDialog(),
+        ) ??
+        false;
+    if (ok) _serverVerifiedThisSession = true;
+    return ok;
+  }
+
   Future<void> _submit() async {
+    // 1) Ask for server URL & verify /healthz (saves URL on success)
+    final serverOk = await _ensureServerUrl();
+    if (!serverOk) return;
+
+    // 2) Validate credentials
     if (!_form.currentState!.validate()) return;
+
     setState(() => _busy = true);
     try {
       if (_registerMode) {
@@ -43,6 +66,7 @@ class _LoginPageState extends State<LoginPage> {
           const SnackBar(content: Text('Account created. Please sign in.')),
         );
       }
+
       await Auth.login(email: _email.text.trim(), password: _password.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
@@ -59,12 +83,39 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> _changeServerUrl() async {
+    final ok =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: true,
+          builder: (_) => const ServerUrlDialog(),
+        ) ??
+        false;
+    if (ok) {
+      // Mark as verified for this session so we don't prompt again immediately.
+      setState(() => _serverVerifiedThisSession = true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Server URL saved.')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final canRegister = Auth.allowRegistration;
 
     return Scaffold(
-      appBar: AppBar(title: Text(_registerMode ? 'Create account' : 'Sign in')),
+      appBar: AppBar(
+        title: Text(_registerMode ? 'Create account' : 'Sign in'),
+        actions: [
+          IconButton(
+            tooltip: 'Server URL',
+            onPressed: _busy ? null : _changeServerUrl,
+            icon: const Icon(Icons.cloud),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Form(
           key: _form,
