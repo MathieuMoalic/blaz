@@ -9,6 +9,69 @@ use crate::{
     models::{AppSettings, SettingsRow},
 };
 
+fn default_llm_model() -> String {
+    "deepseek/deepseek-chat-v3.1".to_string()
+}
+
+fn default_llm_api_url() -> String {
+    "https://openrouter.ai/api/v1".to_string()
+}
+
+fn default_system_prompt_import() -> String {
+    r#"You are a precise recipe data extractor and normalizer.
+
+INPUT: plain text from a recipe page (any language).
+OUTPUT: STRICT JSON with exactly these keys:
+{"ingredients":[{"quantity":null|number,"unit":null|"g"|"kg"|"ml"|"L"|"tsp"|"tbsp","name":string}], "instructions":[]}
+
+TASK:
+- Translate to English.
+- Convert ALL imperial units to metric in the INGREDIENTS.
+  * Allowed units in ingredients: g, kg, ml, L, tsp, tbsp.
+  * Never use: cup, cups, oz, ounce, ounces, fl oz, pound, lb.
+  * Keep tsp and tbsp abbreviations as written (do not spell out).
+- Keep amounts as numbers; keep ranges by converting both ends (e.g., 2–4 cups → 480–960 ml).
+- For solid items, convert oz→g (1 oz ≈ 28 g). For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml). For cups→ml (1 cup ≈ 240 ml).
+- If an ingredient has prep words (e.g., sliced, diced, minced), put them AFTER the ingredient name, separated by ", " (comma + space).
+  Example: "2 carrots, diced".
+- If data is missing, return an empty array for that key.
+- Do NOT include commentary or extra keys.
+- When a quantity is a range, replace the range with the mean value of the range.
+- Round quantities sensibly.
+- Use 0.5/0.25/0.75 style; never 1/2, 1/4, etc.
+- If no numeric quantity, set "quantity": null and "unit": null, keep the name.
+- instructions: array of steps (strings). No commentary.
+
+FORMAT EXAMPLES:
+{"ingredients":["2 cloves garlic, minced","150 g flour","2 carrots, diced"],"instructions":["Cook the garlic.","Fold in flour."]}
+
+SELF-CHECK:
+Before answering, verify no banned units appear in INGREDIENTS. If any do, fix them and re-check. Answer only with the final JSON."#.to_string()
+}
+
+fn default_system_prompt_macros() -> String {
+    r#"You are a precise nutrition estimator.
+
+Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
+{
+  "protein_g": number,
+  "fat_g": number,     // saturated + unsaturated combined
+  "carbs_g": number    // carbohydrates EXCLUDING fiber
+}
+
+Rules:
+- Use common nutrition databases and reasonable approximations.
+- Always include ALL three keys.
+- Carbs exclude fiber (i.e., net carbs).
+- If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
+- Never add extra fields or commentary."#
+        .to_string()
+}
+
+fn default_allow_registration() -> bool {
+    true
+}
+
 #[derive(Serialize)]
 pub struct AppStateView {
     pub llm_api_key_masked: String,
@@ -119,13 +182,38 @@ pub async fn patch(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettingsDto {
     pub llm_api_key: Option<String>,
+
+    // use explicit default functions for clarity
+    #[serde(default = "default_llm_model")]
     pub llm_model: String,
+
+    #[serde(default = "default_llm_api_url")]
     pub llm_api_url: String,
+
+    #[serde(default = "default_allow_registration")]
     pub allow_registration: bool,
+
+    #[serde(default = "default_system_prompt_import")]
     pub system_prompt_import: String,
+
+    #[serde(default = "default_system_prompt_macros")]
     pub system_prompt_macros: String,
+}
+
+impl Default for AppSettingsDto {
+    fn default() -> Self {
+        Self {
+            llm_api_key: None,
+            llm_model: default_llm_model(),
+            llm_api_url: default_llm_api_url(),
+            allow_registration: default_allow_registration(),
+            system_prompt_import: default_system_prompt_import(),
+            system_prompt_macros: default_system_prompt_macros(),
+        }
+    }
 }
 
 // Global, in-memory settings store.

@@ -22,8 +22,10 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
-    // Ensure we don’t start in register mode if admin disabled it.
-    _registerMode = _registerMode && Auth.allowRegistration;
+    // On first boot (no user on server), this will be true and we show
+    // the "Create account" flow by default. Once a user exists, it's false,
+    // and this page is pure "Sign in".
+    _registerMode = Auth.allowRegistration;
   }
 
   @override
@@ -129,9 +131,11 @@ class _LoginPageState extends State<LoginPage> {
                   border: OutlineInputBorder(),
                 ),
                 keyboardType: TextInputType.emailAddress,
-                validator: (v) => (v == null || !v.contains('@'))
-                    ? 'Enter a valid email'
-                    : null,
+                validator:
+                    (v) =>
+                        (v == null || !v.contains('@'))
+                            ? 'Enter a valid email'
+                            : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -141,28 +145,32 @@ class _LoginPageState extends State<LoginPage> {
                   border: OutlineInputBorder(),
                 ),
                 obscureText: true,
-                validator: (v) =>
-                    (v == null || v.length < 8) ? 'Min 8 characters' : null,
+                validator:
+                    (v) =>
+                        (v == null || v.length < 8) ? 'Min 8 characters' : null,
                 onFieldSubmitted: (_) => _submit(),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: _busy ? null : _submit,
-                icon: _busy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.lock_open),
+                icon:
+                    _busy
+                        ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : const Icon(Icons.lock_open),
                 label: Text(_registerMode ? 'Register & Sign in' : 'Sign in'),
               ),
               const SizedBox(height: 8),
               if (canRegister)
                 TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _registerMode = !_registerMode),
+                  onPressed:
+                      _busy
+                          ? null
+                          : () =>
+                              setState(() => _registerMode = !_registerMode),
                   child: Text(
                     _registerMode
                         ? 'I already have an account'

@@ -8,6 +8,16 @@ import './web_storage_stub.dart'
     if (dart.library.html) './web_storage_web.dart'
     as webstore;
 
+Future<bool> serverAllowsRegistration() async {
+  final uri = Uri.parse('${api.baseUrl}/auth/status');
+  final res = await http.get(uri);
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode} $uri: ${res.body}');
+  }
+  final data = jsonDecode(res.body) as Map<String, dynamic>;
+  return data['allow_registration'] == true;
+}
+
 class Auth {
   static String? _token;
   static bool allowRegistration = true;
@@ -55,7 +65,11 @@ class Auth {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
     );
-    if (res.statusCode == 201) return true;
+
+    if (res.statusCode == 201) {
+      allowRegistration = false;
+      return true;
+    }
     if (res.statusCode == 403) throw Exception('Registration is disabled.');
     if (res.statusCode == 409) throw Exception('Email already exists.');
     throw Exception('HTTP ${res.statusCode} $uri: ${res.body}');
