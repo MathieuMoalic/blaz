@@ -50,64 +50,38 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
   Future<void> _refresh() async {
     final f = _load();
-    setState(() => _future = f);
+    setState(() {
+      _future = f;
+    });
     await f;
     if (!mounted) return;
-    setState(() => _hidden.clear());
+    setState(() {
+      _hidden.clear();
+    });
   }
 
-  /// Helper to apply an in-place update and immediately rebuild the list view.
   void _applyLocalUpdate(
     List<ShoppingItem> Function(List<ShoppingItem>) transform,
   ) {
     final updated = transform(List<ShoppingItem>.from(_cache));
     _cache = updated;
-    setState(() => _future = Future.value(updated));
+    setState(() {
+      _future = Future<List<ShoppingItem>>.value(updated);
+    });
   }
 
   Future<void> _add([String? initial]) async {
-    final t = _ctrl.text.trim();
-    if (t.isEmpty) return;
+    final raw = (initial ?? _ctrl.text).trim();
+    if (raw.isEmpty) return;
 
     _ctrl.clear();
 
-    // 1) Show immediately with a temporary placeholder item.
-    final temp = ShoppingItem(
-      id: -DateTime.now().microsecondsSinceEpoch, // unique temp id
-      text: t,
-      category: '', // maps to 'Other'
-      done: false, // ensure it passes the !i.done filter
-    );
-
-    _applyLocalUpdate((list) => list..add(temp));
-
     try {
-      debugPrint('POST /shopping starting…');
-      final created = await createShoppingItem(t);
-      debugPrint('POST /shopping done (id=${created.id})');
-
-      // (defensive) make sure the created item is visible
-      final createdVisible = ShoppingItem(
-        id: created.id,
-        text: created.text,
-        category: created.category,
-        done: false, // ensure it stays visible locally
-      );
-
-      // 3) Replace temp with real item.
-      _applyLocalUpdate((list) {
-        final idx = list.indexWhere((x) => x.id == temp.id);
-        if (idx != -1) {
-          list[idx] = createdVisible;
-        } else {
-          list.add(createdVisible);
-        }
-        return list;
-      });
+      debugPrint('[_add] POST /shopping "$raw"');
+      await addShoppingItems([raw]);
+      await _refresh(); // pulls the latest list from the server
     } catch (e) {
-      // 4) Roll back the optimistic insert on failure.
-      debugPrint('POST /shopping failed: $e\n');
-      _applyLocalUpdate((list) => list.where((x) => x.id != temp.id).toList());
+      debugPrint('POST /shopping failed from ShoppingListPage: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -173,9 +147,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 }
                 final all = (snap.data ?? const <ShoppingItem>[]);
                 // Only show active, non-hidden items.
-                final items = all
-                    .where((i) => !i.done && !_hidden.contains(i.id))
-                    .toList();
+                final items =
+                    all
+                        .where((i) => !i.done && !_hidden.contains(i.id))
+                        .toList();
 
                 if (items.isEmpty) {
                   return const Center(child: Text('No items'));
@@ -219,9 +194,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                                   );
                                   // Remove it from local cache immediately too.
                                   _applyLocalUpdate(
-                                    (list) => list
-                                        .where((x) => x.id != updated.id)
-                                        .toList(),
+                                    (list) =>
+                                        list
+                                            .where((x) => x.id != updated.id)
+                                            .toList(),
                                   );
                                 } finally {
                                   // Ensure server state and local state stay in sync.
@@ -294,16 +270,18 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             const SizedBox(width: 12),
                             DropdownButton<String>(
                               value: cat,
-                              onChanged: (v) =>
-                                  setSheetState(() => cat = v ?? 'Other'),
-                              items: kCategories
-                                  .map(
-                                    (c) => DropdownMenuItem(
-                                      value: c,
-                                      child: Text(c),
-                                    ),
-                                  )
-                                  .toList(),
+                              onChanged:
+                                  (v) =>
+                                      setSheetState(() => cat = v ?? 'Other'),
+                              items:
+                                  kCategories
+                                      .map(
+                                        (c) => DropdownMenuItem(
+                                          value: c,
+                                          child: Text(c),
+                                        ),
+                                      )
+                                      .toList(),
                             ),
                             const Spacer(),
                             IconButton(
