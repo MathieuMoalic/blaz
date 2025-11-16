@@ -243,6 +243,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/shopping/merge", post(shopping::merge_items))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
+        .route("/auth/status", get(auth::auth_status))
         .route("/auth/meta", get(auth_meta::meta))
         .nest_service("/media", media_service)
         .with_state(state)

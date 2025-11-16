@@ -39,9 +39,18 @@ pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
 ) -> AppResult<StatusCode> {
-    if !state.settings.read().await.allow_registration {
+    // --- SINGLE-USER GUARD ------------------------------------
+    // If there is already any user in the database, forbid registration.
+    let existing_user = sqlx::query("SELECT 1 FROM users LIMIT 1")
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if existing_user.is_some() {
+        // Frontend already treats 403 as "Registration is disabled."
         return Err(StatusCode::FORBIDDEN.into());
     }
+    // -----------------------------------------------------------
 
     let email = req.email.trim();
     let password = req.password.trim();
@@ -71,6 +80,23 @@ pub async fn register(
             Err(StatusCode::INTERNAL_SERVER_ERROR.into())
         }
     }
+}
+
+#[derive(Serialize)]
+pub struct AuthStatusResp {
+    pub allow_registration: bool,
+}
+
+pub async fn auth_status(State(state): State<AppState>) -> AppResult<Json<AuthStatusResp>> {
+    let existing_user = sqlx::query("SELECT 1 FROM users LIMIT 1")
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(AuthStatusResp {
+        // Registration allowed only when there are no users at all.
+        allow_registration: existing_user.is_none(),
+    }))
 }
 
 pub async fn login(
