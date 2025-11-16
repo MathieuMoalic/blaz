@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
-import '../widgets/app_title.dart';
 
 const kCategories = <String>[
   'Produce',
@@ -58,33 +57,62 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   }
 
   /// Helper to apply an in-place update and immediately rebuild the list view.
-  Future<void> _applyLocalUpdate(
+  void _applyLocalUpdate(
     List<ShoppingItem> Function(List<ShoppingItem>) transform,
-  ) async {
-    // Ensure we have current data; if first load still pending, await it.
-    final List<ShoppingItem> current;
-    current = (_cache.isEmpty ? await _future : _cache);
-    final updated = transform(List<ShoppingItem>.from(current));
+  ) {
+    final updated = transform(List<ShoppingItem>.from(_cache));
     _cache = updated;
     setState(() => _future = Future.value(updated));
   }
 
-  Future<void> _add() async {
+  Future<void> _add([String? initial]) async {
     final t = _ctrl.text.trim();
     if (t.isEmpty) return;
 
-    try {
-      final created = await createShoppingItem(t);
-      _ctrl.clear();
+    _ctrl.clear();
 
-      // Show immediately.
-      await _applyLocalUpdate((list) {
-        list.add(created);
+    // 1) Show immediately with a temporary placeholder item.
+    final temp = ShoppingItem(
+      id: -DateTime.now().microsecondsSinceEpoch, // unique temp id
+      text: t,
+      category: '', // maps to 'Other'
+      done: false, // ensure it passes the !i.done filter
+    );
+
+    _applyLocalUpdate((list) => list..add(temp));
+
+    try {
+      debugPrint('POST /shopping starting…');
+      final created = await createShoppingItem(t);
+      debugPrint('POST /shopping done (id=${created.id})');
+
+      // (defensive) make sure the created item is visible
+      final createdVisible = ShoppingItem(
+        id: created.id,
+        text: created.text,
+        category: created.category,
+        done: false, // ensure it stays visible locally
+      );
+
+      // 3) Replace temp with real item.
+      _applyLocalUpdate((list) {
+        final idx = list.indexWhere((x) => x.id == temp.id);
+        if (idx != -1) {
+          list[idx] = createdVisible;
+        } else {
+          list.add(createdVisible);
+        }
         return list;
       });
-    } catch (_) {
-      // Fallback to a refresh if something went wrong.
-      _refresh();
+    } catch (e) {
+      // 4) Roll back the optimistic insert on failure.
+      debugPrint('POST /shopping failed: $e\n');
+      _applyLocalUpdate((list) => list.where((x) => x.id != temp.id).toList());
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Could not add item')));
+      }
     }
   }
 
@@ -115,15 +143,19 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
               Expanded(
                 child: TextField(
                   controller: _ctrl,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (v) => _add(v),
                   decoration: const InputDecoration(
                     labelText: 'Add item',
                     border: OutlineInputBorder(),
                   ),
-                  onSubmitted: (_) => _add(),
                 ),
               ),
               const SizedBox(width: 8),
-              FilledButton(onPressed: _add, child: const Text('Add')),
+              FilledButton(
+                onPressed: () => _add(_ctrl.text),
+                child: const Text('Add'),
+              ),
             ],
           ),
         ),
@@ -186,7 +218,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                                     done: v ?? false,
                                   );
                                   // Remove it from local cache immediately too.
-                                  await _applyLocalUpdate(
+                                  _applyLocalUpdate(
                                     (list) => list
                                         .where((x) => x.id != updated.id)
                                         .toList(),
@@ -314,7 +346,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                               // Close first so the sheet feels instant…
                               Navigator.pop(ctx, true);
                               // …then reflect the change locally right away.
-                              await _applyLocalUpdate((list) {
+                              _applyLocalUpdate((list) {
                                 final idx = list.indexWhere(
                                   (x) => x.id == it.id,
                                 );
