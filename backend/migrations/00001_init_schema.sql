@@ -1,6 +1,5 @@
 PRAGMA foreign_keys = ON;
 
--- Recipes
 CREATE TABLE recipes (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   title              TEXT    NOT NULL,
@@ -10,18 +9,15 @@ CREATE TABLE recipes (
   created_at         TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at         TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
 
-  -- JSON stored as TEXT
   ingredients        TEXT    NOT NULL,  -- JSON array of objects {quantity, unit, name}
   instructions       TEXT    NOT NULL,  -- JSON array of strings
 
-  -- Images
   image_path_small   TEXT,
   image_path_full    TEXT,
 
   macros             TEXT
 );
 
--- Meal plan
 CREATE TABLE meal_plan (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   day        TEXT    NOT NULL,              -- 'YYYY-MM-DD'
@@ -31,11 +27,9 @@ CREATE TABLE meal_plan (
   UNIQUE(day, recipe_id)
 );
 
--- Shopping items (structured, supports merging)
 CREATE TABLE shopping_items (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
 
-  -- structured
   name      TEXT,        -- display/original name (can be empty)
   unit      TEXT,        -- canonical units: g, kg, ml, L, tsp, tbsp (or NULL)
   quantity  REAL,        -- nullable
@@ -43,7 +37,7 @@ CREATE TABLE shopping_items (
   -- canonical merge key: "<unit>|<lower(name)>" or "|<lower(name)>"
   key       TEXT UNIQUE,
 
-  done      INTEGER NOT NULL DEFAULT 0,    -- 0/1
+  done      BOOLEAN NOT NULL DEFAULT 0,    -- 0/1
   category  TEXT                           
 );
 
@@ -54,6 +48,59 @@ CREATE TABLE users (
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  jwt_secret  TEXT NOT NULL DEFAULT (lower(hex(randomblob(32)))),
+  llm_api_key TEXT,
+  llm_model   TEXT NOT NULL DEFAULT 'deepseek/deepseek-chat-v3.1',
+  llm_api_url TEXT NOT NULL DEFAULT 'https://openrouter.ai/api/v1',
+   system_prompt_import  TEXT NOT NULL DEFAULT 'You are a precise recipe data extractor and normalizer.
+
+INPUT: plain text from a recipe page (any language).
+OUTPUT: STRICT JSON with exactly these keys:
+{"ingredients":[{"quantity":null|number,"unit":null|"g"|"kg"|"ml"|"L"|"tsp"|"tbsp","name":string}], "instructions":[]}
+
+TASK:
+- Translate to English.
+- Convert ALL imperial units to metric in the INGREDIENTS.
+  * Allowed units in ingredients: g, kg, ml, L, tsp, tbsp.
+  * Never use: cup, cups, oz, ounce, ounces, fl oz, pound, lb.
+  * Keep tsp and tbsp abbreviations as written (do not spell out).
+- Keep amounts as numbers; keep ranges by converting both ends (e.g., 2–4 cups → 480–960 ml).
+- For solid items, convert oz→g (1 oz ≈ 28 g). For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml). For cups→ml (1 cup ≈ 240 ml).
+- If an ingredient has prep words (e.g., sliced, diced, minced), put them AFTER the ingredient name, separated by ", " (comma + space).
+  Example: "2 carrots, diced".
+- If data is missing, return an empty array for that key.
+- Do NOT include commentary or extra keys.
+- When a quantity is a range, replace the range with the mean value of the range.
+- Round quantities sensibly.
+- Use 0.5/0.25/0.75 style; never 1/2, 1/4, etc.
+- If no numeric quantity, set "quantity": null and "unit": null, keep the name.
+- instructions: array of steps (strings). No commentary.
+
+FORMAT EXAMPLES:
+{"ingredients":["2 cloves garlic, minced","150 g flour","2 carrots, diced"],"instructions":["Cook the garlic.","Fold in flour."]}
+
+SELF-CHECK:
+Before answering, verify no banned units appear in INGREDIENTS. If any do, fix them and re-check. Answer only with the final JSON.',
+  system_prompt_macros  TEXT NOT NULL DEFAULT 'You are a precise nutrition estimator.
+
+Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
+{
+  "protein_g": number,
+  "fat_g": number,     // saturated + unsaturated combined
+  "carbs_g": number    // carbohydrates EXCLUDING fiber
+}
+
+Rules:
+- Use common nutrition databases and reasonable approximations.
+- Always include ALL three keys.
+- Carbs exclude fiber (i.e., net carbs).
+- If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
+- Never add extra fields or commentary.');
+
+-- Create default settings
+INSERT OR IGNORE INTO settings (id) VALUES (1);
 -- =====================================================================
 -- Indexes
 -- =====================================================================

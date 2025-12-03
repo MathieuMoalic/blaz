@@ -1,6 +1,5 @@
 pub mod app_state;
 pub mod auth;
-pub mod auth_meta;
 pub mod meal_plan;
 pub mod parse_recipe;
 pub mod parse_recipe_image;

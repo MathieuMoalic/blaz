@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../api.dart' as api;
-import '../auth.dart';
 
 class AppStatePage extends StatefulWidget {
   const AppStatePage({super.key});
@@ -18,7 +17,6 @@ class _AppStatePageState extends State<AppStatePage> {
   final _sysImportCtrl = TextEditingController();
   final _sysMacrosCtrl = TextEditingController();
 
-  bool _allowRegistration = true;
   bool _busy = false;
   bool _obscureKey = true;
 
@@ -45,7 +43,6 @@ class _AppStatePageState extends State<AppStatePage> {
       _apiKeyCtrl.text = s.llmApiKey ?? '';
       _modelCtrl.text = s.llmModel;
       _apiUrlCtrl.text = s.llmApiUrl;
-      _allowRegistration = s.allowRegistration;
       _sysImportCtrl.text = s.systemPromptImport;
       _sysMacrosCtrl.text = s.systemPromptMacros;
       setState(() {});
@@ -71,14 +68,12 @@ class _AppStatePageState extends State<AppStatePage> {
               : _apiKeyCtrl.text.trim(),
           llmModel: _modelCtrl.text.trim(),
           llmApiUrl: _apiUrlCtrl.text.trim(),
-          allowRegistration: _allowRegistration,
           systemPromptImport: _sysImportCtrl.text,
           systemPromptMacros: _sysMacrosCtrl.text,
         ),
       );
 
       // Keep login UI logic in sync without needing an app restart.
-      Auth.allowRegistration = updated.allowRegistration;
 
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -157,15 +152,6 @@ class _AppStatePageState extends State<AppStatePage> {
                         : null,
                   ),
                   const SizedBox(height: 20),
-
-                  // Registration toggle
-                  SwitchListTile(
-                    title: const Text('Allow new user registration'),
-                    value: _allowRegistration,
-                    onChanged: (v) => setState(() => _allowRegistration = v),
-                  ),
-                  const SizedBox(height: 20),
-
                   // Prompts
                   Text(
                     'System prompts',

@@ -437,13 +437,6 @@ pub async fn update(
 
 /* ---------- Estimate & store macros ---------- */
 
-#[derive(Deserialize)]
-struct LlmMacros {
-    _protein_g: f64,
-    _fat_g: f64,
-    _carbs_g: f64,
-}
-
 fn servings_from_yield(y: &str) -> Option<f64> {
     let y = y.replace(',', ".");
     if let Some(cap) = crate::units::SERVINGS_NUM_RE.captures(&y) {

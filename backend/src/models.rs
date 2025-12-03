@@ -19,37 +19,16 @@ pub struct AppState {
     pub settings: Arc<RwLock<AppSettings>>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(FromRow, Serialize, Deserialize, Clone, Debug)]
 pub struct AppSettings {
     pub llm_api_key: Option<String>,
     pub llm_model: String,
     pub llm_api_url: String,
-    pub allow_registration: bool,
     pub system_prompt_import: String,
     pub system_prompt_macros: String,
-}
 
-#[derive(FromRow)]
-pub struct SettingsRow {
-    pub llm_api_key: Option<String>,
-    pub llm_model: String,
-    pub llm_api_url: String,
-    pub allow_registration: i64,
-    pub system_prompt_import: String,
-    pub system_prompt_macros: String,
-}
-
-impl From<SettingsRow> for AppSettings {
-    fn from(r: SettingsRow) -> Self {
-        Self {
-            llm_api_key: r.llm_api_key,
-            llm_model: r.llm_model,
-            llm_api_url: r.llm_api_url,
-            allow_registration: r.allow_registration != 0,
-            system_prompt_import: r.system_prompt_import,
-            system_prompt_macros: r.system_prompt_macros,
-        }
-    }
+    #[serde(skip_serializing, skip_deserializing)]
+    pub jwt_secret: String,
 }
 
 /* ---------- API models ---------- */

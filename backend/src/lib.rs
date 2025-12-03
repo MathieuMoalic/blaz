@@ -8,7 +8,7 @@ pub mod units;
 
 use crate::{
     models::AppState,
-    routes::{app_state, auth_meta, meal_plan, parse_recipe, recipes, shopping},
+    routes::{app_state, meal_plan, parse_recipe, recipes, shopping},
 };
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, Response, header};
@@ -244,7 +244,6 @@ pub fn build_app(state: AppState) -> Router {
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/status", get(auth::auth_status))
-        .route("/auth/meta", get(auth_meta::meta))
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(request_id_layer)

@@ -196,9 +196,10 @@ class RecipeMacros {
   /// or flat:    {"protein": 30, "fat": 20, "carbs": 50}
   /// or *_g keys.
   factory RecipeMacros.fromAny(Map<String, dynamic> j) {
-    Map<String, dynamic>? m = (j['macros'] is Map)
-        ? (j['macros'] as Map).cast<String, dynamic>()
-        : null;
+    Map<String, dynamic>? m =
+        (j['macros'] is Map)
+            ? (j['macros'] as Map).cast<String, dynamic>()
+            : null;
     m ??= j;
 
     double read(String a, String b) {
@@ -256,9 +257,10 @@ class ShoppingItem {
     id: (j['id'] as num).toInt(),
     text: j['text'] as String,
     done: (j['done'] as num).toInt() != 0,
-    category: (j['category'] as String?)?.isNotEmpty == true
-        ? j['category'] as String
-        : null,
+    category:
+        (j['category'] as String?)?.isNotEmpty == true
+            ? j['category'] as String
+            : null,
   );
 
   Map<String, dynamic> toJson() => {
@@ -278,9 +280,8 @@ class Ingredient {
 
   factory Ingredient.fromJson(Map<String, dynamic> j) => Ingredient(
     quantity: (j['quantity'] is num) ? (j['quantity'] as num).toDouble() : null,
-    unit: (j['unit'] as String?)?.isNotEmpty == true
-        ? j['unit'] as String
-        : null,
+    unit:
+        (j['unit'] as String?)?.isNotEmpty == true ? j['unit'] as String : null,
     name: j['name'] as String,
   );
 
@@ -359,22 +360,24 @@ class Recipe {
     notes: j['notes'] as String,
     createdAt: j['created_at'] as String,
     updatedAt: j['updated_at'] as String,
-    ingredients: (j['ingredients'] as List<dynamic>)
-        .map((e) => Ingredient.fromJson(e as Map<String, dynamic>))
-        .toList(),
+    ingredients:
+        (j['ingredients'] as List<dynamic>)
+            .map((e) => Ingredient.fromJson(e as Map<String, dynamic>))
+            .toList(),
     instructions: (j['instructions'] as List<dynamic>).cast<String>(),
     imagePathSmall: j['image_path_small'] as String?,
     imagePathFull: j['image_path_full'] as String?,
-    macros: (() {
-      try {
-        if (j['macros'] is Map ||
-            j['protein'] is num ||
-            j['protein_g'] is num) {
-          return RecipeMacros.fromAny(j);
-        }
-      } catch (_) {}
-      return null;
-    })(),
+    macros:
+        (() {
+          try {
+            if (j['macros'] is Map ||
+                j['protein'] is num ||
+                j['protein_g'] is num) {
+              return RecipeMacros.fromAny(j);
+            }
+          } catch (_) {}
+          return null;
+        })(),
   );
 }
 
@@ -646,26 +649,24 @@ class AppSettings {
   final String? llmApiKey;
   final String llmModel;
   final String llmApiUrl;
-  final bool allowRegistration;
   final String systemPromptImport;
   final String systemPromptMacros;
 
   AppSettings({
-    required this.llmApiKey,
+    this.llmApiKey,
     required this.llmModel,
     required this.llmApiUrl,
-    required this.allowRegistration,
     required this.systemPromptImport,
     required this.systemPromptMacros,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
-    llmApiKey: (j['llm_api_key'] as String?)?.isNotEmpty == true
-        ? j['llm_api_key'] as String
-        : null,
+    llmApiKey:
+        (j['llm_api_key'] as String?)?.isNotEmpty == true
+            ? j['llm_api_key'] as String
+            : null,
     llmModel: j['llm_model'] as String,
     llmApiUrl: j['llm_api_url'] as String,
-    allowRegistration: j['allow_registration'] == true,
     systemPromptImport: (j['system_prompt_import'] as String?) ?? '',
     systemPromptMacros: (j['system_prompt_macros'] as String?) ?? '',
   );
@@ -674,7 +675,6 @@ class AppSettings {
     'llm_api_key': (llmApiKey == null || llmApiKey!.isEmpty) ? null : llmApiKey,
     'llm_model': llmModel,
     'llm_api_url': llmApiUrl,
-    'allow_registration': allowRegistration,
     'system_prompt_import': systemPromptImport,
     'system_prompt_macros': systemPromptMacros,
   };
