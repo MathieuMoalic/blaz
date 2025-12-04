@@ -37,15 +37,14 @@ jobs:
           cache: true
 
       # --- ANDROID SDK COMPONENTS ---
-      - name: Setup Android SDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
-            cmake;3.22.1
-            ndk;27.0.12077973
+          packages: platform-tools platforms;android-35 build-tools;35.0.0 cmake;3.22.1 ndk;27.0.12077973
+          cmdline-tools-version: 12266719
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: true
+
 
       # --- CACHES ---
       - name: Cache Gradle
