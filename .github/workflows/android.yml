@@ -37,13 +37,15 @@ jobs:
           cache: true
 
       # --- ANDROID SDK COMPONENTS ---
-      - name: Install Android SDK components
-        run: |
-          sdkmanager "platform-tools" \
-                     "platforms;android-35" \
-                     "build-tools;35.0.0" \
-                     "cmake;3.22.1" \
-                     "ndk;27.0.12077973"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+            cmake;3.22.1
+            ndk;27.0.12077973
 
       # --- CACHES ---
       - name: Cache Gradle

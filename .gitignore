@@ -6,3 +6,5 @@ blaz.sqlite
 blaz.sqlite-shm
 blaz.sqlite-wal
 dist
+flutter/blaz-keystore.jks
+flutter/blaz-keystore.jks.base64
