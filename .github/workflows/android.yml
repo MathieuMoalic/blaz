@@ -1,0 +1,87 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    env:
+      JAVA_VERSION: "17"
+      FLUTTER_VERSION: "3.22.0"
+      ANDROID_SDK_ROOT: "/usr/local/lib/android/sdk"
+      ANDROID_HOME: "/usr/local/lib/android/sdk"
+      # Flutter project path inside your repo:
+      FLUTTER_PROJECT: "flutter"
+
+    steps:
+      # --- CHECKOUT CODE ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- SET UP JAVA ---
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # --- SET UP FLUTTER ---
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # --- ANDROID SDK COMPONENTS ---
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platform-tools" \
+                     "platforms;android-35" \
+                     "build-tools;35.0.0" \
+                     "cmake;3.22.1" \
+                     "ndk;27.0.12077973"
+
+      # --- CACHES ---
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/*.kt', '**/*.java') }}
+
+      - name: Cache Flutter pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('${{ env.FLUTTER_PROJECT }}/pubspec.lock') }}
+
+      # --- BUILD APK ---
+      - name: Flutter pub get
+        working-directory: ${{ env.FLUTTER_PROJECT }}
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: ${{ env.FLUTTER_PROJECT }}
+        run: flutter build apk --release --verbose
+
+      # --- OPTIONAL: BUILD AAB ---
+      - name: Build Android App Bundle (AAB)
+        working-directory: ${{ env.FLUTTER_PROJECT }}
+        run: flutter build appbundle --release
+
+      # --- UPLOAD ARTIFACTS ---
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: blaz-android-apk
+          path: ${{ env.FLUTTER_PROJECT }}/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: blaz-android-aab
+          path: ${{ env.FLUTTER_PROJECT }}/build/app/outputs/bundle/release/app-release.aab
+
