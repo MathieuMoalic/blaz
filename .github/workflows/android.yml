@@ -11,7 +11,7 @@ jobs:
 
     env:
       JAVA_VERSION: "17"
-      FLUTTER_VERSION: "3.22.0"
+      FLUTTER_VERSION: "3.32.1"
       ANDROID_SDK_ROOT: "/usr/local/lib/android/sdk"
       ANDROID_HOME: "/usr/local/lib/android/sdk"
       # Flutter project path inside your repo:
