@@ -29,3 +29,4 @@ argon2 = "0.5"
 password-hash = "0.5"
 rand_core = "0.6"
 rand = "0.8"
+clap = { version = "4.5.53", features = ["derive", "env"] }

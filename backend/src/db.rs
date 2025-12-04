@@ -2,10 +2,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
 use sqlx::{Pool, Sqlite, SqlitePool};
 use std::path::PathBuf;
 
-// Embedded migrations (compiled in)
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-// Optional: keep if you use a DATABASE_URL path somewhere else
 pub async fn init_pool(database_url: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
     let pool = SqlitePool::connect(database_url).await?;
     tracing::info!("Running migrations…");

@@ -1,3 +1,4 @@
+pub mod config;
 pub mod db;
 pub mod error;
 pub mod image_io;
@@ -20,7 +21,7 @@ use axum::{
 };
 use routes::auth;
 use std::time::Duration;
-use tower::ServiceBuilder; // ⟵ new
+use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 use tower_http::{
     classify::ServerErrorsFailureClass,
