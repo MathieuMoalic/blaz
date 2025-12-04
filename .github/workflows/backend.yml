@@ -50,15 +50,16 @@ jobs:
           path: |
             ${{ env.RUST_BACKEND_DIR }}/target/release/*
 
-      - name: Create GitHub Release and upload binary
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}      
           name: Backend ${{ github.ref_name }}
           draft: false
           prerelease: false
-          files: |
-            ${{ env.RUST_BACKEND_DIR }}/target/release/*
+          files: backend/target/release/blaz      
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
