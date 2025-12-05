@@ -12,7 +12,7 @@ use crate::{
     routes::{app_state, meal_plan, parse_recipe, recipes, shopping},
 };
 use axum::body::Body;
-use axum::http::{HeaderValue, Method, Request, Response, header};
+use axum::http::{Request, Response, header};
 use axum::middleware::{Next, from_fn};
 use axum::{
     Json, Router,
@@ -31,20 +31,10 @@ use tower_http::{
 };
 use tracing::{Span, info_span};
 
-/// Initialize tracing with sensible defaults. Can be overridden by RUST_LOG.
 pub fn init_logging() {
     use tracing_subscriber::{
         EnvFilter, fmt::time::UtcTime, layer::SubscriberExt, util::SubscriberInitExt,
     };
-    if std::env::var("RUST_LOG").is_err() {
-        // quiet libs by default; bump your crate as needed
-        unsafe {
-            std::env::set_var(
-                "RUST_LOG",
-                "info,blaz=info,axum=info,sqlx=warn,tower_http=info",
-            );
-        }
-    }
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
         .with(
@@ -140,41 +130,14 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
     }
 }
 
-// CORS: dev (no BLAZ_DOMAIN) = allow all; prod (BLAZ_DOMAIN set) = allowlist
 fn cors_layer() -> CorsLayer {
-    match std::env::var("BLAZ_DOMAIN") {
-        Err(_) => CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any),
-        Ok(domains) => {
-            let origins: Vec<HeaderValue> = domains
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .flat_map(|d| [format!("https://{d}"), format!("http://{d}")])
-                .filter_map(|s| s.parse::<HeaderValue>().ok())
-                .collect();
-
-            CorsLayer::new()
-                .allow_origin(origins)
-                .allow_methods([
-                    Method::GET,
-                    Method::POST,
-                    Method::PATCH,
-                    Method::PUT,
-                    Method::DELETE,
-                    Method::OPTIONS,
-                ])
-                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
-                .expose_headers([header::LOCATION])
-                .max_age(Duration::from_secs(60 * 60))
-        }
-    }
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
 }
 
 pub fn build_app(state: AppState) -> Router {
-    // HTTP trace span WITHOUT user-agent; includes request_id from header.
     let trace = TraceLayer::new_for_http()
         .make_span_with(|req: &Request<Body>| {
             let method = req.method().to_string();
@@ -202,7 +165,7 @@ pub fn build_app(state: AppState) -> Router {
             tracing::error!(latency_ms=%latency.as_millis(), "request failed");
         });
 
-    let media_service = ServeDir::new(state.media_dir.clone());
+    let media_service = ServeDir::new(state.config.media_dir.clone());
 
     // Request-ID middleware comes first so everything downstream (logging/tracing)
     // has access to the x-request-id header.

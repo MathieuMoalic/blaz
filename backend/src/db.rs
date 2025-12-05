@@ -12,10 +12,8 @@ pub async fn init_pool(database_url: &str) -> Result<Pool<Sqlite>, sqlx::Error> 
     Ok(pool)
 }
 
-pub async fn make_pool() -> anyhow::Result<SqlitePool> {
-    // default to ./blaz.sqlite, override with BLAZ_DATABASE_PATH
-    let db_path = std::env::var("BLAZ_DATABASE_PATH").unwrap_or_else(|_| "blaz.sqlite".into());
-    let db_path = PathBuf::from(db_path);
+pub async fn make_pool(database_path: String) -> anyhow::Result<SqlitePool> {
+    let db_path = PathBuf::from(database_path);
 
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;

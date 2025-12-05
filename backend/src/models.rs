@@ -1,21 +1,18 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::ingredient_parser::parse_ingredient_line;
-/* ---------- App state ---------- */
 
+/* ---------- App state ---------- */
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
-    pub media_dir: PathBuf,
     pub jwt_encoding: jsonwebtoken::EncodingKey,
     pub jwt_decoding: jsonwebtoken::DecodingKey,
-    /// Hot-reloadable settings (singleton row id=1), edited via /app-state
     pub settings: Arc<RwLock<AppSettings>>,
     pub config: Config,
 }

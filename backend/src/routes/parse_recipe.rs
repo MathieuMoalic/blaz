@@ -290,7 +290,7 @@ async fn try_fetch_and_attach_image(
         let full_name = format!("full.{}", ext);
         let rel_full = format!("{}/{}", rel_dir, full_name);
 
-        let media_root = PathBuf::from(&state.media_dir);
+        let media_root = PathBuf::from(&state.config.media_dir);
         let dir = media_root.join(&rel_dir);
         tokio::fs::create_dir_all(&dir).await?;
         let full_path = media_root.join(&rel_full);

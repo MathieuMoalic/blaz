@@ -164,12 +164,12 @@ pub async fn fetch_and_store_recipe_image(
         .await??;
 
     // 3) write files
-    tokio::fs::create_dir_all(&state.media_dir).await?;
+    tokio::fs::create_dir_all(&state.config.media_dir).await?;
     let uid = uuid::Uuid::new_v4();
     let full_name = format!("recipe_{recipe_id}_{uid}.webp");
     let thumb_name = format!("recipe_{recipe_id}_{uid}_sm.webp");
-    tokio::fs::write(state.media_dir.join(&full_name), &full_webp).await?;
-    tokio::fs::write(state.media_dir.join(&thumb_name), &thumb_webp).await?;
+    tokio::fs::write(state.config.media_dir.join(&full_name), &full_webp).await?;
+    tokio::fs::write(state.config.media_dir.join(&thumb_name), &thumb_webp).await?;
 
     Ok((full_name, thumb_name))
 }
@@ -208,14 +208,14 @@ pub async fn upload_image(
     };
 
     // 2) Ensure media dir
-    tokio::fs::create_dir_all(&state.media_dir).await?;
+    tokio::fs::create_dir_all(&state.config.media_dir).await?;
 
     // 3) Build filenames (always .webp)
     let uid = Uuid::new_v4();
     let full_name = format!("recipe_{id}_{uid}.webp");
     let thumb_name = format!("recipe_{id}_{uid}_sm.webp");
-    let full_abs = state.media_dir.join(&full_name);
-    let thumb_abs = state.media_dir.join(&thumb_name);
+    let full_abs = state.config.media_dir.join(&full_name);
+    let thumb_abs = state.config.media_dir.join(&thumb_name);
 
     // 4) Heavy work off the async thread: decode, resize, encode to WebP
     let (full_webp, thumb_webp): (Vec<u8>, Vec<u8>) =

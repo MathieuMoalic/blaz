@@ -18,9 +18,9 @@ pub struct Config {
     #[arg(long, env = "BLAZ_MEDIA_DIR", default_value = "media")]
     pub media_dir: PathBuf,
 
-    /// Database URL (optional, can still come from env only)
-    #[arg(long, env = "DATABASE_URL")]
-    pub database_url: Option<String>,
+    /// Database path
+    #[arg(long, env = "DATABASE_PATH", default_value = "blaz.sqlite")]
+    pub database_path: String,
 }
 
 impl Config {

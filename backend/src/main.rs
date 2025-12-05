@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use clap::Parser;
 use tokio::net::TcpListener;
@@ -6,51 +6,19 @@ use tokio::sync::RwLock;
 
 use blaz::{
     build_app,
-    config::{self, Config},
+    config::Config,
     db::make_pool,
     init_logging,
     models::{AppSettings, AppState},
 };
 
-/// Blaz server
-#[derive(Parser, Debug)]
-#[command(
-    name = "blaz-server",
-    version,
-    about = "HTTP API server for Blaz",
-    long_about = None
-)]
-struct Cli {
-    /// Address to bind the HTTP server to
-    ///
-    /// Example: 0.0.0.0:8080 or 127.0.0.1:3000
-    #[arg(long, env = "BLAZ_BIND_ADDR", default_value = "0.0.0.0:8080")]
-    bind: SocketAddr,
-
-    /// Directory to store media files
-    #[arg(long, env = "BLAZ_MEDIA_DIR", default_value = "media")]
-    media_dir: PathBuf,
-
-    /// Database URL (forwarded to make_pool via DATABASE_URL env)
-    ///
-    /// If not provided, whatever env var make_pool already uses
-    /// (e.g. DATABASE_URL) continues to work as before.
-    #[arg(long, env = "DATABASE_URL")]
-    database_url: Option<String>,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Parse CLI flags + env vars
     let config = Config::parse();
-
-    // logging
     init_logging();
 
-    // DB pool (already runs *embedded* migrations inside make_pool)
-    let pool = make_pool().await?;
+    let pool = make_pool(config.database_path.clone()).await?;
 
-    // Media dir (from CLI/env, no manual env::var needed anymore)
     tokio::fs::create_dir_all(&config.media_dir).await.ok();
 
     let settings = load_settings(&pool).await?;
@@ -59,11 +27,10 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         pool,
-        media_dir: config.media_dir.clone(),
         jwt_encoding: jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
         jwt_decoding: jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
         settings,
-        config,
+        config: config.clone(),
     };
 
     let app = build_app(state);
