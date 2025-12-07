@@ -3,6 +3,7 @@ pub mod db;
 pub mod error;
 pub mod image_io;
 pub mod ingredient_parser;
+pub mod logging;
 pub mod models;
 pub mod routes;
 pub mod units;
@@ -11,48 +12,50 @@ use crate::{
     models::AppState,
     routes::{app_state, meal_plan, parse_recipe, recipes, shopping},
 };
+
 use axum::body::Body;
 use axum::http::{Request, Response, header};
 use axum::middleware::{Next, from_fn};
-use axum::{
-    Json, Router,
-    extract::ConnectInfo,
-    routing::{delete, get, patch, post},
-};
-use routes::auth;
-use std::time::Duration;
-use tower::ServiceBuilder;
-use tower_http::services::ServeDir;
-use tower_http::{
-    classify::ServerErrorsFailureClass,
-    cors::{Any, CorsLayer},
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    trace::TraceLayer,
-};
-use tracing::{Span, info_span};
+use axum::routing::{delete, get, patch, post};
+use axum::{Json, Router};
 
-pub fn init_logging() {
-    use tracing_subscriber::{
-        EnvFilter, fmt::time::UtcTime, layer::SubscriberExt, util::SubscriberInitExt,
-    };
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .with_timer(UtcTime::rfc_3339())
-                .compact(),
-        )
-        .init();
-}
+use routes::auth;
+
+use tower::ServiceBuilder;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::services::ServeDir;
 
 async fn healthz() -> Json<&'static str> {
     Json("ok")
 }
 
+/// One-line access log.
+/// 2xx/3xx -> INFO
+/// 4xx/5xx -> ERROR (so stdout shows red by default ANSI level colors)
+async fn access_log(req: Request<Body>, next: Next) -> Response<Body> {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+
+    let res = next.run(req).await;
+    let status = res.status().as_u16();
+
+    // Padding for a slightly nicer aligned look
+    let msg = format!("{:<6} {:<40} {}", method, path, status);
+
+    match status {
+        400..=599 => tracing::error!("{}", msg),
+        _ => tracing::info!("{}", msg),
+    }
+
+    res
+}
+
 /// Logs request & response bodies (dev-friendly).
 /// Skips multipart requests and likely-binary responses, truncates previews.
-/// Now includes the request-id for correlation.
+/// Includes request-id for correlation.
+///
+/// These logs are DEBUG so default verbosity stays clean.
 async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
     // Capture request-id (inserted by SetRequestIdLayer)
     let req_id = req
@@ -83,11 +86,11 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
                 } else {
                     String::from_utf8_lossy(&bytes).to_string()
                 };
-                tracing::info!(request_id=%req_id, request_body=%preview, "request body");
+                tracing::debug!(request_id = %req_id, request_body = %preview, "request body");
                 Request::from_parts(req_parts, Body::from(bytes))
             }
             Err(e) => {
-                tracing::warn!(request_id=%req_id, error=%e, "failed reading request body");
+                tracing::warn!(request_id = %req_id, error = %e, "failed reading request body");
                 Request::from_parts(req_parts, Body::empty())
             }
         }
@@ -105,7 +108,9 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+
     let (res_parts, res_body) = res.into_parts();
+
     if !res_ct.starts_with("image/") && !res_ct.starts_with("application/octet-stream") {
         match axum::body::to_bytes(res_body, 64 * 1024).await {
             Ok(bytes) => {
@@ -117,11 +122,15 @@ async fn log_payloads(req: Request<Body>, next: Next) -> Response<Body> {
                 } else {
                     String::from_utf8_lossy(&bytes).to_string()
                 };
-                tracing::info!(request_id=%req_id, response_body=%preview, "response body");
+                tracing::debug!(
+                    request_id = %req_id,
+                    response_body = %preview,
+                    "response body"
+                );
                 Response::from_parts(res_parts, Body::from(bytes))
             }
             Err(e) => {
-                tracing::warn!(request_id=%req_id, error=%e, "failed reading response body");
+                tracing::warn!(request_id = %req_id, error = %e, "failed reading response body");
                 Response::from_parts(res_parts, Body::empty())
             }
         }
@@ -138,36 +147,9 @@ fn cors_layer() -> CorsLayer {
 }
 
 pub fn build_app(state: AppState) -> Router {
-    let trace = TraceLayer::new_for_http()
-        .make_span_with(|req: &Request<Body>| {
-            let method = req.method().to_string();
-            let uri = req.uri().to_string();
-            let client_ip = req
-                .extensions()
-                .get::<ConnectInfo<std::net::SocketAddr>>()
-                .map(|ci| ci.0.to_string())
-                .unwrap_or_else(|| "-".into());
-            let rid = req
-                .headers()
-                .get("x-request-id")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("-");
-
-            info_span!("http", method=%method, uri=%uri, client_ip=%client_ip, request_id=%rid)
-        })
-        .on_request(|_req: &Request<Body>, _span: &Span| {
-            tracing::info!("request started");
-        })
-        .on_response(|res: &Response<Body>, latency: Duration, _span: &Span| {
-            tracing::info!(status=%res.status(), latency_ms=%latency.as_millis(), "response completed");
-        })
-        .on_failure(|_class: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
-            tracing::error!(latency_ms=%latency.as_millis(), "request failed");
-        });
-
     let media_service = ServeDir::new(state.config.media_dir.clone());
 
-    // Request-ID middleware comes first so everything downstream (logging/tracing)
+    // Request-ID middleware comes first so everything downstream
     // has access to the x-request-id header.
     let request_id_layer = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
@@ -211,7 +193,7 @@ pub fn build_app(state: AppState) -> Router {
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(request_id_layer)
+        .layer(from_fn(access_log))
         .layer(from_fn(log_payloads))
         .layer(cors_layer())
-        .layer(trace)
 }

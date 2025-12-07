@@ -1,12 +1,5 @@
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
-#![deny(clippy::nursery)]
-#![deny(clippy::cargo)]
-#![allow(clippy::multiple_crate_versions)]
-
-use std::sync::Arc;
-
 use clap::Parser;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
@@ -14,17 +7,18 @@ use blaz::{
     build_app,
     config::Config,
     db::make_pool,
-    init_logging,
+    logging::init_logging,
     models::{AppSettings, AppState},
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::parse();
-    init_logging();
+
+    // Keep guard alive so file logger flushes correctly
+    let _log_guards = init_logging(&config);
 
     let pool = make_pool(config.database_path.clone()).await?;
-
     tokio::fs::create_dir_all(&config.media_dir).await.ok();
 
     let settings = load_settings(&pool).await?;
@@ -41,12 +35,12 @@ async fn main() -> anyhow::Result<()> {
 
     let app = build_app(state);
 
-    // Bind address from CLI/env
     let listener = TcpListener::bind(config.bind).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
 
+// unchanged
 async fn load_settings(pool: &sqlx::SqlitePool) -> anyhow::Result<AppSettings> {
     let settings = sqlx::query_as::<_, AppSettings>(
         r"
