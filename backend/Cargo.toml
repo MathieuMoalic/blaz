@@ -2,6 +2,17 @@
 name = "blaz"
 version = "0.1.0"
 edition = "2024"
+license = "GPLv3"
+authors = ["Mathieu Moalic <blaz@matmoa.eu>"]
+description = """
+Recipe manager
+"""
+readme = "../README.md"
+documentation = "https://github.com/MathieuMoalic/blaz"
+homepage = "https://github.com/MathieuMoalic/blaz"
+repository = "https://github.com/MathieuMoalic/blaz"
+keywords = ["recipe list"]
+categories = ["API backend"]
 
 [dependencies]
 axum = { version = "0.8", features = ["macros", "multipart"] }
@@ -30,3 +41,12 @@ password-hash = "0.5"
 rand_core = "0.6"
 rand = "0.8"
 clap = { version = "4.5.53", features = ["derive", "env"] }
+
+# [patch.crates-io]
+# windows-targets = "=0.52.0"
+# windows-core = "=0.52.0"
+# windows-sys = "=0.52.0"
+# windows_x86_64_gnu = "=0.52.0"
+# windows_x86_64_gnullvm = "=0.52.0"
+# windows_x86_64_msvc = "=0.52.0"
+

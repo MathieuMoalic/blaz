@@ -1,3 +1,9 @@
+#![deny(clippy::all)]
+#![deny(clippy::pedantic)]
+#![deny(clippy::nursery)]
+#![deny(clippy::cargo)]
+#![allow(clippy::multiple_crate_versions)]
+
 use std::sync::Arc;
 
 use clap::Parser;
@@ -43,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn load_settings(pool: &sqlx::SqlitePool) -> anyhow::Result<AppSettings> {
     let settings = sqlx::query_as::<_, AppSettings>(
-        r#"
+        r"
         SELECT llm_api_key,
                llm_model,
                llm_api_url,
@@ -52,7 +58,7 @@ async fn load_settings(pool: &sqlx::SqlitePool) -> anyhow::Result<AppSettings> {
                system_prompt_macros
           FROM settings
          WHERE id = 1
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await?;

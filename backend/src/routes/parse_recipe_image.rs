@@ -92,8 +92,8 @@ fn absolutize(base: &Url, raw: &str) -> Option<String> {
     }
     base.join(raw).ok().map(|u| u.to_string())
 }
-
-fn json_ld_recipe_images(doc: &Html) -> Option<Vec<(String, Option<i32>, Option<i32>)>> {
+type Image = Option<Vec<(String, Option<i32>, Option<i32>)>>;
+fn json_ld_recipe_images(doc: &Html) -> Image {
     use serde_json::Value;
     let sel = Selector::parse(r#"script[type="application/ld+json"]"#).ok()?;
     let mut out = vec![];
@@ -107,12 +107,10 @@ fn json_ld_recipe_images(doc: &Html) -> Option<Vec<(String, Option<i32>, Option<
     }
     if out.is_empty() { None } else { Some(out) }
 }
-fn find_recipe_images_in_ld(
-    v: &serde_json::Value,
-) -> Option<Vec<(String, Option<i32>, Option<i32>)>> {
+fn find_recipe_images_in_ld(v: &serde_json::Value) -> Image {
     use serde_json::{Map, Value};
 
-    fn grab(o: &Map<String, Value>) -> Option<Vec<(String, Option<i32>, Option<i32>)>> {
+    fn grab(o: &Map<String, Value>) -> Image {
         let t = o.get("@type");
         let is_recipe = match t {
             Some(Value::String(s)) => s.eq_ignore_ascii_case("Recipe"),
@@ -302,7 +300,7 @@ fn dom_img_candidates(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
         // srcset before src (often higher res)
         let srcset = attr_chain(&el, &["srcset", "data-srcset", "data-lazy-srcset"]);
         if let Some(ss) = srcset {
-            for (u, w) in parse_srcset(&ss).into_iter() {
+            for (u, w) in parse_srcset(ss).into_iter() {
                 if let Some(abs) = absolutize(base, &u) {
                     out.push(ImgCandidate {
                         url: abs,
@@ -383,11 +381,8 @@ fn parse_srcset(s: &str) -> Vec<(String, Option<i32>)> {
             let mut it = p.split_whitespace();
             let url = it.next()?.to_string();
             let desc = it.next().unwrap_or("");
-            let w = if desc.ends_with('w') {
-                desc[..desc.len() - 1].parse::<i32>().ok()
-            } else {
-                None
-            };
+            let w = desc.strip_suffix('w').and_then(|s| s.parse::<i32>().ok());
+
             Some((url, w))
         })
         .collect()
@@ -426,7 +421,7 @@ fn near_title(el: &ElementRef<'_>, title: &str) -> bool {
     if title.is_empty() {
         return false;
     }
-    let mut up = el.clone();
+    let mut up = *el;
     for _ in 0..6 {
         if let Some(parent) = up.parent().and_then(ElementRef::wrap) {
             if node_contains_text(&parent, title) {
