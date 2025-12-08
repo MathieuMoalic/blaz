@@ -1,8 +1,7 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
 #[derive(Debug, Clone)]
 pub struct LlmClient {
@@ -12,10 +11,14 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
-    pub fn new(base: String, token: String, model: String) -> Self {
+    #[must_use]
+    pub const fn new(base: String, token: String, model: String) -> Self {
         Self { base, token, model }
     }
 
+    /// # Errors
+    ///
+    /// Will return err if the request fails or if the response can't be serialized as json
     pub async fn chat_json(
         &self,
         http: &reqwest::Client,
@@ -25,14 +28,11 @@ impl LlmClient {
         timeout: Duration,
         max_tokens: Option<u32>,
     ) -> anyhow::Result<JsonValue> {
-        let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
-
         #[derive(Serialize)]
         struct Msg<'a> {
             role: &'a str,
             content: &'a str,
         }
-
         #[derive(Serialize)]
         struct Body<'a> {
             model: &'a str,
@@ -42,6 +42,8 @@ impl LlmClient {
             max_tokens: Option<u32>,
             response_format: JsonValue,
         }
+
+        let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
 
         let body = Body {
             model: &self.model,
@@ -75,7 +77,7 @@ impl LlmClient {
         let text = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            anyhow::bail!("LLM HTTP {}: {}", status, text);
+            anyhow::bail!("LLM HTTP {status}: {text}");
         }
 
         let envelope: JsonValue = serde_json::from_str(&text)?;
@@ -113,13 +115,13 @@ impl LlmClient {
 /// Extract JSON object from a ```json ... ``` fenced block.
 /// Accepts ```json``` or plain ``` ``` fences (case-insensitive).
 pub fn extract_fenced_json(s: &str) -> Option<String> {
-    static FENCE_RE: Lazy<Regex> = Lazy::new(|| {
+    static FENCE_RE: LazyLock<Regex> = LazyLock::new(|| {
         // non-greedy capture of a single JSON object inside a fence
         // supports:
         // ```json { ... } ```
         // ```JSON { ... } ```
         // ``` { ... } ```
-        Regex::new(r#"(?is)```(?:json)?\s*(\{.*?\})\s*```"#).unwrap()
+        Regex::new(r"(?is)```(?:json)?\s*(\{.*?\})\s*```").unwrap()
     });
 
     FENCE_RE
@@ -130,6 +132,7 @@ pub fn extract_fenced_json(s: &str) -> Option<String> {
 
 /// Fallback: find the *largest* balanced `{ ... }` JSON-like object in text.
 /// This version is string-aware (won't be confused by braces inside quotes).
+#[must_use]
 pub fn extract_largest_json_object(s: &str) -> Option<String> {
     let mut best: Option<(usize, usize)> = None;
 

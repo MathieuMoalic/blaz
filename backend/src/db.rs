@@ -1,17 +1,13 @@
+use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
-use sqlx::{Pool, Sqlite, SqlitePool};
 use std::path::PathBuf;
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-pub async fn init_pool(database_url: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
-    let pool = SqlitePool::connect(database_url).await?;
-    tracing::info!("Running migrations…");
-    MIGRATOR.run(&pool).await?;
-    tracing::info!("Migrations done.");
-    Ok(pool)
-}
-
+/// # Errors
+///
+/// Will return `Err` if the `database_path` is not writable, or a connection can't be made to the db
+/// file
 pub async fn make_pool(database_path: String) -> anyhow::Result<SqlitePool> {
     let db_path = PathBuf::from(database_path);
 

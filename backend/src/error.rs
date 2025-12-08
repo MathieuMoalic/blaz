@@ -11,13 +11,13 @@ pub enum AppError {
 
 impl From<StatusCode> for AppError {
     fn from(code: StatusCode) -> Self {
-        AppError::Status(code)
+        Self::Status(code)
     }
 }
 
 impl From<anyhow::Error> for AppError {
     fn from(e: anyhow::Error) -> Self {
-        AppError::Anyhow(e)
+        Self::Anyhow(e)
     }
 }
 
@@ -25,25 +25,25 @@ impl From<anyhow::Error> for AppError {
 
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
-        AppError::Anyhow(e.into())
+        Self::Anyhow(e.into())
     }
 }
 
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
-        AppError::Anyhow(e.into())
+        Self::Anyhow(e.into())
     }
 }
 
 impl From<axum::extract::multipart::MultipartError> for AppError {
     fn from(e: axum::extract::multipart::MultipartError) -> Self {
-        AppError::Anyhow(e.into())
+        Self::Anyhow(e.into())
     }
 }
 
 impl From<tokio::task::JoinError> for AppError {
     fn from(e: tokio::task::JoinError) -> Self {
-        AppError::Anyhow(e.into())
+        Self::Anyhow(e.into())
     }
 }
 
@@ -55,8 +55,8 @@ struct ErrBody {
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         match self {
-            AppError::Status(code) => code.into_response(), // empty body
-            AppError::Anyhow(err) => {
+            Self::Status(code) => code.into_response(), // empty body
+            Self::Anyhow(err) => {
                 tracing::error!("{:#}", err);
                 let body = Json(ErrBody {
                     error: err.to_string(),

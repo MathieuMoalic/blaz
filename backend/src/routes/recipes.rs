@@ -6,10 +6,11 @@ use axum::{
 use serde::Deserialize;
 use sqlx::Arguments;
 use sqlx::sqlite::SqliteArguments;
+use std::fmt::Write as _;
 use tracing::error;
 
-use crate::ingredient_parser::parse_ingredient_line;
 use crate::models::{AppState, Ingredient, NewRecipe, Recipe, RecipeRow, UpdateRecipe};
+use crate::{ingredient_parser::parse_ingredient_line, models::RecipeMacros};
 
 use crate::error::AppResult;
 
@@ -49,6 +50,18 @@ async fn call_llm_json(
     user: &str,
 ) -> anyhow::Result<serde_json::Value> {
     use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+    #[derive(Deserialize)]
+    struct ChoiceMsg {
+        content: String,
+    }
+    #[derive(Deserialize)]
+    struct Choice {
+        message: ChoiceMsg,
+    }
+    #[derive(Deserialize)]
+    struct ChatResp {
+        choices: Vec<Choice>,
+    }
 
     let body = serde_json::json!({
         "model": model,
@@ -62,31 +75,18 @@ async fn call_llm_json(
     });
 
     let mut req = client
-        .post(format!("{}/chat/completions", base))
+        .post(format!("{base}/chat/completions"))
         .header(CONTENT_TYPE, "application/json");
 
     if !token.is_empty() {
-        req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        req = req.header(AUTHORIZATION, format!("Bearer {token}"));
     }
 
     let resp = req.json(&body).send().await?;
     let status = resp.status();
     let text = resp.text().await?;
     if !status.is_success() {
-        anyhow::bail!("llm router {}: {}", status, text);
-    }
-
-    #[derive(Deserialize)]
-    struct ChoiceMsg {
-        content: String,
-    }
-    #[derive(Deserialize)]
-    struct Choice {
-        message: ChoiceMsg,
-    }
-    #[derive(Deserialize)]
-    struct ChatResp {
-        choices: Vec<Choice>,
+        anyhow::bail!("llm router {status}: {text}");
     }
 
     let parsed: ChatResp = serde_json::from_str(&text)?;
@@ -103,47 +103,8 @@ async fn call_llm_json(
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
         return Ok(val);
     }
-    // crude fallback: find first object
-    fn find_first_json_object(s: &str) -> Option<String> {
-        let bytes = s.as_bytes();
-        let mut start = None;
-        let mut depth = 0i32;
-        let mut in_str = false;
-        let mut esc = false;
-        for (i, &b) in bytes.iter().enumerate() {
-            match b {
-                b'\\' if in_str => {
-                    esc = !esc;
-                    continue;
-                }
-                b'"' if !esc => {
-                    in_str = !in_str;
-                }
-                b'{' if !in_str => {
-                    if start.is_none() {
-                        start = Some(i)
-                    }
-                    depth += 1;
-                }
-                b'}' if !in_str && depth > 0 => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let st = start?;
-                        return Some(s[st..=i].to_string());
-                    }
-                }
-                _ => {
-                    esc = false;
-                }
-            }
-        }
-        None
-    }
-    if let Some(obj) = find_first_json_object(&content) {
-        let val: serde_json::Value = serde_json::from_str(&obj)?;
-        return Ok(val);
-    }
-    anyhow::bail!("model did not return JSON: {}", content)
+
+    anyhow::bail!("model did not return JSON: {content}")
 }
 
 /// Keep SELECT/RETURNING columns in one place to avoid drift with structs.
@@ -155,6 +116,9 @@ const RECIPE_COLS: &str = r#"
     macros
 "#;
 
+/// # Errors
+///
+/// Err if request fails
 pub async fn fetch_and_store_recipe_image(
     client: &reqwest::Client,
     abs_url: &str,
@@ -174,6 +138,9 @@ pub async fn fetch_and_store_recipe_image(
     store_recipe_image_bytes(state, recipe_id, bytes).await
 }
 
+/// # Errors
+///
+/// Err if parsing of multipart fails
 pub async fn upload_image(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -182,40 +149,34 @@ pub async fn upload_image(
     let mut bytes: Option<Vec<u8>> = None;
 
     while let Some(field) = multipart.next_field().await? {
-        match field.name() {
-            Some("image") | Some("file") => {
-                bytes = Some(field.bytes().await?.to_vec());
-                break;
-            }
-            _ => continue,
+        if let Some("image" | "file") = field.name() {
+            bytes = Some(field.bytes().await?.to_vec());
+            break;
         }
     }
 
     // If nothing uploaded, return current recipe (preserve old behavior)
-    let bytes = match bytes {
-        Some(b) => b,
-        None => {
-            let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
-            let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(&sql)
-                .bind(id)
-                .fetch_one(&state.pool)
-                .await?
-                .into();
-            return Ok(Json(recipe));
-        }
+    let Some(bytes) = bytes else {
+        let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
+        let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(&sql)
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await?
+            .into();
+        return Ok(Json(recipe));
     };
 
     let (rel_full, rel_small) = store_recipe_image_bytes(&state, id, bytes).await?;
 
     // Update DB (store relative filenames)
     sqlx::query(
-        r#"
+        r"
         UPDATE recipes
            SET image_path_full  = ?,
                image_path_small = ?,
                updated_at       = CURRENT_TIMESTAMP
          WHERE id = ?
-        "#,
+        ",
     )
     .bind(&rel_full)
     .bind(&rel_small)
@@ -224,7 +185,7 @@ pub async fn upload_image(
     .await?;
 
     // Return updated recipe
-    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
     let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(id)
         .fetch_one(&state.pool)
@@ -234,8 +195,11 @@ pub async fn upload_image(
     Ok(Json(recipe))
 }
 
+/// # Errors
+///
+/// Err if querying the db fails
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
-    let sql = format!("SELECT {} FROM recipes ORDER BY id", RECIPE_COLS);
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes ORDER BY id");
     let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
         .fetch_all(&state.pool)
         .await
@@ -247,8 +211,11 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>>
     Ok(Json(rows.into_iter().map(Recipe::from).collect()))
 }
 
+/// # Errors
+///
+/// Err if querying the db fails
 pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Recipe>> {
-    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(id)
         .fetch_one(&state.pool)
@@ -261,6 +228,9 @@ pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResul
     Ok(Json(row.into()))
 }
 
+/// # Errors
+///
+/// Err if querying the db fails
 pub async fn create(
     State(state): State<AppState>,
     Json(new): Json<NewRecipe>,
@@ -281,9 +251,8 @@ pub async fn create(
         r#"
         INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
         VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        RETURNING {cols}
+        RETURNING {RECIPE_COLS}
         "#,
-        cols = RECIPE_COLS
     );
 
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
@@ -303,8 +272,11 @@ pub async fn create(
     Ok(Json(row.into()))
 }
 
+/// # Errors
+///
+/// Err if querying the db fails
 pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<StatusCode> {
-    let res = sqlx::query(r#"DELETE FROM recipes WHERE id = ?"#)
+    let res = sqlx::query(r"DELETE FROM recipes WHERE id = ?")
         .bind(id)
         .execute(&state.pool)
         .await
@@ -319,6 +291,9 @@ pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppRe
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Err if querying the db fails
 pub async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -397,7 +372,7 @@ pub async fn update(
         return Err(StatusCode::NOT_FOUND.into());
     }
 
-    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(id)
         .fetch_one(&state.pool)
@@ -425,29 +400,84 @@ fn servings_from_yield(y: &str) -> Option<f64> {
     None
 }
 
+/// # Errors
+/// Returns an error if the recipe cannot be loaded, the LLM call fails,
+/// the LLM response cannot be parsed, or the macros cannot be saved.
 pub async fn estimate_macros(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Recipe>> {
-    // Load recipe (ingredients + instructions + yield)
-    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
+    let row = load_recipe_row(&state, id).await?;
+    let (servings, basis) = servings_and_basis(&row.r#yield);
+
+    let user = build_macros_user_prompt(servings, &row);
+
+    let client = macros_http_client()?;
+    let st = state.settings.read().await.clone();
+    let sys = macros_system_prompt(&st);
+
+    let macros = call_and_parse_macros_llm(&client, &st, &sys, &user, basis).await?;
+
+    save_macros(&state, id, &macros).await?;
+
+    let final_row = load_recipe_row(&state, id).await?;
+    Ok(Json(Recipe::from(final_row)))
+}
+
+/* ---------------- helpers ---------------- */
+
+async fn load_recipe_row(state: &AppState, id: i64) -> AppResult<RecipeRow> {
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(id)
         .fetch_one(&state.pool)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(row)
+}
 
-    // Prepare prompt
-    let servings = servings_from_yield(&row.r#yield);
+fn servings_and_basis(y: &str) -> (Option<f64>, &'static str) {
+    let servings = servings_from_yield(y);
     let basis = if servings.is_some() {
         "per_serving"
     } else {
         "per_recipe"
     };
+    (servings, basis)
+}
 
-    // Pretty ingredients for the model
-    let ingredients_lines: Vec<String> = row
-        .ingredients
+fn build_macros_user_prompt(servings: Option<f64>, row: &RecipeRow) -> String {
+    let ingredients_lines = ingredient_lines(row);
+    let instructions_lines = &row.instructions.0;
+
+    let mut user = String::new();
+
+    match servings {
+        Some(sv) => {
+            let _ = writeln!(user, "SERVINGS: {sv}");
+        }
+        None => {
+            user.push_str("SERVINGS: unknown (return totals for the entire recipe)\n");
+        }
+    }
+
+    user.push_str("\nINGREDIENTS:\n");
+    for l in &ingredients_lines {
+        let _ = writeln!(user, "- {l}");
+    }
+
+    if !instructions_lines.is_empty() {
+        user.push_str("\nINSTRUCTIONS (may help disambiguate prep/cooking losses):\n");
+        for (i, step) in instructions_lines.iter().enumerate() {
+            let _ = writeln!(user, "{}. {step}", i + 1);
+        }
+    }
+
+    user
+}
+
+fn ingredient_lines(row: &RecipeRow) -> Vec<String> {
+    row.ingredients
         .0
         .iter()
         .map(|repr| match repr {
@@ -458,35 +488,17 @@ pub async fn estimate_macros(
             },
             crate::models::IngredientRepr::S(s) => s.clone(),
         })
-        .collect();
+        .collect()
+}
 
-    let instructions_lines = row.instructions.0;
-
-    let mut user = String::new();
-    if let Some(sv) = servings {
-        user.push_str(&format!("SERVINGS: {}\n", sv));
-    } else {
-        user.push_str("SERVINGS: unknown (return totals for the entire recipe)\n");
-    }
-    user.push_str("\nINGREDIENTS:\n");
-    for l in &ingredients_lines {
-        user.push_str("- ");
-        user.push_str(l);
-        user.push('\n');
-    }
-    if !instructions_lines.is_empty() {
-        user.push_str("\nINSTRUCTIONS (may help disambiguate prep/cooking losses):\n");
-        for (i, step) in instructions_lines.iter().enumerate() {
-            user.push_str(&format!("{}. {}\n", i + 1, step));
-        }
-    }
-
-    // Call LLM
-    let client = reqwest::Client::builder()
+fn macros_http_client() -> Result<reqwest::Client, StatusCode> {
+    reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(25))
         .build()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
 
+fn macros_system_prompt(st: &crate::models::AppSettings) -> String {
     const DEFAULT_MACROS_PROMPT: &str = r#"You are a precise nutrition estimator.
 
 Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
@@ -503,55 +515,65 @@ Rules:
 - If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
 - Never add extra fields or commentary."#;
 
-    let st = state.settings.read().await.clone();
-    let sys = {
-        let s = st.system_prompt_macros.clone();
-        if s.trim().is_empty() {
-            DEFAULT_MACROS_PROMPT.to_string()
-        } else {
-            s
-        }
-    };
+    let s = st.system_prompt_macros.trim();
+    if s.is_empty() {
+        DEFAULT_MACROS_PROMPT.to_string()
+    } else {
+        s.to_string()
+    }
+}
 
-    // base/token/model from settings
-    let base = st.llm_api_url;
-    let token = st.llm_api_key.unwrap_or_default();
-    let model = st.llm_model;
+async fn call_and_parse_macros_llm(
+    client: &reqwest::Client,
+    st: &crate::models::AppSettings,
+    sys: &str,
+    user: &str,
+    basis: &'static str,
+) -> AppResult<RecipeMacros> {
+    #[derive(Deserialize)]
+    struct LlmOutGrams {
+        protein: f64,
+        fat: f64,
+        carbs: f64,
+    }
+    let base = &st.llm_api_url;
+    let token = st.llm_api_key.clone().unwrap_or_default();
+    let model = &st.llm_model;
 
-    let val = call_llm_json(&client, &base, &token, &model, &sys, &user)
+    let val = call_llm_json(client, base, &token, model, sys, user)
         .await
         .map_err(|e| {
             error!(?e, "LLM call failed");
             StatusCode::BAD_GATEWAY
         })?;
 
-    #[derive(Deserialize)]
-    struct LlmOut {
-        protein_g: f64,
-        fat_g: f64,
-        carbs_g: f64,
-    }
-    let parsed: LlmOut = serde_json::from_value(val).map_err(|e| {
+    let parsed: LlmOutGrams = serde_json::from_value(val).map_err(|e| {
         error!(?e, "LLM JSON parse failed");
         StatusCode::BAD_GATEWAY
     })?;
 
-    let macros = crate::models::RecipeMacros {
+    Ok(RecipeMacros {
         basis: basis.to_string(),
-        protein_g: (parsed.protein_g * 10.0).round() / 10.0,
-        fat_g: (parsed.fat_g * 10.0).round() / 10.0,
-        carbs_g: (parsed.carbs_g * 10.0).round() / 10.0,
-    };
+        protein_g: round1(parsed.protein),
+        fat_g: round1(parsed.fat),
+        carbs_g: round1(parsed.carbs),
+    })
+}
 
-    // Save to DB
-    let macros_json = serde_json::to_string(&macros).unwrap_or_else(|_| "{}".into());
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+async fn save_macros(state: &AppState, id: i64, macros: &RecipeMacros) -> AppResult<()> {
+    let macros_json = serde_json::to_string(macros).unwrap_or_else(|_| "{}".into());
+
     sqlx::query(
-        r#"
+        r"
         UPDATE recipes
            SET macros = json(?),
                updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
-        "#,
+        ",
     )
     .bind(macros_json)
     .bind(id)
@@ -562,16 +584,5 @@ Rules:
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Return updated recipe
-    let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
-    let final_row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
-        .bind(id)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|e| {
-            error!(?e, "recipes.get after macros failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    Ok(Json(final_row.into()))
+    Ok(())
 }

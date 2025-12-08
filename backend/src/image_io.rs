@@ -6,6 +6,9 @@ pub const FULL_WEBP_QUALITY: f32 = 90.0;
 pub const THUMB_WEBP_QUALITY: f32 = 3.0;
 pub const THUMB_MAX_DIM: u32 = 1024;
 
+/// # Errors
+///
+/// Returns Err if the image incoding fails
 pub fn to_full_and_thumb_webp(img: &DynamicImage) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
     // full
     let full_mem = WebpEncoder::from_image(img)

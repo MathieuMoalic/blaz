@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use crate::models::Ingredient;
 use crate::units;
 use regex::Regex;
@@ -8,7 +10,7 @@ use regex::Regex;
 // - "1.5 L water"
 // - "2 carrots, diced"
 // Case-insensitive, supports plural/synonym units, optional "of".
-static ING_RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+static ING_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?xi)
         ^\s*
@@ -55,15 +57,10 @@ pub fn parse_ingredient_line(s: &str) -> Ingredient {
         let unit_raw = caps.name("u").map(|m| m.as_str());
         let unit = unit_raw
             .and_then(units::canon_unit_str)
-            .map(|u| u.to_string());
+            .map(std::string::ToString::to_string);
 
         // Clean up the remainder as the ingredient name
-        let mut name = caps
-            .name("rest")
-            .map(|m| m.as_str())
-            .unwrap_or("")
-            .to_string();
-        name = units::norm_whitespace(&name);
+        let name = units::norm_whitespace(caps.name("rest").map_or("", |m| m.as_str()));
 
         return Ingredient {
             quantity,

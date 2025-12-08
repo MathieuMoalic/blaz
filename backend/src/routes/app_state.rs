@@ -13,22 +13,25 @@ pub struct AppStateView {
     pub system_prompt_macros: String,
 }
 
-fn mask_key(k: &Option<String>) -> String {
+fn mask_key(k: Option<&str>) -> String {
     match k {
-        None => "".into(),
-        Some(s) if s.is_empty() => "".into(),
-        Some(s) if s.len() <= 6 => "***".into(),
+        None | Some("") => String::new(),
+        Some(s) if s.len() <= 6 => "***".to_string(),
         Some(s) => {
             let end = &s[s.len().saturating_sub(4)..];
-            format!("***{}", end)
+            format!("***{end}")
         }
     }
 }
 
+/// Get the current application settings (with the LLM key masked).
+///
+/// # Errors
+/// Returns an error if reading the settings from the database fails.
 pub async fn get(State(state): State<AppState>) -> AppResult<Json<AppStateView>> {
     let st = state.settings.read().await.clone();
     Ok(Json(AppStateView {
-        llm_api_key_masked: mask_key(&st.llm_api_key),
+        llm_api_key_masked: mask_key(st.llm_api_key.as_deref()),
         llm_model: st.llm_model,
         llm_api_url: st.llm_api_url,
         system_prompt_import: st.system_prompt_import,
@@ -45,17 +48,23 @@ pub struct PatchAppState {
     pub system_prompt_macros: Option<String>,
 }
 
+/// Patch application settings (singleton row `id = 1`) and update the in-memory cache.
+///
+/// # Errors
+/// Returns an error if:
+/// - The settings row cannot be fetched from the database.
+/// - The settings update query fails.
 pub async fn patch(
     State(state): State<AppState>,
     Json(p): Json<PatchAppState>,
 ) -> AppResult<Json<AppStateView>> {
     // 1) Apply to DB (singleton row id=1)
     let mut settings = sqlx::query_as::<_, AppSettings>(
-        r#"
+        r"
         SELECT llm_api_key, llm_model, llm_api_url,
                system_prompt_import, system_prompt_macros, jwt_secret
           FROM settings WHERE id = 1
-        "#,
+        ",
     )
     .fetch_one(&state.pool)
     .await?;
@@ -77,7 +86,7 @@ pub async fn patch(
     }
 
     sqlx::query(
-        r#"
+        r"
         UPDATE settings
            SET llm_api_key = ?,
                llm_model = ?,
@@ -86,7 +95,7 @@ pub async fn patch(
                system_prompt_macros = ?,
                jwt_secret = ?
          WHERE id = 1
-        "#,
+        ",
     )
     .bind(&settings.llm_api_key)
     .bind(&settings.llm_model)

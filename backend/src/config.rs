@@ -31,10 +31,11 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn verbosity_delta(&self) -> i8 {
-        self.verbose as i8 - self.quiet as i8
+    #[must_use]
+    pub fn verbosity_delta(&self) -> i16 {
+        i16::from(self.verbose) - i16::from(self.quiet)
     }
-
+    #[must_use]
     pub fn log_filter(&self) -> &'static str {
         match self.verbosity_delta() {
             d if d <= -2 => "error",

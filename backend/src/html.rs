@@ -1,10 +1,10 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Extract <title>...</title> from raw HTML and decode basic entities.
 pub fn extract_title(html: &str) -> Option<String> {
-    static TITLE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
+    static TITLE_RE: std::sync::LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
 
     let raw = TITLE_RE
         .captures(html)
@@ -14,9 +14,10 @@ pub fn extract_title(html: &str) -> Option<String> {
     Some(decode_entities_basic(&raw))
 }
 
+#[must_use]
 /// Fallback guess if we couldn't get a good page/LLM title.
 pub fn fallback_title_from_url(url: &str) -> Option<String> {
-    if let Ok(u) = reqwest::Url::parse(url) {
+    reqwest::Url::parse(url).map_or(None, |u| {
         let host = u.host_str().unwrap_or_default().to_string();
         let p = u.path().trim_matches('/');
         if p.is_empty() {
@@ -24,20 +25,18 @@ pub fn fallback_title_from_url(url: &str) -> Option<String> {
         } else {
             Some(format!("{host} — {p}"))
         }
-    } else {
-        None
-    }
+    })
 }
 
 /// Convert HTML to readable plain text.
 pub fn html_to_plain_text(html: &str) -> String {
-    static SCRIPT_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
-    static STYLE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap());
-    static TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<[^>]+>").unwrap());
-    static WS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[ \t\r\f]+").unwrap());
-    static NL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
+    static SCRIPT_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
+    static STYLE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap());
+    static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<[^>]+>").unwrap());
+    static WS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t\r\f]+").unwrap());
+    static NL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
 
     let mut s = SCRIPT_RE.replace_all(html, " ").into_owned();
     s = STYLE_RE.replace_all(&s, " ").into_owned();
@@ -49,6 +48,7 @@ pub fn html_to_plain_text(html: &str) -> String {
     s.trim().to_string()
 }
 
+#[must_use]
 /// Minimal HTML entity decoding for titles/content extraction.
 pub fn decode_entities_basic(s: &str) -> String {
     s.replace("&amp;", "&")
@@ -66,6 +66,15 @@ pub fn decode_entities_basic(s: &str) -> String {
 
 /// Normalize noisy page titles.
 pub fn clean_title(input: &str) -> String {
+    // Strip adjectives / diet tags
+    static ADJ_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)^(best|easy|quick|simple|ultimate|perfect|authentic|classic|vegan|keto|paleo|gluten[- ]free)\s+",
+        )
+        .unwrap()
+    });
+    static RECIPE_TAIL_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\s+recipes?$").unwrap());
     let mut s = decode_entities_basic(input).trim().to_string();
 
     // Cut at common separators (keep the left part)
@@ -73,14 +82,6 @@ pub fn clean_title(input: &str) -> String {
     if let Some(idx) = s.find(|c| seps.contains(&c)) {
         s = s[..idx].trim().to_string();
     }
-
-    // Strip adjectives / diet tags
-    static ADJ_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(
-            r"(?i)^(best|easy|quick|simple|ultimate|perfect|authentic|classic|vegan|keto|paleo|gluten[- ]free)\s+",
-        )
-        .unwrap()
-    });
 
     loop {
         let new = ADJ_RE.replace(&s, "").trim().to_string();
@@ -90,7 +91,6 @@ pub fn clean_title(input: &str) -> String {
         s = new;
     }
 
-    static RECIPE_TAIL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\s+recipes?$").unwrap());
     s = RECIPE_TAIL_RE.replace(&s, "").trim().to_string();
 
     // Normalize whitespace & capitalize first letter

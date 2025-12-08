@@ -48,7 +48,7 @@ pub enum IngredientRepr {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RecipeMacros {
-    /// "per_serving" if yield could be parsed as N servings, otherwise "per_recipe".
+    /// `per_serving` if yield could be parsed as N servings, otherwise `per_recipe`.
     pub basis: String,
     pub protein_g: f64,
     pub fat_g: f64,   // saturated + unsaturated combined

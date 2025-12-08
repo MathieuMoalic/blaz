@@ -3,11 +3,10 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
 use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
 use crate::{
@@ -31,10 +30,14 @@ pub struct ImportFromUrlReq {
  * Handler
  * ========================= */
 
+/// # Errors
+///
+/// Err if we can't fetch from the url
 pub async fn import_from_url(
     State(state): State<AppState>,
     Json(req): Json<ImportFromUrlReq>,
 ) -> Result<Json<Recipe>, (StatusCode, String)> {
+    const MAX_CHARS: usize = 12_000;
     // 1) Fetch page HTML and convert to plain text (also return raw html)
     let (title_guess_raw, text, html) = fetch_page_text(&req.url)
         .await
@@ -63,7 +66,6 @@ pub async fn import_from_url(
     let system = settings.system_prompt_import.as_str();
 
     // 3) Compact user message
-    const MAX_CHARS: usize = 12_000;
     let excerpt = if text.len() > MAX_CHARS {
         &text[..MAX_CHARS]
     } else {
@@ -83,20 +85,18 @@ pub async fn import_from_url(
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
 
     // 5) Normalize (and capture possible LLM title)
-    let raw = ExtractRaw::from_json(&llm_json)
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("invalid LLM JSON: {e}")))?;
+    let raw = ExtractRaw::from_json(&llm_json);
     let title_from_llm = raw.title.clone();
     let norm = raw.normalize();
 
     let chosen_title = title_from_llm
         .as_deref()
-        .map(clean_title)
-        .unwrap_or_else(|| title_guess.clone());
+        .map_or_else(|| title_guess.clone(), clean_title);
 
-    let final_title = if !chosen_title.trim().is_empty() {
-        chosen_title
-    } else {
+    let final_title = if chosen_title.trim().is_empty() {
         fallback_title_from_url(&req.url).unwrap_or_else(|| "Imported recipe".to_string())
+    } else {
+        chosen_title
     };
 
     let payload = NewRecipe {
@@ -170,12 +170,12 @@ async fn try_fetch_and_attach_image(
             recipes::fetch_and_store_recipe_image(&client, &img_url, state, recipe_id).await?;
 
         sqlx::query(
-            r#"
+            r"
         UPDATE recipes
            SET image_path_small = ?,
                image_path_full  = ?
          WHERE id = ?
-        "#,
+        ",
         )
         .bind(&rel_small)
         .bind(&rel_full)
@@ -194,7 +194,8 @@ async fn try_fetch_and_attach_image(
  * ========================= */
 
 fn extract_json_object(s: &str) -> Option<String> {
-    static FENCE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap());
+    static FENCE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap());
     if let Some(c) = FENCE.captures(s) {
         return Some(c[1].to_string());
     }
@@ -218,10 +219,7 @@ fn extract_json_object(s: &str) -> Option<String> {
                     if depth == 0 {
                         if let Some(st) = start {
                             let cand = (st, i);
-                            if best
-                                .map(|(a, b)| (b - a) < (cand.1 - cand.0))
-                                .unwrap_or(true)
-                            {
+                            if best.map_or_else(|| true, |(a, b)| (b - a) < (cand.1 - cand.0)) {
                                 best = Some(cand);
                             }
                         }
@@ -235,6 +233,9 @@ fn extract_json_object(s: &str) -> Option<String> {
     best.map(|(a, b)| s[a..=b].to_string())
 }
 
+/// # Errors
+///
+/// Err if request fails or if json is not parsable
 pub async fn call_llm_json(
     client: &reqwest::Client,
     base: &str,
@@ -243,8 +244,6 @@ pub async fn call_llm_json(
     system: &str,
     user: &str,
 ) -> Result<JsonValue, String> {
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-
     #[derive(Serialize)]
     struct Msg<'a> {
         role: &'a str,
@@ -258,6 +257,7 @@ pub async fn call_llm_json(
         #[serde(skip_serializing_if = "Option::is_none")]
         response_format: Option<JsonValue>,
     }
+    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let body = Body {
         model,
@@ -289,7 +289,7 @@ pub async fn call_llm_json(
     let text = resp.text().await.unwrap_or_default();
 
     if status != reqwest::StatusCode::OK {
-        return Err(format!("LLM HTTP {}: {}", status, text));
+        return Err(format!("LLM HTTP {status}: {text}"));
     }
 
     let envelope: JsonValue =
@@ -322,10 +322,7 @@ pub async fn call_llm_json(
     } else {
         content
     };
-    Err(format!(
-        "LLM did not return valid JSON. Preview: {}",
-        preview
-    ))
+    Err(format!("LLM did not return valid JSON. Preview: {preview}"))
 }
 
 /* =========================
@@ -340,17 +337,17 @@ struct ExtractRaw {
 }
 
 impl ExtractRaw {
-    fn from_json(v: &JsonValue) -> Result<Self, String> {
+    fn from_json(v: &JsonValue) -> Self {
         let title = v
             .get("title")
             .and_then(|x| x.as_str().map(|s| s.trim().to_string()))
             .filter(|s| !s.is_empty());
 
-        Ok(Self {
+        Self {
             title,
             ingredients: v.get("ingredients").cloned().unwrap_or(JsonValue::Null),
             instructions: v.get("instructions").cloned().unwrap_or(JsonValue::Null),
-        })
+        }
     }
 
     fn normalize(self) -> ExtractOut {
@@ -382,9 +379,9 @@ fn normalize_instructions(v: JsonValue) -> Vec<String> {
             .collect(),
         JsonValue::String(s) => s
             .lines()
-            .map(|l| l.trim())
+            .map(str::trim)
             .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
+            .map(std::string::ToString::to_string)
             .collect(),
         _ => Vec::new(),
     }
@@ -428,9 +425,9 @@ fn normalize_ingredients(v: JsonValue) -> Vec<String> {
             .collect(),
         JsonValue::String(s) => s
             .lines()
-            .map(|l| l.trim())
+            .map(str::trim)
             .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
+            .map(std::string::ToString::to_string)
             .collect(),
         _ => Vec::new(),
     }
@@ -451,9 +448,9 @@ fn to_line(q: Option<f64>, unit: Option<String>, name: String) -> String {
     match (q, unit) {
         (Some(v), Some(u)) if !u.is_empty() => {
             let s = if u == "g" || u == "ml" {
-                (v.round() as i64).to_string()
+                v.round().to_string()
             } else if u == "kg" || u == "L" {
-                trim_zeros(format!("{:.2}", v))
+                trim_zeros(format!("{v:.2}"))
             } else {
                 trim_zeros(format!("{}", ((v * 100.0).round() / 100.0)))
             };

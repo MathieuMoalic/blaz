@@ -43,11 +43,3 @@ rand = "0.8"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 tracing-appender = "0.2.4"
 
-# [patch.crates-io]
-# windows-targets = "=0.52.0"
-# windows-core = "=0.52.0"
-# windows-sys = "=0.52.0"
-# windows_x86_64_gnu = "=0.52.0"
-# windows_x86_64_gnullvm = "=0.52.0"
-# windows_x86_64_msvc = "=0.52.0"
-

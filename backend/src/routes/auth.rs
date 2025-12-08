@@ -26,15 +26,24 @@ pub struct LoginResp {
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     sub: i64,
-    exp: usize,
+    exp: u64,
 }
-fn now_ts() -> usize {
+fn now_ts() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() as usize
+        .as_secs()
 }
 
+/// Register the single allowed user account.
+///
+/// # Errors
+/// Returns an error if:
+/// - A user already exists (registration disabled).
+/// - The provided email or password is invalid.
+/// - Checking for existing users fails.
+/// - Password hashing fails.
+/// - Inserting the new user fails (including unique constraint conflicts).
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -63,13 +72,13 @@ pub async fn register(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .to_string();
 
-    let res = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
+    let resp = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
         .bind(email)
         .bind(hash)
         .execute(&state.pool)
         .await;
 
-    match res {
+    match resp {
         Ok(_) => Ok(StatusCode::CREATED),
         Err(e) => {
             if let sqlx::Error::Database(db) = &e {
@@ -87,6 +96,10 @@ pub struct AuthStatusResp {
     pub allow_registration: bool,
 }
 
+/// Report whether registration is currently allowed.
+///
+/// # Errors
+/// Returns an error if querying the users table fails.
 pub async fn auth_status(State(state): State<AppState>) -> AppResult<Json<AuthStatusResp>> {
     let existing_user = sqlx::query("SELECT 1 FROM users LIMIT 1")
         .fetch_optional(&state.pool)
@@ -99,6 +112,14 @@ pub async fn auth_status(State(state): State<AppState>) -> AppResult<Json<AuthSt
     }))
 }
 
+/// Authenticate a user and return a JWT token.
+///
+/// # Errors
+/// Returns an error if:
+/// - The email is not found or the password is invalid.
+/// - Querying the user record fails.
+/// - Parsing or verifying the stored password hash fails.
+/// - Encoding the JWT fails.
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,

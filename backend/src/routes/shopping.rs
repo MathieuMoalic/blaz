@@ -85,7 +85,7 @@ fn normalize_unit_token(t: &str) -> Option<String> {
     if u.is_empty() {
         return None;
     }
-    canon_unit_str(u).map(|c| c.to_string())
+    canon_unit_str(u).map(std::string::ToString::to_string)
 }
 
 /// Parse a line that may look like:
@@ -172,11 +172,11 @@ fn internal_err<E: std::error::Error>(err: E) -> (StatusCode, String) {
 
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemView>(
-        r#"
+        r"
         SELECT id, text, done, category
           FROM shopping_items_view
          WHERE id = ?
-        "#,
+        ",
     )
     .bind(id)
     .fetch_one(&state.pool)
@@ -185,11 +185,11 @@ async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView,
 
 async fn fetch_dto_by_id(state: &AppState, id: i64) -> Result<ShoppingItemDto, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemDto>(
-        r#"
+        r"
         SELECT id, text, done, category
           FROM shopping_items_view
          WHERE id = ?
-        "#,
+        ",
     )
     .bind(id)
     .fetch_one(&state.pool)
@@ -197,7 +197,6 @@ async fn fetch_dto_by_id(state: &AppState, id: i64) -> Result<ShoppingItemDto, s
 }
 
 fn guess_category(name_norm: &str) -> Option<&'static str> {
-    let n = name_norm;
     const MAP: &[(&[&str], &str)] = &[
         (
             &[
@@ -290,6 +289,7 @@ fn guess_category(name_norm: &str) -> Option<&'static str> {
             "Household",
         ),
     ];
+    let n = name_norm;
     for (needles, cat) in MAP {
         if needles.iter().any(|k| n.contains(k)) {
             return Some(*cat);
@@ -309,14 +309,17 @@ fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
 
 /* ---------- Routes ---------- */
 
-// GET /shopping
+/// GET /shopping
+///
+/// # Errors
+/// Err if querying the database fails.
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
     let rows = sqlx::query_as::<_, ShoppingItemView>(
-        r#"
+        r"
         SELECT id, text, done, category
           FROM shopping_items_view
          ORDER BY id
-        "#,
+        ",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -324,7 +327,11 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingI
     Ok(Json(rows))
 }
 
-// POST /shopping { "text": "..." }
+/// POST /shopping
+///
+/// # Errors
+/// Err if the input text is empty.
+/// Err if inserting or fetching the shopping item fails.
 pub async fn create(
     State(state): State<AppState>,
     Json(new): Json<NewItem>,
@@ -341,17 +348,18 @@ pub async fn create(
     if parsed.qty.is_some() {
         let (unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
         let key = make_key(&parsed.name_norm, unit_norm);
-        let category_guess = guess_category(&parsed.name_norm).map(|s| s.to_string());
+        let category_guess =
+            guess_category(&parsed.name_norm).map(std::string::ToString::to_string);
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO shopping_items (name, unit, quantity, done, key, category)
             VALUES (?, ?, ?, 0, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
               quantity = COALESCE(shopping_items.quantity, 0)
                        + COALESCE(excluded.quantity, 0),
               category = COALESCE(shopping_items.category, excluded.category)
-            "#,
+            ",
         )
         .bind(&parsed.name_norm)
         .bind(unit_norm)
@@ -372,15 +380,15 @@ pub async fn create(
 
     // Fallback: plain-text item
     let name_norm = parsed.name_norm;
-    let category_guess = guess_category(&name_norm).map(|s| s.to_string());
+    let category_guess = guess_category(&name_norm).map(std::string::ToString::to_string);
     let key = make_key(&name_norm, None);
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO shopping_items (name, unit, quantity, done, key, category)
         VALUES (?, NULL, NULL, 0, ?, ?)
         ON CONFLICT(key) DO NOTHING
-        "#,
+        ",
     )
     .bind(&name_norm)
     .bind(&key)
@@ -397,7 +405,11 @@ pub async fn create(
     Ok(Json(row))
 }
 
-// PATCH /shopping/{id}
+/// PATCH /shopping/{id}
+///
+/// # Errors
+/// Err with `400` if the provided text is empty.
+/// Err with `500` if updating or fetching the item fails.
 pub async fn patch_shopping_item(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -411,7 +423,7 @@ pub async fn patch_shopping_item(
             qb.push(", ");
         }
         qb.push("done = ");
-        qb.push_bind(if d { 1_i64 } else { 0_i64 });
+        qb.push_bind(i64::from(d));
         wrote = true;
     }
 
@@ -476,7 +488,11 @@ pub async fn patch_shopping_item(
     Ok(Json(dto))
 }
 
-// PATCH /shopping/{id}
+/// PATCH /shopping/{id}
+///
+/// # Errors
+/// Err with `400` if no fields are provided to update.
+/// Err if updating or fetching the shopping item fails.
 pub async fn toggle_done(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -487,7 +503,7 @@ pub async fn toggle_done(
 
     if let Some(done) = t.done {
         sets.push("done = ?");
-        args.add(if done { 1i64 } else { 0i64 })
+        args.add(i64::from(done))
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
@@ -507,12 +523,12 @@ pub async fn toggle_done(
     }
 
     let sql = format!(
-        r#"
+        r"
         UPDATE shopping_items
            SET {}
          WHERE id = ?
          RETURNING id
-        "#,
+        ",
         sets.join(", ")
     );
 
@@ -527,7 +543,10 @@ pub async fn toggle_done(
     Ok(Json(row))
 }
 
-// DELETE /shopping/{id}
+/// DELETE /shopping/{id}
+///
+/// # Errors
+/// Err if deleting the shopping item fails.
 pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -541,19 +560,24 @@ pub async fn delete(
     Ok(Json(serde_json::json!({ "deleted": affected })))
 }
 
-// POST /shopping/merge
+/// POST /shopping/merge
+///
+/// # Errors
+/// Err if merging items (insert/update) fails.
+/// Err if fetching the updated shopping list fails.
 pub async fn merge_items(
     State(state): State<AppState>,
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
     for it in req.items {
         // Parse embedded qty/unit from name, if any
-        let parsed_name = parse_item_line(&it.name, ParseMode::Merge).unwrap_or(ParsedItem {
-            qty: None,
-            unit: None,
-            name_raw: it.name.clone(),
-            name_norm: normalize_name(&it.name),
-        });
+        let parsed_name =
+            parse_item_line(&it.name, ParseMode::Merge).unwrap_or_else(|| ParsedItem {
+                qty: None,
+                unit: None,
+                name_raw: it.name.clone(),
+                name_norm: normalize_name(&it.name),
+            });
 
         // Prefer explicit fields; fall back to parsed-from-name
         let qty = it.quantity.or(parsed_name.qty);
@@ -575,10 +599,12 @@ pub async fn merge_items(
                 let s = crate::units::norm_whitespace(&s);
                 if s.is_empty() { None } else { Some(s) }
             })
-            .or_else(|| guess_category(&parsed_name.name_norm).map(|s| s.to_string()));
+            .or_else(|| {
+                guess_category(&parsed_name.name_norm).map(std::string::ToString::to_string)
+            });
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO shopping_items (name, unit, quantity, done, key, category)
             VALUES (?, ?, ?, 0, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
@@ -590,7 +616,7 @@ pub async fn merge_items(
               name = excluded.name,
               unit = excluded.unit,
               category = COALESCE(shopping_items.category, excluded.category)
-            "#,
+            ",
         )
         .bind(&parsed_name.name_norm) // keep normalized name in DB for consistency
         .bind(unit_norm)
@@ -602,11 +628,11 @@ pub async fn merge_items(
     }
 
     let rows: Vec<ShoppingItemView> = sqlx::query_as::<_, ShoppingItemView>(
-        r#"
+        r"
         SELECT id, text, done, category
           FROM shopping_items_view
          ORDER BY id
-        "#,
+        ",
     )
     .fetch_all(&state.pool)
     .await?;

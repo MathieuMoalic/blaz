@@ -10,6 +10,7 @@ struct ImgCandidate {
     dom_bonus: i32,          // near title/article etc.
 }
 
+#[must_use]
 pub fn extract_main_image_url(html: &str, page_url: &str) -> Option<String> {
     let doc = Html::parse_document(html);
     let base_url = page_base_url(&doc, page_url);
@@ -71,7 +72,7 @@ pub fn extract_main_image_url(html: &str, page_url: &str) -> Option<String> {
 fn page_base_url(doc: &Html, page_url: &str) -> Url {
     let mut base =
         Url::parse(page_url).unwrap_or_else(|_| Url::parse("https://example.com/").unwrap());
-    if let Ok(sel) = Selector::parse(r#"base[href]"#) {
+    if let Ok(sel) = Selector::parse(r"base[href]") {
         if let Some(el) = doc.select(&sel).next() {
             if let Some(h) = el.value().attr("href") {
                 if let Ok(abs) = base.join(h) {
@@ -111,14 +112,16 @@ fn find_recipe_images_in_ld(v: &serde_json::Value) -> Image {
     use serde_json::{Map, Value};
 
     fn grab(o: &Map<String, Value>) -> Image {
+        fn to_i32(v: Option<i64>) -> Option<i32> {
+            v.and_then(|x| i32::try_from(x).ok())
+        }
+
         let t = o.get("@type");
         let is_recipe = match t {
             Some(Value::String(s)) => s.eq_ignore_ascii_case("Recipe"),
-            Some(Value::Array(a)) => a.iter().any(|x| {
-                x.as_str()
-                    .map(|s| s.eq_ignore_ascii_case("Recipe"))
-                    .unwrap_or(false)
-            }),
+            Some(Value::Array(a)) => a
+                .iter()
+                .any(|x| x.as_str().is_some_and(|s| s.eq_ignore_ascii_case("Recipe"))),
             _ => false,
         };
         if !is_recipe {
@@ -137,10 +140,11 @@ fn find_recipe_images_in_ld(v: &serde_json::Value) -> Image {
                                 .get("url")
                                 .or_else(|| io.get("contentUrl"))
                                 .and_then(|x| x.as_str())
-                                .map(|s| s.to_string());
+                                .map(std::string::ToString::to_string);
+
                             if let Some(u) = url {
-                                let w = io.get("width").and_then(|x| x.as_i64()).map(|x| x as i32);
-                                let h = io.get("height").and_then(|x| x.as_i64()).map(|x| x as i32);
+                                let w = to_i32(io.get("width").and_then(Value::as_i64));
+                                let h = to_i32(io.get("height").and_then(Value::as_i64));
                                 out.push((u, w, h));
                             }
                         }
@@ -153,15 +157,17 @@ fn find_recipe_images_in_ld(v: &serde_json::Value) -> Image {
                     .get("url")
                     .or_else(|| io.get("contentUrl"))
                     .and_then(|x| x.as_str())
-                    .map(|s| s.to_string());
+                    .map(std::string::ToString::to_string);
+
                 if let Some(u) = url {
-                    let w = io.get("width").and_then(|x| x.as_i64()).map(|x| x as i32);
-                    let h = io.get("height").and_then(|x| x.as_i64()).map(|x| x as i32);
+                    let w = to_i32(io.get("width").and_then(Value::as_i64));
+                    let h = to_i32(io.get("height").and_then(Value::as_i64));
                     out.push((u, w, h));
                 }
             }
             _ => {}
         }
+
         Some(out)
     }
 
@@ -300,7 +306,7 @@ fn dom_img_candidates(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
         // srcset before src (often higher res)
         let srcset = attr_chain(&el, &["srcset", "data-srcset", "data-lazy-srcset"]);
         if let Some(ss) = srcset {
-            for (u, w) in parse_srcset(ss).into_iter() {
+            for (u, w) in parse_srcset(ss) {
                 if let Some(abs) = absolutize(base, &u) {
                     out.push(ImgCandidate {
                         url: abs,
@@ -449,15 +455,17 @@ fn filename_bonus(u: &str) -> i32 {
     }
     0
 }
+
 fn aspect_hint_bonus(w: Option<i32>, h: Option<i32>) -> i32 {
     match (w, h) {
         (Some(w), Some(h)) if w > 0 && h > 0 => {
-            let r = w as f32 / h as f32;
+            let r = f64::from(w) / f64::from(h);
             if (0.8..=2.2).contains(&r) { 5 } else { -5 }
         }
         _ => 0,
     }
 }
+
 fn size_hint_score(w: Option<i32>, h: Option<i32>) -> i32 {
     match (w, h) {
         (Some(w), Some(h)) => ((w * h) / 10000).clamp(0, 200), // cap contribution
@@ -469,7 +477,10 @@ fn is_plausible_url(u: &str) -> bool {
     if !(u.starts_with("http://") || u.starts_with("https://")) {
         return false;
     }
-    if u.ends_with(".svg") {
+    if std::path::Path::new(u)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+    {
         return false;
     }
     true

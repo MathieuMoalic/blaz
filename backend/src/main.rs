@@ -1,10 +1,32 @@
+#![deny(
+    warnings,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo
+)]
+#![allow(clippy::multiple_crate_versions)]
+
+pub mod app;
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod html;
+pub mod image_io;
+pub mod ingredient_parser;
+pub mod llm;
+pub mod logging;
+pub mod models;
+pub mod routes;
+pub mod units;
+
 use clap::Parser;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-use blaz::{
-    build_app,
+use crate::{
+    app::build_app,
     config::Config,
     db::make_pool,
     logging::init_logging,
