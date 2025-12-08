@@ -13,7 +13,32 @@ use crate::models::{AppState, Ingredient, NewRecipe, Recipe, RecipeRow, UpdateRe
 
 use crate::error::AppResult;
 
-/* ---------- Shared LLM helper (OpenAI-compatible HF Router) ---------- */
+use std::io;
+
+async fn store_recipe_image_bytes(
+    state: &AppState,
+    recipe_id: i64,
+    bytes: Vec<u8>,
+) -> anyhow::Result<(String, String)> {
+    let (full_webp, thumb_webp) =
+        tokio::task::spawn_blocking(move || -> io::Result<(Vec<u8>, Vec<u8>)> {
+            let img = image::load_from_memory(&bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("decode error: {e}")))?;
+            crate::image_io::to_full_and_thumb_webp(&img)
+        })
+        .await??;
+
+    let rel_dir = format!("recipes/{recipe_id}");
+    let rel_full = format!("{rel_dir}/full.webp");
+    let rel_small = format!("{rel_dir}/small.webp");
+
+    let abs_dir = state.config.media_dir.join(&rel_dir);
+    tokio::fs::create_dir_all(&abs_dir).await?;
+    tokio::fs::write(abs_dir.join("full.webp"), &full_webp).await?;
+    tokio::fs::write(abs_dir.join("small.webp"), &thumb_webp).await?;
+
+    Ok((rel_full, rel_small))
+}
 
 async fn call_llm_json(
     client: &reqwest::Client,
@@ -121,10 +146,6 @@ async fn call_llm_json(
     anyhow::bail!("model did not return JSON: {}", content)
 }
 
-/* =======================================================================
-Recipes
-======================================================================= */
-
 /// Keep SELECT/RETURNING columns in one place to avoid drift with structs.
 const RECIPE_COLS: &str = r#"
     id, title, source, "yield", notes,
@@ -137,12 +158,9 @@ const RECIPE_COLS: &str = r#"
 pub async fn fetch_and_store_recipe_image(
     client: &reqwest::Client,
     abs_url: &str,
-    state: &crate::models::AppState,
+    state: &AppState,
     recipe_id: i64,
 ) -> anyhow::Result<(String, String)> {
-    use std::io;
-
-    // 1) download
     let bytes = client
         .get(abs_url)
         .header(reqwest::header::USER_AGENT, "blaz/recipe-importer")
@@ -153,27 +171,7 @@ pub async fn fetch_and_store_recipe_image(
         .await?
         .to_vec();
 
-    // 2) decode + encode off-thread
-    let (full_webp, thumb_webp) =
-        tokio::task::spawn_blocking(move || -> io::Result<(Vec<u8>, Vec<u8>)> {
-            let img = image::load_from_memory(&bytes)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("decode error: {e}")))?;
-            crate::image_io::to_full_and_thumb_webp(&img)
-        })
-        .await??;
-
-    // 3) write files into a stable per-recipe directory
-    let rel_dir = format!("recipes/{recipe_id}");
-    let rel_full = format!("{rel_dir}/full.webp");
-    let rel_small = format!("{rel_dir}/small.webp");
-
-    let abs_dir = state.config.media_dir.join(&rel_dir);
-    tokio::fs::create_dir_all(&abs_dir).await?;
-
-    tokio::fs::write(abs_dir.join("full.webp"), &full_webp).await?;
-    tokio::fs::write(abs_dir.join("small.webp"), &thumb_webp).await?;
-
-    Ok((rel_full, rel_small))
+    store_recipe_image_bytes(state, recipe_id, bytes).await
 }
 
 pub async fn upload_image(
@@ -181,8 +179,8 @@ pub async fn upload_image(
     Path(id): Path<i64>,
     mut multipart: Multipart,
 ) -> AppResult<Json<Recipe>> {
-    // 1) Pull the file bytes (accept "image" or "file")
     let mut bytes: Option<Vec<u8>> = None;
+
     while let Some(field) = multipart.next_field().await? {
         match field.name() {
             Some("image") | Some("file") => {
@@ -193,7 +191,7 @@ pub async fn upload_image(
         }
     }
 
-    // If nothing uploaded, just return the current recipe state
+    // If nothing uploaded, return current recipe (preserve old behavior)
     let bytes = match bytes {
         Some(b) => b,
         None => {
@@ -207,33 +205,9 @@ pub async fn upload_image(
         }
     };
 
-    // 2) Ensure media dir
-    let rel_dir = format!("recipes/{id}");
-    let abs_dir = state.config.media_dir.join(&rel_dir);
-    tokio::fs::create_dir_all(&abs_dir).await?;
+    let (rel_full, rel_small) = store_recipe_image_bytes(&state, id, bytes).await?;
 
-    // 3) Stable filenames (always .webp)
-    let rel_full = format!("{rel_dir}/full.webp");
-    let rel_small = format!("{rel_dir}/small.webp");
-    let full_abs = abs_dir.join("full.webp");
-    let thumb_abs = abs_dir.join("small.webp");
-
-    // 4) Heavy work off the async thread: decode, resize, encode to WebP
-    let (full_webp, thumb_webp): (Vec<u8>, Vec<u8>) =
-        tokio::task::spawn_blocking(move || -> std::io::Result<(Vec<u8>, Vec<u8>)> {
-            // Decode any common image format
-            let img = image::load_from_memory(&bytes).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("decode error: {e}"))
-            })?;
-            crate::image_io::to_full_and_thumb_webp(&img)
-        })
-        .await??;
-
-    // 5) Write both files
-    tokio::fs::write(&full_abs, &full_webp).await?;
-    tokio::fs::write(&thumb_abs, &thumb_webp).await?;
-
-    // 6) Update DB (store relative filenames)
+    // Update DB (store relative filenames)
     sqlx::query(
         r#"
         UPDATE recipes
@@ -249,7 +223,7 @@ pub async fn upload_image(
     .execute(&state.pool)
     .await?;
 
-    // 7) Return updated recipe
+    // Return updated recipe
     let sql = format!("SELECT {} FROM recipes WHERE id = ?", RECIPE_COLS);
     let recipe: Recipe = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(id)
