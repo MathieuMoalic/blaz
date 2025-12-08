@@ -473,18 +473,31 @@ fn size_hint_score(w: Option<i32>, h: Option<i32>) -> i32 {
         _ => 0,
     }
 }
+
 fn is_plausible_url(u: &str) -> bool {
     if !(u.starts_with("http://") || u.starts_with("https://")) {
         return false;
     }
-    if std::path::Path::new(u)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-    {
-        return false;
+
+    // Prefer proper URL parsing so query strings don't confuse extension checks.
+    if let Ok(parsed) = Url::parse(u) {
+        let path = parsed.path().to_ascii_lowercase();
+        if std::path::Path::new(&path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+        {
+            return false;
+        }
+        return true;
     }
-    true
+
+    // Fallback: strip query/fragment manually.
+    let no_q = u.split('?').next().unwrap_or(u);
+    let no_frag = no_q.split('#').next().unwrap_or(no_q);
+
+    !no_frag.to_ascii_lowercase().ends_with(".svg")
 }
+
 fn dedupe_by<T, F, K: std::cmp::Eq + std::hash::Hash>(v: &mut Vec<T>, mut key: F)
 where
     F: FnMut(&T) -> K,
