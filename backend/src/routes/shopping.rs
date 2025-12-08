@@ -3,7 +3,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::error::AppResult;
@@ -11,14 +11,6 @@ use crate::models::{AppState, NewItem, ShoppingItemView};
 use crate::units::{canon_unit_str, normalize_name, to_canonical_qty_unit};
 
 /* ---------- Request/response types ---------- */
-
-#[derive(Serialize, sqlx::FromRow)]
-pub struct ShoppingItemDto {
-    pub id: i64,
-    pub text: String,
-    pub done: i64,
-    pub category: Option<String>,
-}
 
 #[derive(Deserialize, Debug)]
 pub struct UpdateShoppingItem {
@@ -49,13 +41,6 @@ pub struct ParsedItem {
     pub qty: Option<f64>,
     pub unit: Option<String>, // normalized short unit, e.g. "g","kg","ml","L","tsp","tbsp"
     pub name_norm: String,    // normalized for merge key/category
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ParseMode {
-    Create,
-    Patch,
-    Merge,
 }
 
 fn parse_qty_token(t: &str) -> Option<f64> {
@@ -102,7 +87,7 @@ fn normalize_unit_token(t: &str) -> Option<String> {
 /// - If it doesn’t start with a number, qty/unit are None and the whole line is the name.
 /// - If it starts with a number but the remaining name is empty, it falls back to treating
 ///   the whole line as the name.
-fn parse_item_line(raw: &str, _mode: ParseMode) -> Option<ParsedItem> {
+fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;
@@ -173,19 +158,6 @@ fn internal_err<E: std::error::Error>(err: E) -> (StatusCode, String) {
 
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemView>(
-        r"
-        SELECT id, text, done, category
-          FROM shopping_items_view
-         WHERE id = ?
-        ",
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
-}
-
-async fn fetch_dto_by_id(state: &AppState, id: i64) -> Result<ShoppingItemDto, sqlx::Error> {
-    sqlx::query_as::<_, ShoppingItemDto>(
         r"
         SELECT id, text, done, category
           FROM shopping_items_view
@@ -342,7 +314,7 @@ pub async fn create(
         return Err(StatusCode::BAD_REQUEST.into());
     }
 
-    let parsed = parse_item_line(text, ParseMode::Create).ok_or(StatusCode::BAD_REQUEST)?;
+    let parsed = parse_item_line(text).ok_or(StatusCode::BAD_REQUEST)?;
 
     // Structured path only if a leading qty was detected
     if parsed.qty.is_some() {
@@ -414,7 +386,7 @@ pub async fn patch_shopping_item(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(payload): Json<UpdateShoppingItem>,
-) -> Result<Json<ShoppingItemDto>, (StatusCode, String)> {
+) -> Result<Json<ShoppingItemView>, (StatusCode, String)> {
     let mut qb = QueryBuilder::<Sqlite>::new("UPDATE shopping_items SET ");
     let mut wrote = false;
 
@@ -442,8 +414,8 @@ pub async fn patch_shopping_item(
     }
 
     if let Some(ref t) = payload.text {
-        let parsed = parse_item_line(t, ParseMode::Patch)
-            .ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
+        let parsed =
+            parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
 
         // Canonicalize units & quantities to match create/merge semantics
         let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
@@ -485,7 +457,7 @@ pub async fn patch_shopping_item(
     }
 
     if !wrote {
-        let dto = fetch_dto_by_id(&state, id).await.map_err(internal_err)?;
+        let dto = fetch_view_by_id(&state, id).await.map_err(internal_err)?;
         return Ok(Json(dto));
     }
 
@@ -499,7 +471,7 @@ pub async fn patch_shopping_item(
         .await
         .map_err(patch_update_err)?;
 
-    let dto = fetch_dto_by_id(&state, rid).await.map_err(internal_err)?;
+    let dto = fetch_view_by_id(&state, rid).await.map_err(internal_err)?;
     Ok(Json(dto))
 }
 
@@ -531,12 +503,11 @@ pub async fn merge_items(
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
     for it in req.items {
         // Parse embedded qty/unit from name, if any
-        let parsed_name =
-            parse_item_line(&it.name, ParseMode::Merge).unwrap_or_else(|| ParsedItem {
-                qty: None,
-                unit: None,
-                name_norm: normalize_name(&it.name),
-            });
+        let parsed_name = parse_item_line(&it.name).unwrap_or_else(|| ParsedItem {
+            qty: None,
+            unit: None,
+            name_norm: normalize_name(&it.name),
+        });
 
         // Prefer explicit fields; fall back to parsed-from-name
         let qty = it.quantity.or(parsed_name.qty);
