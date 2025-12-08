@@ -4,10 +4,6 @@ use std::sync::LazyLock;
 pub static SERVINGS_NUM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(\d+(?:[.,]\d+)?)(?:\s*[–-]\s*(\d+(?:[.,]\d+)?))?").unwrap());
 
-pub static DECIMAL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(\d+(?:[.,]\d+)?)(?:\s*[–-]\s*(\d+(?:[.,]\d+)?))?\s*$").unwrap()
-});
-
 #[inline]
 #[must_use]
 pub fn canon_unit_str(u: &str) -> Option<&'static str> {

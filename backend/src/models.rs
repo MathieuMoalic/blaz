@@ -12,7 +12,6 @@ use crate::ingredient_parser::parse_ingredient_line;
 pub struct AppState {
     pub pool: SqlitePool,
     pub jwt_encoding: jsonwebtoken::EncodingKey,
-    pub jwt_decoding: jsonwebtoken::DecodingKey,
     pub settings: Arc<RwLock<AppSettings>>,
     pub config: Config,
 }
@@ -188,10 +187,4 @@ pub struct ShoppingItem {
 #[derive(Deserialize)]
 pub struct NewItem {
     pub text: String,
-}
-
-#[derive(Deserialize)]
-pub struct ToggleItem {
-    pub done: bool,
-    pub category: Option<String>,
 }

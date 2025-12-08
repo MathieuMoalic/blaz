@@ -7,18 +7,18 @@
 )]
 #![allow(clippy::multiple_crate_versions)]
 
-pub mod app;
-pub mod config;
-pub mod db;
-pub mod error;
-pub mod html;
-pub mod image_io;
-pub mod ingredient_parser;
-pub mod llm;
-pub mod logging;
-pub mod models;
-pub mod routes;
-pub mod units;
+mod app;
+mod config;
+mod db;
+mod error;
+mod html;
+mod image_io;
+mod ingredient_parser;
+mod llm;
+mod logging;
+mod models;
+mod routes;
+mod units;
 
 use clap::Parser;
 use std::sync::Arc;
@@ -50,7 +50,6 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         pool,
         jwt_encoding: jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
-        jwt_decoding: jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
         settings,
         config: config.clone(),
     };

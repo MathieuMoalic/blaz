@@ -4,8 +4,7 @@ use axum::{
     extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqliteArguments;
-use sqlx::{Arguments, QueryBuilder, Sqlite};
+use sqlx::{QueryBuilder, Sqlite};
 
 use crate::error::AppResult;
 use crate::models::{AppState, NewItem, ShoppingItemView};
@@ -43,12 +42,7 @@ pub struct MergeReq {
 
 // PATCH helper body (kept local)
 #[derive(Deserialize, Debug, Default)]
-pub struct UpdateItem {
-    #[serde(default)]
-    pub done: Option<bool>,
-    #[serde(default)]
-    pub category: Option<String>,
-}
+pub struct UpdateItem {}
 
 #[derive(Debug, Clone)]
 pub struct ParsedItem {
@@ -78,6 +72,17 @@ fn parse_qty_token(t: &str) -> Option<f64> {
     }
 
     t.parse::<f64>().ok()
+}
+fn patch_update_err(err: sqlx::Error) -> (StatusCode, String) {
+    if let sqlx::Error::Database(db) = &err {
+        if db.is_unique_violation() {
+            return (
+                StatusCode::CONFLICT,
+                "shopping item with the same name/unit already exists".into(),
+            );
+        }
+    }
+    internal_err(err)
 }
 
 fn normalize_unit_token(t: &str) -> Option<String> {
@@ -338,11 +343,10 @@ pub async fn create(
 ) -> AppResult<Json<ShoppingItemView>> {
     let text = new.text.trim();
     if text.is_empty() {
-        return Err(anyhow::anyhow!("empty shopping item").into());
+        return Err(StatusCode::BAD_REQUEST.into());
     }
 
-    let parsed = parse_item_line(text, ParseMode::Create)
-        .ok_or_else(|| anyhow::anyhow!("empty shopping item"))?;
+    let parsed = parse_item_line(text, ParseMode::Create).ok_or(StatusCode::BAD_REQUEST)?;
 
     // Structured path only if a leading qty was detected
     if parsed.qty.is_some() {
@@ -445,26 +449,41 @@ pub async fn patch_shopping_item(
         let parsed = parse_item_line(t, ParseMode::Patch)
             .ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
 
+        // Canonicalize units & quantities to match create/merge semantics
+        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
+
+        // If there's no real quantity, treat as unitless so it merges with plain items
+        if qty_norm.is_none() {
+            unit_norm = None;
+        }
+
+        // Recompute merge key
+        let key = make_key(&parsed.name_norm, unit_norm);
+
         if wrote {
             qb.push(", ");
         }
 
+        // Keep DB consistent with create(): store normalized name
         qb.push("name = ");
-        qb.push_bind(parsed.name_raw);
+        qb.push_bind(parsed.name_norm);
 
         qb.push(", quantity = ");
-        if let Some(q) = parsed.qty {
+        if let Some(q) = qty_norm {
             qb.push_bind(q);
         } else {
             qb.push("NULL");
         }
 
         qb.push(", unit = ");
-        if let Some(u) = parsed.unit {
+        if let Some(u) = unit_norm {
             qb.push_bind(u);
         } else {
             qb.push("NULL");
         }
+
+        qb.push(", key = ");
+        qb.push_bind(key);
 
         wrote = true;
     }
@@ -482,65 +501,10 @@ pub async fn patch_shopping_item(
         .build_query_as()
         .fetch_one(&state.pool)
         .await
-        .map_err(internal_err)?;
+        .map_err(patch_update_err)?;
 
     let dto = fetch_dto_by_id(&state, rid).await.map_err(internal_err)?;
     Ok(Json(dto))
-}
-
-/// PATCH /shopping/{id}
-///
-/// # Errors
-/// Err with `400` if no fields are provided to update.
-/// Err if updating or fetching the shopping item fails.
-pub async fn toggle_done(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(t): Json<UpdateItem>,
-) -> AppResult<Json<ShoppingItemView>> {
-    let mut sets: Vec<&'static str> = Vec::new();
-    let mut args = SqliteArguments::default();
-
-    if let Some(done) = t.done {
-        sets.push("done = ?");
-        args.add(i64::from(done))
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
-
-    if let Some(cat_raw) = t.category {
-        let cat_norm = crate::units::norm_whitespace(&cat_raw);
-        if cat_norm.is_empty() {
-            sets.push("category = NULL");
-        } else {
-            sets.push("category = ?");
-            args.add(cat_norm)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        }
-    }
-
-    if sets.is_empty() {
-        return Err(StatusCode::BAD_REQUEST.into());
-    }
-
-    let sql = format!(
-        r"
-        UPDATE shopping_items
-           SET {}
-         WHERE id = ?
-         RETURNING id
-        ",
-        sets.join(", ")
-    );
-
-    args.add(id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let (rid,): (i64,) = sqlx::query_as_with(&sql, args)
-        .fetch_one(&state.pool)
-        .await?;
-
-    let row = fetch_view_by_id(&state, rid).await?;
-    Ok(Json(row))
 }
 
 /// DELETE /shopping/{id}
