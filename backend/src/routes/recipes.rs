@@ -10,8 +10,8 @@ use sqlx::sqlite::SqliteArguments;
 use std::fmt::Write as _;
 use tracing::error;
 
-use crate::models::{AppState, Ingredient, NewRecipe, Recipe, RecipeRow, UpdateRecipe};
-use crate::{ingredient_parser::parse_ingredient_line, models::RecipeMacros};
+use crate::models::RecipeMacros;
+use crate::models::{AppState, NewRecipe, Recipe, RecipeRow, UpdateRecipe};
 
 use crate::error::AppResult;
 
@@ -173,12 +173,25 @@ pub async fn create(
     if new.title.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST.into());
     }
-    let structured: Vec<Ingredient> = new
-        .ingredients
-        .iter()
-        .map(|s| parse_ingredient_line(s))
-        .collect();
-    let ingredients_json = serde_json::to_string(&structured).unwrap_or_else(|_| "[]".into());
+
+    // Strict validation for object-only ingredients
+    for ing in &new.ingredients {
+        if ing.name.trim().is_empty() {
+            return Err(StatusCode::BAD_REQUEST.into());
+        }
+        if let Some(u) = ing.unit.as_deref() {
+            if u.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST.into());
+            }
+        }
+        if let Some(p) = ing.prep.as_deref() {
+            if p.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST.into());
+            }
+        }
+    }
+
+    let ingredients_json = serde_json::to_string(&new.ingredients).unwrap_or_else(|_| "[]".into());
     let instructions_json =
         serde_json::to_string(&new.instructions).unwrap_or_else(|_| "[]".into());
 
@@ -187,7 +200,7 @@ pub async fn create(
         INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions, created_at, updated_at)
         VALUES (?, ?, ?, ?, json(?), json(?), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING {RECIPE_COLS}
-        "#,
+        "#
     );
 
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
@@ -244,6 +257,7 @@ pub async fn update(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     }
+
     if let Some(source) = up.source {
         sets.push("source = ?");
         args.add(source).map_err(|e| {
@@ -251,6 +265,7 @@ pub async fn update(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     }
+
     if let Some(y) = up.r#yield {
         sets.push(r#""yield" = ?"#);
         args.add(y).map_err(|e| {
@@ -258,6 +273,7 @@ pub async fn update(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     }
+
     if let Some(notes) = up.notes {
         sets.push("notes = ?");
         args.add(notes).map_err(|e| {
@@ -266,11 +282,14 @@ pub async fn update(
         })?;
     }
 
-    if let Some(ing_lines) = up.ingredients.as_ref() {
-        let structured: Vec<Ingredient> =
-            ing_lines.iter().map(|s| parse_ingredient_line(s)).collect();
+    if let Some(ings) = up.ingredients {
+        for ing in &ings {
+            if ing.name.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST.into());
+            }
+        }
 
-        let s = serde_json::to_string(&structured).unwrap_or_else(|_| "[]".into());
+        let s = serde_json::to_string(&ings).unwrap_or_else(|_| "[]".into());
         sets.push("ingredients = json(?)");
         args.add(s).map_err(|e| {
             error!(?e, "arg add (ingredients) failed");
@@ -440,13 +459,17 @@ fn ingredient_lines(row: &RecipeRow) -> Vec<String> {
     row.ingredients
         .0
         .iter()
-        .map(|repr| match repr {
-            crate::models::IngredientRepr::O(i) => match (i.quantity, i.unit.as_deref()) {
-                (Some(q), Some(u)) if !u.is_empty() => format!("{q} {u} {}", i.name),
-                (Some(q), _) => format!("{q} {}", i.name),
+        .map(|i| {
+            let name = match i.prep.as_deref() {
+                Some(p) if !p.trim().is_empty() => format!("{}, {}", i.name, p.trim()),
                 _ => i.name.clone(),
-            },
-            crate::models::IngredientRepr::S(s) => s.clone(),
+            };
+
+            match (i.quantity, i.unit.as_deref()) {
+                (Some(q), Some(u)) if !u.is_empty() => format!("{q} {u} {name}"),
+                (Some(q), _) => format!("{q} {name}"),
+                _ => name,
+            }
         })
         .collect()
 }

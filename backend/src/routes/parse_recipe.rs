@@ -1,6 +1,7 @@
 use crate::error::AppResult;
 use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
 use crate::llm::LlmClient;
+use crate::models::Ingredient;
 use crate::{
     models::{AppState, NewRecipe, Recipe},
     routes::{parse_recipe_image::extract_main_image_url, recipes},
@@ -83,7 +84,7 @@ pub async fn import_from_url(
             &user,
             0.1,
             Duration::from_secs(120),
-            Some(500),
+            Some(5000),
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
@@ -218,7 +219,7 @@ impl ExtractRaw {
 }
 
 struct ExtractOut {
-    ingredients: Vec<String>,
+    ingredients: Vec<Ingredient>,
     instructions: Vec<String>,
 }
 
@@ -246,79 +247,51 @@ fn normalize_instructions(v: JsonValue) -> Vec<String> {
     }
 }
 
-fn normalize_ingredients(v: JsonValue) -> Vec<String> {
+fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
     match v {
         JsonValue::Array(items) => items
             .into_iter()
             .filter_map(|x| match x {
-                JsonValue::String(s) => {
-                    let t = s.trim().to_string();
-                    (!t.is_empty()).then_some(t)
-                }
                 JsonValue::Object(mut m) => {
                     let name = m
                         .remove("name")
                         .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
                         .unwrap_or_default();
+
                     if name.is_empty() {
                         return None;
                     }
-                    let q = m
+
+                    let quantity = m
                         .remove("quantity")
                         .or_else(|| m.remove("qty"))
                         .or_else(|| m.remove("amount"))
                         .and_then(|v| match v {
                             JsonValue::Number(n) => n.as_f64(),
-                            JsonValue::String(s) => s.trim().parse::<f64>().ok(),
+                            JsonValue::String(s) => s.trim().replace(',', ".").parse::<f64>().ok(),
                             _ => None,
                         });
+
                     let unit = m
                         .remove("unit")
                         .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
                         .filter(|s| !s.is_empty());
 
-                    Some(to_line(q, unit, name))
+                    let prep = m
+                        .remove("prep")
+                        .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty());
+
+                    Some(Ingredient {
+                        quantity,
+                        unit,
+                        name,
+                        prep,
+                    })
                 }
-                _ => None,
+                _ => None, // NO STRINGS ACCEPTED
             })
             .collect(),
-        JsonValue::String(s) => s
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(std::string::ToString::to_string)
-            .collect(),
         _ => Vec::new(),
-    }
-}
-
-fn to_line(q: Option<f64>, unit: Option<String>, name: String) -> String {
-    fn trim_zeros(mut s: String) -> String {
-        if s.contains('.') {
-            while s.ends_with('0') {
-                s.pop();
-            }
-            if s.ends_with('.') {
-                s.pop();
-            }
-        }
-        s
-    }
-    match (q, unit) {
-        (Some(v), Some(u)) if !u.is_empty() => {
-            let s = if u == "g" || u == "ml" {
-                v.round().to_string()
-            } else if u == "kg" || u == "L" {
-                trim_zeros(format!("{v:.2}"))
-            } else {
-                trim_zeros(format!("{}", ((v * 100.0).round() / 100.0)))
-            };
-            format!("{s} {u} {name}")
-        }
-        (Some(v), None) => {
-            let s = trim_zeros(format!("{}", ((v * 100.0).round() / 100.0)));
-            format!("{s} {name}")
-        }
-        _ => name,
     }
 }

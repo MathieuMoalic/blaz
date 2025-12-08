@@ -13,7 +13,6 @@ mod db;
 mod error;
 mod html;
 mod image_io;
-mod ingredient_parser;
 mod llm;
 mod logging;
 mod models;

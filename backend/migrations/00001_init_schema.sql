@@ -58,37 +58,62 @@ CREATE TABLE IF NOT EXISTS settings (
 
 INPUT: plain text from a recipe page (any language).
 OUTPUT: STRICT JSON with exactly these keys:
-{"ingredients":[{"quantity":null|number,"unit":null|"g"|"kg"|"ml"|"L"|"tsp"|"tbsp","name":string}], "instructions":[]}
+{
+  "title": string,
+  "ingredients": [
+    {
+      "quantity": null | number,
+      "unit": null | "g" | "kg" | "ml" | "L" | "tsp" | "tbsp",
+      "name": string,
+      "prep": null | string
+    }
+  ],
+  "instructions": [string]
+}
 
 TASK:
 - Translate to English.
+- Extract a clean, concise title.
 - Convert ALL imperial units to metric in the INGREDIENTS.
-  * Allowed units in ingredients: g, kg, ml, L, tsp, tbsp.
+  * Allowed units: g, kg, ml, L, tsp, tbsp.
   * Never use: cup, cups, oz, ounce, ounces, fl oz, pound, lb.
   * Keep tsp and tbsp abbreviations as written (do not spell out).
-- For solid items, convert oz→g (1 oz ≈ 28 g). For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml). For cups→ml (1 cup ≈ 240 ml).
-- If an ingredient has prep words (e.g., sliced, diced, minced), put them AFTER the ingredient name, separated by ", " (comma + space).
-  Example: "2 carrots, diced".
+- For solid items, convert oz→g (1 oz ≈ 28 g).
+  For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml).
+  For cups→ml (1 cup ≈ 240 ml).
+- If an ingredient has preparation words (e.g., sliced, diced, minced, grated, softened),
+  place them ONLY in the "prep" field.
+  Example:
+    {"quantity":2,"unit":null,"name":"carrots","prep":"diced"}
+- The "name" field must NOT contain prep words.
 - If data is missing, return an empty array for that key.
 - Do NOT include commentary or extra keys.
-- When a quantity is a range, replace the range with the mean value of the range.
+- When a quantity is a range, replace the range with the mean value.
 - Round quantities sensibly.
 - Use 0.5/0.25/0.75 style; never 1/2, 1/4, etc.
-- If no numeric quantity, set "quantity": null and "unit": null, keep the name.
-- instructions: array of steps (strings). No commentary.
+- If no numeric quantity, set "quantity": null and "unit": null.
+- "instructions": array of steps (strings). No commentary.
+- Remove all mentions of "Vegan" inside the title.
 
-FORMAT EXAMPLES:
-{"ingredients":[
-  {"quantity":2,"unit":null,"name":"cloves garlic, minced"},
-  {"quantity":150,"unit":"g","name":"flour"},
-  {"quantity":2,"unit":null,"name":"carrots, diced"}
-],"instructions":[
-  "Cook the garlic.",
-  "Fold in flour."
-]}
+FORMAT EXAMPLE:
+{
+  "title": "Carrot Soup",
+  "ingredients": [
+    {"quantity":2,"unit":null,"name":"carrots","prep":"diced"},
+    {"quantity":150,"unit":"g","name":"flour","prep":null},
+    {"quantity":2,"unit":null,"name":"cloves garlic","prep":"minced"}
+  ],
+  "instructions": [
+    "Cook the garlic.",
+    "Fold in flour."
+  ]
+}
 
 SELF-CHECK:
-Before answering, verify no banned units appear in INGREDIENTS. If any do, fix them and re-check. Answer only with the final JSON.',
+Before answering, verify no banned units appear in "unit".
+Verify "name" does not contain comma-prep fragments.
+Answer only with the final JSON.
+',
   system_prompt_macros  TEXT NOT NULL DEFAULT 'You are a precise nutrition estimator.
 
 Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
@@ -115,4 +140,19 @@ CREATE INDEX IF NOT EXISTS idx_recipes_updated_at ON recipes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_meal_plan_day ON meal_plan(day);
 CREATE INDEX IF NOT EXISTS users_email_idx ON users(email);
 CREATE INDEX IF NOT EXISTS shopping_items_category_idx ON shopping_items(category);
+
+CREATE VIEW IF NOT EXISTS shopping_items_view AS
+SELECT
+  id,
+  CASE
+    WHEN quantity IS NOT NULL AND unit IS NOT NULL AND unit <> ''
+      THEN TRIM(printf('%g', quantity)) || ' ' || unit || ' ' || name
+    WHEN quantity IS NOT NULL
+      THEN TRIM(printf('%g', quantity)) || ' ' || name
+    ELSE name
+  END AS text,
+  done,
+  category
+FROM shopping_items;
+
 

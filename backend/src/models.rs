@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::Config;
-use crate::ingredient_parser::parse_ingredient_line;
 
 /* ---------- App state ---------- */
 #[derive(Clone)]
@@ -35,14 +34,7 @@ pub struct Ingredient {
     pub quantity: Option<f64>, // e.g. 120.0
     pub unit: Option<String>,  // "g","kg","ml","L","tsp","tbsp" (normalized)
     pub name: String,          // "flour"
-}
-
-/* Accept either a string OR the structured object when reading existing rows */
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(untagged)]
-pub enum IngredientRepr {
-    S(String),
-    O(Ingredient),
+    pub prep: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -81,7 +73,7 @@ pub struct NewRecipe {
     #[serde(default)]
     pub notes: String,
     #[serde(default)]
-    pub ingredients: Vec<String>,
+    pub ingredients: Vec<Ingredient>,
     #[serde(default)]
     pub instructions: Vec<String>,
 }
@@ -93,7 +85,7 @@ pub struct UpdateRecipe {
     #[serde(rename = "yield")]
     pub r#yield: Option<String>,
     pub notes: Option<String>,
-    pub ingredients: Option<Vec<String>>,
+    pub ingredients: Option<Vec<Ingredient>>,
     pub instructions: Option<Vec<String>>,
 }
 
@@ -110,7 +102,7 @@ pub struct RecipeRow {
     pub created_at: String,
     pub updated_at: String,
     // IMPORTANT: let rows load even if they still have ["2 carrots", ...]
-    pub ingredients: Json<Vec<IngredientRepr>>,
+    pub ingredients: Json<Vec<Ingredient>>,
     pub instructions: Json<Vec<String>>,
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
@@ -119,17 +111,6 @@ pub struct RecipeRow {
 
 impl From<RecipeRow> for Recipe {
     fn from(r: RecipeRow) -> Self {
-        // normalize DB payload (strings or structured) into structured vector
-        let ingredients = r
-            .ingredients
-            .0
-            .into_iter()
-            .map(|x| match x {
-                IngredientRepr::O(o) => o,
-                IngredientRepr::S(s) => parse_ingredient_line(&s),
-            })
-            .collect();
-
         Self {
             id: r.id,
             title: r.title,
@@ -138,7 +119,7 @@ impl From<RecipeRow> for Recipe {
             notes: r.notes,
             created_at: r.created_at,
             updated_at: r.updated_at,
-            ingredients,
+            ingredients: r.ingredients.0,
             instructions: r.instructions.0,
             image_path_full: r.image_path_full,
             image_path_small: r.image_path_small,
