@@ -3,6 +3,7 @@ pub mod db;
 pub mod error;
 pub mod image_io;
 pub mod ingredient_parser;
+pub mod llm;
 pub mod logging;
 pub mod models;
 pub mod routes;
