@@ -124,9 +124,7 @@ Future<Set<int>?> showRecipePickerSheet({
                                 const Divider(height: 1),
                             itemBuilder: (_, i) {
                               final r = filtered[i];
-                              final thumb = mediaUrl(
-                                r.imagePathSmall ?? r.imagePathFull,
-                              );
+                              final thumb = mediaUrl(r.imagePathSmall);
                               final checked = selected.contains(r.id);
                               return ListTile(
                                 onTap: () => toggle(r.id),

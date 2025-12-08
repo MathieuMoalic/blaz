@@ -26,7 +26,7 @@ class Auth {
     _token = webstore.read('auth_token');
     api.setAuthToken(_token);
     try {
-      allowRegistration = await api.serverAllowsRegistration();
+      allowRegistration = await serverAllowsRegistration();
     } catch (_) {
       allowRegistration = true;
     }

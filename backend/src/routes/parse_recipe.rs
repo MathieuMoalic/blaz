@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use crate::{
     models::{AppState, NewRecipe, Recipe},
@@ -257,56 +257,20 @@ async fn try_fetch_and_attach_image(
 ) -> anyhow::Result<()> {
     if let Some(img_url) = extract_main_image_url(html, page_url) {
         let client = reqwest::Client::new();
-        let resp = client
-            .get(&img_url)
-            .timeout(Duration::from_secs(40))
-            .send()
-            .await?;
-        if !resp.status().is_success() {
-            anyhow::bail!("image HTTP {}", resp.status());
-        }
 
-        // Clone content-type into an owned String BEFORE consuming the response
-        let ct: String = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        // Download + generate stable full + small images under:
+        //   media/recipes/<id>/full.webp
+        //   media/recipes/<id>/small.webp
+        let (rel_full, rel_small) =
+            recipes::fetch_and_store_recipe_image(&client, &img_url, state, recipe_id).await?;
 
-        if !ct.starts_with("image/") {
-            anyhow::bail!("not an image content-type: {}", ct);
-        }
-
-        // Now it's safe to consume the response
-        let bytes = resp.bytes().await?;
-        if bytes.is_empty() {
-            anyhow::bail!("empty image body");
-        }
-
-        let ext = guess_ext(&ct).unwrap_or_else(|| guess_ext_from_url(&img_url).unwrap_or("jpg"));
-
-        let rel_dir = format!("recipes/{}", recipe_id);
-        let full_name = format!("full.{}", ext);
-        let rel_full = format!("{}/{}", rel_dir, full_name);
-
-        let media_root = PathBuf::from(&state.config.media_dir);
-        let dir = media_root.join(&rel_dir);
-        tokio::fs::create_dir_all(&dir).await?;
-        let full_path = media_root.join(&rel_full);
-        tokio::fs::write(&full_path, &bytes).await?;
-
-        // For now, point "small" to the same file
-        let rel_small = rel_full.clone();
-
-        // Update DB paths
         sqlx::query(
             r#"
-            UPDATE recipes
-               SET image_path_small = ?,
-                   image_path_full  = ?
-             WHERE id = ?
-            "#,
+        UPDATE recipes
+           SET image_path_small = ?,
+               image_path_full  = ?
+         WHERE id = ?
+        "#,
         )
         .bind(&rel_small)
         .bind(&rel_full)
@@ -318,35 +282,6 @@ async fn try_fetch_and_attach_image(
     }
 
     anyhow::bail!("no image candidate found by extract_main_image_url")
-}
-
-fn guess_ext(ct: &str) -> Option<&'static str> {
-    match ct.split(';').next().unwrap_or("").trim() {
-        "image/jpeg" => Some("jpg"),
-        "image/jpg" => Some("jpg"),
-        "image/png" => Some("png"),
-        "image/webp" => Some("webp"),
-        "image/avif" => Some("avif"),
-        "image/gif" => Some("gif"),
-        _ => None,
-    }
-}
-
-fn guess_ext_from_url(u: &str) -> Option<&'static str> {
-    let lower = u.to_lowercase();
-    for (needle, ext) in [
-        (".jpg", "jpg"),
-        (".jpeg", "jpg"),
-        (".png", "png"),
-        (".webp", "webp"),
-        (".avif", "avif"),
-        (".gif", "gif"),
-    ] {
-        if lower.contains(needle) {
-            return Some(ext);
-        }
-    }
-    None
 }
 
 /* =========================

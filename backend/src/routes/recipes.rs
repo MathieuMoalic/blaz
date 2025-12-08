@@ -158,20 +158,22 @@ pub async fn fetch_and_store_recipe_image(
         tokio::task::spawn_blocking(move || -> io::Result<(Vec<u8>, Vec<u8>)> {
             let img = image::load_from_memory(&bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("decode error: {e}")))?;
-
             crate::image_io::to_full_and_thumb_webp(&img)
         })
         .await??;
 
-    // 3) write files
-    tokio::fs::create_dir_all(&state.config.media_dir).await?;
-    let uid = uuid::Uuid::new_v4();
-    let full_name = format!("recipe_{recipe_id}_{uid}.webp");
-    let thumb_name = format!("recipe_{recipe_id}_{uid}_sm.webp");
-    tokio::fs::write(state.config.media_dir.join(&full_name), &full_webp).await?;
-    tokio::fs::write(state.config.media_dir.join(&thumb_name), &thumb_webp).await?;
+    // 3) write files into a stable per-recipe directory
+    let rel_dir = format!("recipes/{recipe_id}");
+    let rel_full = format!("{rel_dir}/full.webp");
+    let rel_small = format!("{rel_dir}/small.webp");
 
-    Ok((full_name, thumb_name))
+    let abs_dir = state.config.media_dir.join(&rel_dir);
+    tokio::fs::create_dir_all(&abs_dir).await?;
+
+    tokio::fs::write(abs_dir.join("full.webp"), &full_webp).await?;
+    tokio::fs::write(abs_dir.join("small.webp"), &thumb_webp).await?;
+
+    Ok((rel_full, rel_small))
 }
 
 pub async fn upload_image(
@@ -179,8 +181,6 @@ pub async fn upload_image(
     Path(id): Path<i64>,
     mut multipart: Multipart,
 ) -> AppResult<Json<Recipe>> {
-    use uuid::Uuid;
-
     // 1) Pull the file bytes (accept "image" or "file")
     let mut bytes: Option<Vec<u8>> = None;
     while let Some(field) = multipart.next_field().await? {
@@ -208,14 +208,15 @@ pub async fn upload_image(
     };
 
     // 2) Ensure media dir
-    tokio::fs::create_dir_all(&state.config.media_dir).await?;
+    let rel_dir = format!("recipes/{id}");
+    let abs_dir = state.config.media_dir.join(&rel_dir);
+    tokio::fs::create_dir_all(&abs_dir).await?;
 
-    // 3) Build filenames (always .webp)
-    let uid = Uuid::new_v4();
-    let full_name = format!("recipe_{id}_{uid}.webp");
-    let thumb_name = format!("recipe_{id}_{uid}_sm.webp");
-    let full_abs = state.config.media_dir.join(&full_name);
-    let thumb_abs = state.config.media_dir.join(&thumb_name);
+    // 3) Stable filenames (always .webp)
+    let rel_full = format!("{rel_dir}/full.webp");
+    let rel_small = format!("{rel_dir}/small.webp");
+    let full_abs = abs_dir.join("full.webp");
+    let thumb_abs = abs_dir.join("small.webp");
 
     // 4) Heavy work off the async thread: decode, resize, encode to WebP
     let (full_webp, thumb_webp): (Vec<u8>, Vec<u8>) =
@@ -242,8 +243,8 @@ pub async fn upload_image(
          WHERE id = ?
         "#,
     )
-    .bind(&full_name)
-    .bind(&thumb_name)
+    .bind(&rel_full)
+    .bind(&rel_small)
     .bind(id)
     .execute(&state.pool)
     .await?;
