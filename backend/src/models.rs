@@ -173,17 +173,6 @@ pub struct ShoppingItemView {
     pub category: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, FromRow, Clone)]
-pub struct ShoppingItem {
-    pub id: i64,
-    pub name: Option<String>,
-    pub unit: Option<String>,
-    pub quantity: Option<f64>,
-    pub key: Option<String>,
-    pub done: i64, // 0/1
-    pub category: Option<String>,
-}
-
 #[derive(Deserialize)]
 pub struct NewItem {
     pub text: String,

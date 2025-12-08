@@ -50,10 +50,6 @@ pub struct MergeReq {
     pub items: Vec<InIngredient>,
 }
 
-// PATCH helper body (kept local)
-#[derive(Deserialize, Debug, Default)]
-pub struct UpdateItem {}
-
 #[derive(Debug, Clone)]
 pub struct ParsedItem {
     pub qty: Option<f64>,
