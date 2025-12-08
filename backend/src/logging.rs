@@ -42,9 +42,8 @@ pub fn init_logging(config: &Config) -> LogGuards {
             "%Y-%m-%d %H:%M:%S".to_string(),
         ));
 
-    // Optional file layer (ANSI disabled)
+    // File layer (ANSI disabled)
     let (file_layer, guard) = {
-        // Works whether `log_file` is a `PathBuf` or a `&Path`
         let path: &Path = config.log_file.as_ref();
 
         let (dir, file) = split_path(path);
@@ -79,9 +78,16 @@ pub fn init_logging(config: &Config) -> LogGuards {
 /// One-line access log.
 /// 2xx/3xx -> INFO
 /// 4xx/5xx -> ERROR (so stdout shows red by default ANSI level colors)
+///
+/// Includes query string.
 pub async fn access_log(request: Request<Body>, next: Next) -> Response<Body> {
     let method = request.method().clone();
-    let path = request.uri().path().to_string();
+
+    // Clone the URI so we don't hold a borrow on `request`
+    let uri = request.uri().clone();
+    let path = uri
+        .path_and_query()
+        .map_or_else(|| uri.path().to_string(), |pq| pq.as_str().to_string());
 
     let res = next.run(request).await;
     let status = res.status().as_u16();
@@ -89,7 +95,7 @@ pub async fn access_log(request: Request<Body>, next: Next) -> Response<Body> {
     // Padding for a slightly nicer aligned look
     let msg = format!("{method:<6} {path:<40} {status}");
 
-    if let 400..=599 = status {
+    if (400..=599).contains(&status) {
         tracing::error!("{msg}");
     } else {
         tracing::info!("{msg}");
@@ -103,6 +109,8 @@ pub async fn access_log(request: Request<Body>, next: Next) -> Response<Body> {
 /// Includes request-id for correlation.
 ///
 /// These logs are DEBUG so default verbosity stays clean.
+///
+/// Includes path+query in the structured fields.
 pub async fn log_payloads(request: Request<Body>, next: Next) -> Response<Body> {
     // Capture request-id (inserted by SetRequestIdLayer)
     let request_id = request
@@ -111,6 +119,12 @@ pub async fn log_payloads(request: Request<Body>, next: Next) -> Response<Body> 
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-")
         .to_string();
+
+    // Capture path + query without borrowing `request` across moves
+    let uri = request.uri().clone();
+    let path = uri
+        .path_and_query()
+        .map_or_else(|| uri.path().to_string(), |pq| pq.as_str().to_string());
 
     // Decide if we log the request body (avoid multipart)
     let request_ct = request
@@ -135,11 +149,23 @@ pub async fn log_payloads(request: Request<Body>, next: Next) -> Response<Body> 
                 } else {
                     String::from_utf8_lossy(&bytes).to_string()
                 };
-                tracing::debug!(request_id = %request_id, request_body = %preview, "request body");
+
+                tracing::debug!(
+                    request_id = %request_id,
+                    path = %path,
+                    request_body = %preview,
+                    "request body"
+                );
+
                 Request::from_parts(request_parts, Body::from(bytes))
             }
             Err(e) => {
-                tracing::warn!(request_id = %request_id, error = %e, "failed reading request body");
+                tracing::warn!(
+                    request_id = %request_id,
+                    path = %path,
+                    error = %e,
+                    "failed reading request body"
+                );
                 Request::from_parts(request_parts, Body::empty())
             }
         }
@@ -171,15 +197,23 @@ pub async fn log_payloads(request: Request<Body>, next: Next) -> Response<Body> 
                 } else {
                     String::from_utf8_lossy(&bytes).to_string()
                 };
+
                 tracing::debug!(
                     request_id = %request_id,
+                    path = %path,
                     response_body = %preview,
                     "response body"
                 );
+
                 Response::from_parts(response_parts, Body::from(bytes))
             }
             Err(e) => {
-                tracing::warn!(request_id = %request_id, error = %e, "failed reading response body");
+                tracing::warn!(
+                    request_id = %request_id,
+                    path = %path,
+                    error = %e,
+                    "failed reading response body"
+                );
                 Response::from_parts(response_parts, Body::empty())
             }
         }
