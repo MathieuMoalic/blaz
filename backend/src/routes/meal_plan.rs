@@ -2,6 +2,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::{
@@ -61,7 +62,7 @@ pub async fn assign(
         .await?;
 
     // 2) Insert into meal_plan including the title (NOT NULL)
-    let row: MealPlanEntry = sqlx::query_as::<_, MealPlanEntry>(
+    let resp = sqlx::query_as::<_, MealPlanEntry>(
         r"
         INSERT INTO meal_plan (day, recipe_id, title)
         VALUES (?, ?, ?)
@@ -72,7 +73,19 @@ pub async fn assign(
     .bind(req.recipe_id)
     .bind(&title)
     .fetch_one(&state.pool)
-    .await?;
+    .await;
+
+    let row = match resp {
+        Ok(row) => row,
+        Err(e) => {
+            if let sqlx::Error::Database(db) = &e {
+                if db.is_unique_violation() {
+                    return Err(StatusCode::CONFLICT.into());
+                }
+            }
+            return Err(e.into());
+        }
+    };
 
     Ok(Json(row))
 }
