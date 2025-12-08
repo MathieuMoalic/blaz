@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod html;
 pub mod image_io;
 pub mod ingredient_parser;
 pub mod llm;
