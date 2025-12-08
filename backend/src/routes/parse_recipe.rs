@@ -1,18 +1,17 @@
+use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
+use crate::llm::LlmClient;
+use crate::{
+    models::{AppState, NewRecipe, Recipe},
+    routes::{parse_recipe_image::extract_main_image_url, recipes},
+};
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value as JsonValue, json};
-use std::{sync::LazyLock, time::Duration};
-
-use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
-use crate::{
-    models::{AppState, NewRecipe, Recipe},
-    routes::{parse_recipe_image::extract_main_image_url, recipes},
-};
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
+use std::time::Duration;
 
 /* =========================
  * Request DTO
@@ -79,8 +78,18 @@ pub async fn import_from_url(
     );
 
     // 4) Call LLM -> JSON
-    let client = reqwest::Client::new();
-    let llm_json = call_llm_json(&client, base, &token, model, system, &user)
+    let http = reqwest::Client::new();
+    let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
+
+    let llm_json = llm
+        .chat_json(
+            &http,
+            system,
+            &user,
+            0.1,
+            Duration::from_secs(120),
+            Some(500),
+        )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
 
@@ -188,143 +197,6 @@ async fn try_fetch_and_attach_image(
 
     anyhow::bail!("no image candidate found by extract_main_image_url")
 }
-
-/* =========================
- * LLM call + JSON extract
- * ========================= */
-
-fn extract_json_object(s: &str) -> Option<String> {
-    static FENCE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap());
-    if let Some(c) = FENCE.captures(s) {
-        return Some(c[1].to_string());
-    }
-
-    // Fallback: largest balanced {...}
-    let mut best: Option<(usize, usize)> = None;
-    let mut depth = 0usize;
-    let mut start = None;
-
-    for (i, ch) in s.char_indices() {
-        match ch {
-            '{' => {
-                depth += 1;
-                if depth == 1 {
-                    start = Some(i);
-                }
-            }
-            '}' => {
-                if depth > 0 {
-                    depth -= 1;
-                    if depth == 0 {
-                        if let Some(st) = start {
-                            let cand = (st, i);
-                            if best.map_or_else(|| true, |(a, b)| (b - a) < (cand.1 - cand.0)) {
-                                best = Some(cand);
-                            }
-                        }
-                        start = None;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    best.map(|(a, b)| s[a..=b].to_string())
-}
-
-/// # Errors
-///
-/// Err if request fails or if json is not parsable
-pub async fn call_llm_json(
-    client: &reqwest::Client,
-    base: &str,
-    token: &str,
-    model: &str,
-    system: &str,
-    user: &str,
-) -> Result<JsonValue, String> {
-    #[derive(Serialize)]
-    struct Msg<'a> {
-        role: &'a str,
-        content: &'a str,
-    }
-    #[derive(Serialize)]
-    struct Body<'a> {
-        model: &'a str,
-        messages: Vec<Msg<'a>>,
-        temperature: f32,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        response_format: Option<JsonValue>,
-    }
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-
-    let body = Body {
-        model,
-        messages: vec![
-            Msg {
-                role: "system",
-                content: system,
-            },
-            Msg {
-                role: "user",
-                content: user,
-            },
-        ],
-        temperature: 0.1,
-        response_format: Some(json!({ "type": "json_object" })), // OpenAI/OpenRouter-style
-    };
-
-    let resp = client
-        .post(&url)
-        .bearer_auth(token)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .timeout(Duration::from_secs(120))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("sending LLM request: {e}"))?;
-
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-
-    if status != reqwest::StatusCode::OK {
-        return Err(format!("LLM HTTP {status}: {text}"));
-    }
-
-    let envelope: JsonValue =
-        serde_json::from_str(&text).map_err(|e| format!("decoding LLM envelope: {e}"))?;
-
-    let content = envelope
-        .pointer("/choices/0/message/content")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            envelope
-                .get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c0| c0.get("text"))
-                .and_then(|v| v.as_str())
-        })
-        .ok_or_else(|| "LLM response missing content".to_string())?;
-
-    if let Ok(js) = serde_json::from_str::<JsonValue>(content) {
-        return Ok(js);
-    }
-
-    if let Some(json_s) = extract_json_object(content) {
-        let js = serde_json::from_str::<JsonValue>(&json_s)
-            .map_err(|e| format!("parsing extracted JSON: {e}"))?;
-        return Ok(js);
-    }
-
-    let preview = if content.len() > 500 {
-        &content[..500]
-    } else {
-        content
-    };
-    Err(format!("LLM did not return valid JSON. Preview: {preview}"))
-}
-
 /* =========================
  * Tolerant normalization (+ optional title)
  * ========================= */

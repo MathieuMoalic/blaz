@@ -1,3 +1,4 @@
+use crate::llm::LlmClient;
 use axum::{
     Json,
     extract::{Multipart, Path, State},
@@ -39,72 +40,6 @@ async fn store_recipe_image_bytes(
     tokio::fs::write(abs_dir.join("small.webp"), &thumb_webp).await?;
 
     Ok((rel_full, rel_small))
-}
-
-async fn call_llm_json(
-    client: &reqwest::Client,
-    base: &str,
-    token: &str,
-    model: &str,
-    system: &str,
-    user: &str,
-) -> anyhow::Result<serde_json::Value> {
-    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-    #[derive(Deserialize)]
-    struct ChoiceMsg {
-        content: String,
-    }
-    #[derive(Deserialize)]
-    struct Choice {
-        message: ChoiceMsg,
-    }
-    #[derive(Deserialize)]
-    struct ChatResp {
-        choices: Vec<Choice>,
-    }
-
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ],
-        "temperature": 0.1,
-        "max_tokens": 500,
-        "response_format": {"type":"json_object"}
-    });
-
-    let mut req = client
-        .post(format!("{base}/chat/completions"))
-        .header(CONTENT_TYPE, "application/json");
-
-    if !token.is_empty() {
-        req = req.header(AUTHORIZATION, format!("Bearer {token}"));
-    }
-
-    let resp = req.json(&body).send().await?;
-    let status = resp.status();
-    let text = resp.text().await?;
-    if !status.is_success() {
-        anyhow::bail!("llm router {status}: {text}");
-    }
-
-    let parsed: ChatResp = serde_json::from_str(&text)?;
-    let content = parsed
-        .choices
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("no choices"))?
-        .message
-        .content
-        .trim()
-        .to_string();
-
-    // Try parse as JSON straight; if model wrapped extra text, attempt to extract first {...}
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-        return Ok(val);
-    }
-
-    anyhow::bail!("model did not return JSON: {content}")
 }
 
 /// Keep SELECT/RETURNING columns in one place to avoid drift with structs.
@@ -530,17 +465,28 @@ async fn call_and_parse_macros_llm(
     user: &str,
     basis: &'static str,
 ) -> AppResult<RecipeMacros> {
+    #[allow(clippy::struct_field_names)]
     #[derive(Deserialize)]
     struct LlmOutGrams {
-        protein: f64,
-        fat: f64,
-        carbs: f64,
+        protein_g: f64,
+        fat_g: f64,
+        carbs_g: f64,
     }
     let base = &st.llm_api_url;
     let token = st.llm_api_key.clone().unwrap_or_default();
     let model = &st.llm_model;
 
-    let val = call_llm_json(client, base, &token, model, sys, user)
+    let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
+
+    let val = llm
+        .chat_json(
+            client,
+            sys,
+            user,
+            0.1,
+            std::time::Duration::from_secs(25),
+            Some(500),
+        )
         .await
         .map_err(|e| {
             error!(?e, "LLM call failed");
@@ -554,9 +500,9 @@ async fn call_and_parse_macros_llm(
 
     Ok(RecipeMacros {
         basis: basis.to_string(),
-        protein_g: round1(parsed.protein),
-        fat_g: round1(parsed.fat),
-        carbs_g: round1(parsed.carbs),
+        protein_g: round1(parsed.protein_g),
+        fat_g: round1(parsed.fat_g),
+        carbs_g: round1(parsed.carbs_g),
     })
 }
 
