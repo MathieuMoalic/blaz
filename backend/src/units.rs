@@ -4,6 +4,27 @@ use std::sync::LazyLock;
 pub static SERVINGS_NUM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(\d+(?:[.,]\d+)?)(?:\s*[–-]\s*(\d+(?:[.,]\d+)?))?").unwrap());
 
+pub static BARE_NUM_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?ix)^\s*(\d+(?:[.,]\d+)?)(?:\s*[–-]\s*(\d+(?:[.,]\d+)?))?\s*$").unwrap()
+});
+
+pub static SERVINGS_HINT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?ix)\b(serves?|servings?|portion(?:s)?|people|persons?|pax|makes?)\b").unwrap()
+});
+
+pub static NON_SERVING_YIELD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)\b(
+            g|gram(?:s)?|kg|kilogram(?:s)?|
+            ml|milliliter(?:s)?|millilitre(?:s)?|
+            l|liter(?:s)?|litre(?:s)?|
+            oz|ounce(?:s)?|lb|pound(?:s)?|
+            tsp|tbsp|cup(?:s)?|
+            loaf(?:s)?|slice(?:s)?|piece(?:s)?|pcs
+        )\b",
+    )
+    .unwrap()
+});
 #[inline]
 #[must_use]
 pub fn canon_unit_str(u: &str) -> Option<&'static str> {

@@ -323,8 +323,32 @@ pub async fn update(
 /* ---------- Estimate & store macros ---------- */
 
 fn servings_from_yield(y: &str) -> Option<f64> {
-    let y = y.replace(',', ".");
-    if let Some(cap) = crate::units::SERVINGS_NUM_RE.captures(&y) {
+    let y = y.trim();
+    if y.is_empty() {
+        return None;
+    }
+
+    // Normalize decimals
+    let y_norm = y.replace(',', ".");
+    let y_lower = y_norm.to_ascii_lowercase();
+
+    // Reject obvious non-serving yields, e.g. "500 g", "1 loaf"
+    if crate::units::NON_SERVING_YIELD_RE.is_match(&y_lower) {
+        return None;
+    }
+
+    // Allow if:
+    // - the whole string is just a number/range
+    // - OR it contains a servings hint ("serves", "people", "portions", "makes", ...)
+    let looks_bare = crate::units::BARE_NUM_RANGE_RE.is_match(&y_lower);
+    let has_hint = crate::units::SERVINGS_HINT_RE.is_match(&y_lower);
+
+    if !looks_bare && !has_hint {
+        return None;
+    }
+
+    // Extract first number/range using existing regex
+    if let Some(cap) = crate::units::SERVINGS_NUM_RE.captures(&y_norm) {
         let a: f64 = cap.get(1)?.as_str().parse().ok()?;
         if let Some(bm) = cap.get(2) {
             let b: f64 = bm.as_str().parse().ok()?;
@@ -332,6 +356,7 @@ fn servings_from_yield(y: &str) -> Option<f64> {
         }
         return Some(a);
     }
+
     None
 }
 

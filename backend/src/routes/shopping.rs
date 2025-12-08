@@ -48,7 +48,6 @@ pub struct UpdateItem {}
 pub struct ParsedItem {
     pub qty: Option<f64>,
     pub unit: Option<String>, // normalized short unit, e.g. "g","kg","ml","L","tsp","tbsp"
-    pub name_raw: String,     // what we’d store in DB as name if parsing succeeded
     pub name_norm: String,    // normalized for merge key/category
 }
 
@@ -124,7 +123,6 @@ fn parse_item_line(raw: &str, _mode: ParseMode) -> Option<ParsedItem> {
         return Some(ParsedItem {
             qty: None,
             unit: None,
-            name_raw,
             name_norm,
         });
     }
@@ -153,7 +151,6 @@ fn parse_item_line(raw: &str, _mode: ParseMode) -> Option<ParsedItem> {
         return Some(ParsedItem {
             qty: None,
             unit: None,
-            name_raw,
             name_norm,
         });
     }
@@ -164,7 +161,6 @@ fn parse_item_line(raw: &str, _mode: ParseMode) -> Option<ParsedItem> {
     Some(ParsedItem {
         qty,
         unit,
-        name_raw,
         name_norm,
     })
 }
@@ -539,7 +535,6 @@ pub async fn merge_items(
             parse_item_line(&it.name, ParseMode::Merge).unwrap_or_else(|| ParsedItem {
                 qty: None,
                 unit: None,
-                name_raw: it.name.clone(),
                 name_norm: normalize_name(&it.name),
             });
 
