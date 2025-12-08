@@ -1,3 +1,4 @@
+use crate::error::AppResult;
 use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
 use crate::llm::LlmClient;
 use crate::{
@@ -25,31 +26,25 @@ pub struct ImportFromUrlReq {
     pub model: Option<String>,
 }
 
-/* =========================
- * Handler
- * ========================= */
-
 /// # Errors
 ///
 /// Err if we can't fetch from the url
 pub async fn import_from_url(
     State(state): State<AppState>,
     Json(req): Json<ImportFromUrlReq>,
-) -> Result<Json<Recipe>, (StatusCode, String)> {
+) -> AppResult<Json<Recipe>> {
     const MAX_CHARS: usize = 12_000;
-    // 1) Fetch page HTML and convert to plain text (also return raw html)
+
     let (title_guess_raw, text, html) = fetch_page_text(&req.url)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("fetch failed: {e}")))?;
 
-    // Clean the HTML title (remove branding & adjectives)
     let title_guess = clean_title(&title_guess_raw);
 
     if text.trim().is_empty() {
-        return Err((StatusCode::BAD_GATEWAY, "page has no readable text".into()));
+        return Err((StatusCode::BAD_GATEWAY, "page has no readable text".into()).into());
     }
 
-    // 2) Read runtime LLM settings
     let settings = state.settings.read().await.clone();
 
     let token = settings.llm_api_key.clone().unwrap_or_default();
@@ -57,19 +52,20 @@ pub async fn import_from_url(
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             "LLM API key is not configured (set it in /app-state)".into(),
-        ));
+        )
+            .into());
     }
 
     let model = req.model.as_deref().unwrap_or(&settings.llm_model);
     let base = settings.llm_api_url.as_str();
     let system = settings.system_prompt_import.as_str();
 
-    // 3) Compact user message
     let excerpt = if text.len() > MAX_CHARS {
         &text[..MAX_CHARS]
     } else {
         &text
     };
+
     let user = format!(
         "URL: {url}\nTITLE: {title}\n\nCONTENT:\n{content}",
         url = req.url,
@@ -77,7 +73,6 @@ pub async fn import_from_url(
         content = excerpt
     );
 
-    // 4) Call LLM -> JSON
     let http = reqwest::Client::new();
     let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
 
@@ -93,7 +88,6 @@ pub async fn import_from_url(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
 
-    // 5) Normalize (and capture possible LLM title)
     let raw = ExtractRaw::from_json(&llm_json);
     let title_from_llm = raw.title.clone();
     let norm = raw.normalize();
@@ -117,21 +111,14 @@ pub async fn import_from_url(
         instructions: norm.instructions,
     };
 
-    // 6) Create recipe
-    let created = recipes::create(State(state.clone()), Json(payload))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:?}")))?; // <- use Debug
+    let created = recipes::create(State(state.clone()), Json(payload)).await?;
     let recipe_id = created.0.id;
 
-    // 7) Import hero image using your parse_recipe_image helper (best-effort)
     if let Err(e) = try_fetch_and_attach_image(&state, recipe_id, &req.url, &html).await {
         tracing::warn!("image import failed for id {}: {}", recipe_id, e);
     }
 
-    // 8) Return the fresh row (with image paths if saved)
-    let fresh = recipes::get(State(state), Path(recipe_id))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:?}")))?; // <- use Debug
+    let fresh = recipes::get(State(state), Path(recipe_id)).await?;
     Ok(fresh)
 }
 

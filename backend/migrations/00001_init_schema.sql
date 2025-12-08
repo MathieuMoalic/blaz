@@ -66,7 +66,6 @@ TASK:
   * Allowed units in ingredients: g, kg, ml, L, tsp, tbsp.
   * Never use: cup, cups, oz, ounce, ounces, fl oz, pound, lb.
   * Keep tsp and tbsp abbreviations as written (do not spell out).
-- Keep amounts as numbers; keep ranges by converting both ends (e.g., 2–4 cups → 480–960 ml).
 - For solid items, convert oz→g (1 oz ≈ 28 g). For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml). For cups→ml (1 cup ≈ 240 ml).
 - If an ingredient has prep words (e.g., sliced, diced, minced), put them AFTER the ingredient name, separated by ", " (comma + space).
   Example: "2 carrots, diced".
@@ -79,7 +78,14 @@ TASK:
 - instructions: array of steps (strings). No commentary.
 
 FORMAT EXAMPLES:
-{"ingredients":["2 cloves garlic, minced","150 g flour","2 carrots, diced"],"instructions":["Cook the garlic.","Fold in flour."]}
+{"ingredients":[
+  {"quantity":2,"unit":null,"name":"cloves garlic, minced"},
+  {"quantity":150,"unit":"g","name":"flour"},
+  {"quantity":2,"unit":null,"name":"carrots, diced"}
+],"instructions":[
+  "Cook the garlic.",
+  "Fold in flour."
+]}
 
 SELF-CHECK:
 Before answering, verify no banned units appear in INGREDIENTS. If any do, fix them and re-check. Answer only with the final JSON.',

@@ -5,6 +5,8 @@ use serde::Serialize;
 pub enum AppError {
     /// Return just a status code with an empty body (preserves old behavior).
     Status(StatusCode),
+    /// Return a status code with a plain-text message body.
+    Msg(StatusCode, String),
     /// Internal error -> 500 with JSON body; logged.
     Anyhow(anyhow::Error),
 }
@@ -12,6 +14,12 @@ pub enum AppError {
 impl From<StatusCode> for AppError {
     fn from(code: StatusCode) -> Self {
         Self::Status(code)
+    }
+}
+
+impl From<(StatusCode, String)> for AppError {
+    fn from((code, msg): (StatusCode, String)) -> Self {
+        Self::Msg(code, msg)
     }
 }
 
@@ -56,6 +64,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         match self {
             Self::Status(code) => code.into_response(), // empty body
+            Self::Msg(code, msg) => (code, msg).into_response(), // preserves old tuple behavior
             Self::Anyhow(err) => {
                 tracing::error!("{:#}", err);
                 let body = Json(ErrBody {

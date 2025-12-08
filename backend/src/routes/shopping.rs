@@ -1,3 +1,4 @@
+use crate::error::AppError;
 use axum::http::StatusCode;
 use axum::{
     Json,
@@ -9,6 +10,23 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::error::AppResult;
 use crate::models::{AppState, NewItem, ShoppingItemView};
 use crate::units::{canon_unit_str, normalize_name, to_canonical_qty_unit};
+
+fn internal_err<E: std::error::Error>(err: E) -> AppError {
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into()
+}
+
+fn patch_update_err(err: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(db) = &err {
+        if db.is_unique_violation() {
+            return (
+                StatusCode::CONFLICT,
+                "shopping item with the same name/unit already exists".into(),
+            )
+                .into();
+        }
+    }
+    internal_err(err)
+}
 
 /* ---------- Request/response types ---------- */
 
@@ -56,17 +74,6 @@ fn parse_qty_token(t: &str) -> Option<f64> {
     }
 
     t.parse::<f64>().ok()
-}
-fn patch_update_err(err: sqlx::Error) -> (StatusCode, String) {
-    if let sqlx::Error::Database(db) = &err {
-        if db.is_unique_violation() {
-            return (
-                StatusCode::CONFLICT,
-                "shopping item with the same name/unit already exists".into(),
-            );
-        }
-    }
-    internal_err(err)
 }
 
 fn normalize_unit_token(t: &str) -> Option<String> {
@@ -151,10 +158,6 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
 }
 
 /* ---------- Other helpers ---------- */
-
-fn internal_err<E: std::error::Error>(err: E) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-}
 
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemView>(
@@ -386,7 +389,7 @@ pub async fn patch_shopping_item(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(payload): Json<UpdateShoppingItem>,
-) -> Result<Json<ShoppingItemView>, (StatusCode, String)> {
+) -> AppResult<Json<ShoppingItemView>> {
     let mut qb = QueryBuilder::<Sqlite>::new("UPDATE shopping_items SET ");
     let mut wrote = false;
 
@@ -417,22 +420,18 @@ pub async fn patch_shopping_item(
         let parsed =
             parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
 
-        // Canonicalize units & quantities to match create/merge semantics
         let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
 
-        // If there's no real quantity, treat as unitless so it merges with plain items
         if qty_norm.is_none() {
             unit_norm = None;
         }
 
-        // Recompute merge key
         let key = make_key(&parsed.name_norm, unit_norm);
 
         if wrote {
             qb.push(", ");
         }
 
-        // Keep DB consistent with create(): store normalized name
         qb.push("name = ");
         qb.push_bind(parsed.name_norm);
 
