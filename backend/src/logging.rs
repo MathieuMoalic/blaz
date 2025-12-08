@@ -8,7 +8,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    EnvFilter, filter::Directive, fmt, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 /// Keep guards alive for the lifetime of the app.
 pub struct LogGuards {
@@ -28,9 +30,29 @@ fn split_path(path: &Path) -> (PathBuf, String) {
     (dir, file)
 }
 
+fn build_filter(config: &Config) -> EnvFilter {
+    let mut filter = EnvFilter::new(config.log_filter());
+
+    // Hard-disable ultra-noisy HTML parsing internals forever.
+    // These targets are commonly responsible for "processing TagToken..." spam.
+    for d in [
+        "html5ever=off",
+        "markup5ever=off",
+        "selectors=off",
+        "tendril=off",
+        "string_cache=off",
+    ] {
+        if let Ok(dir) = d.parse::<Directive>() {
+            filter = filter.add_directive(dir);
+        }
+    }
+
+    filter
+}
+
 #[must_use]
 pub fn init_logging(config: &Config) -> LogGuards {
-    let filter = EnvFilter::new(config.log_filter());
+    let filter = build_filter(config);
 
     // Stdout layer (pretty enough, ANSI enabled)
     let stdout_layer = fmt::layer()
