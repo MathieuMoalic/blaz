@@ -3,15 +3,16 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sqlx::{QueryBuilder, Sqlite};
+use sqlx::sqlite::SqliteArguments;
+use sqlx::{Arguments, QueryBuilder, Sqlite};
 
 use crate::error::AppResult;
 use crate::models::{AppState, NewItem, ShoppingItemView};
-use crate::units::{normalize_name, to_canonical_qty_unit};
+use crate::units::{canon_unit_str, normalize_name, to_canonical_qty_unit};
 
 /* ---------- Request/response types ---------- */
+
 #[derive(Serialize, sqlx::FromRow)]
 pub struct ShoppingItemDto {
     pub id: i64,
@@ -40,6 +41,7 @@ pub struct MergeReq {
     pub items: Vec<InIngredient>,
 }
 
+// PATCH helper body (kept local)
 #[derive(Deserialize, Debug, Default)]
 pub struct UpdateItem {
     #[serde(default)]
@@ -48,52 +50,121 @@ pub struct UpdateItem {
     pub category: Option<String>,
 }
 
-/* ---------- Helpers ---------- */
-
-#[derive(Debug)]
-struct ParsedLine {
-    quantity: Option<f64>,
-    unit: Option<String>,
-    name: String,
+#[derive(Debug, Clone)]
+pub struct ParsedItem {
+    pub qty: Option<f64>,
+    pub unit: Option<String>, // normalized short unit, e.g. "g","kg","ml","L","tsp","tbsp"
+    pub name_raw: String,     // what we’d store in DB as name if parsing succeeded
+    pub name_norm: String,    // normalized for merge key/category
 }
 
-fn parse_line(raw: &str) -> ParsedLine {
-    let s = raw.trim();
-    let s_norm = s.replace(',', ".");
+#[derive(Debug, Clone, Copy)]
+enum ParseMode {
+    Create,
+    Patch,
+    Merge,
+}
 
-    static RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
-        Regex::new(r#"^\s*(\d+(?:\.\d+)?)?\s*([A-Za-zµμ]+)?\s*(.*\S)?$"#).unwrap()
-    });
+fn parse_qty_token(t: &str) -> Option<f64> {
+    let t = t.trim().replace(',', ".");
+    if t.is_empty() {
+        return None;
+    }
 
-    if let Some(c) = RE.captures(&s_norm) {
-        let qty = c.get(1).and_then(|m| m.as_str().parse::<f64>().ok());
-        let unit = c.get(2).map(|m| m.as_str().to_string());
-        let name = c
-            .get(3)
-            .map(|m| m.as_str().trim().to_string())
-            .unwrap_or_default();
+    if let Some((a, b)) = t.split_once('-').or_else(|| t.split_once('–')) {
+        let x = a.trim().parse::<f64>().ok()?;
+        let y = b.trim().parse::<f64>().ok()?;
+        return Some((x + y) / 2.0);
+    }
 
-        if name.is_empty() {
-            return ParsedLine {
-                quantity: None,
-                unit: None,
-                name: s.to_string(),
-            };
-        }
+    t.parse::<f64>().ok()
+}
 
-        ParsedLine {
-            quantity: qty,
-            unit,
-            name,
-        }
-    } else {
-        ParsedLine {
-            quantity: None,
+fn normalize_unit_token(t: &str) -> Option<String> {
+    let u = t.trim();
+    if u.is_empty() {
+        return None;
+    }
+    canon_unit_str(u).map(|c| c.to_string())
+}
+
+/// Parse a line that may look like:
+/// - "120 g flour"
+/// - "2-3 apples"
+/// - "1 banana"
+/// - "milk"
+///
+/// The function is intentionally tolerant:
+/// - If it doesn’t start with a number, qty/unit are None and the whole line is the name.
+/// - If it starts with a number but the remaining name is empty, it falls back to treating
+///   the whole line as the name.
+fn parse_item_line(raw: &str, _mode: ParseMode) -> Option<ParsedItem> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let tokens: Vec<&str> = raw.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    // Try parse leading qty
+    let qty = parse_qty_token(tokens[0]);
+
+    // If no leading number, treat whole line as plain name
+    if qty.is_none() {
+        let name_raw = raw.to_string();
+        let name_norm = normalize_name(&name_raw);
+        return Some(ParsedItem {
+            qty: None,
             unit: None,
-            name: s.to_string(),
+            name_raw,
+            name_norm,
+        });
+    }
+
+    // Optional unit
+    let mut idx = 1usize;
+    let mut unit: Option<String> = None;
+
+    if let Some(t1) = tokens.get(1) {
+        if let Some(un) = normalize_unit_token(t1) {
+            unit = Some(un);
+            idx = 2;
         }
     }
+
+    // Optional "of"
+    if tokens.get(idx).copied() == Some("of") {
+        idx += 1;
+    }
+
+    // Remaining tokens are the name
+    if idx >= tokens.len() {
+        // Mirror old parse_line fallback: ignore parsed qty/unit if name is missing
+        let name_raw = raw.to_string();
+        let name_norm = normalize_name(&name_raw);
+        return Some(ParsedItem {
+            qty: None,
+            unit: None,
+            name_raw,
+            name_norm,
+        });
+    }
+
+    let name_raw = tokens[idx..].join(" ");
+    let name_norm = normalize_name(&name_raw);
+
+    Some(ParsedItem {
+        qty,
+        unit,
+        name_raw,
+        name_norm,
+    })
 }
+
+/* ---------- Other helpers ---------- */
 
 fn internal_err<E: std::error::Error>(err: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
@@ -227,116 +298,8 @@ fn guess_category(name_norm: &str) -> Option<&'static str> {
     None
 }
 
-fn strip_leading_qty_unit(name: &str) -> (Option<f64>, Option<String>, String) {
-    let s = name.trim().to_lowercase().replace(',', ".");
-    let parts: Vec<&str> = s.split_whitespace().collect();
-    if parts.is_empty() {
-        return (None, None, name.trim().to_string());
-    }
-
-    let mut qty: Option<f64> = None;
-    if let Some(p0) = parts.first() {
-        if let Some((a, b)) = p0.split_once('-').or_else(|| p0.split_once('–')) {
-            if let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) {
-                qty = Some((x + y) / 2.0);
-            }
-        } else if let Ok(x) = p0.parse::<f64>() {
-            qty = Some(x);
-        }
-    }
-    if qty.is_none() {
-        return (None, None, name.trim().to_string());
-    }
-
-    let mut unit: Option<String> = None;
-    let mut i = 1;
-    if let Some(p1) = parts.get(1) {
-        let u = p1.trim().trim_end_matches('s').to_lowercase();
-        unit = match u.as_str() {
-            "g" | "gram" => Some("g".into()),
-            "kg" | "kilogram" => Some("kg".into()),
-            "ml" | "milliliter" | "millilitre" => Some("ml".into()),
-            "l" | "liter" | "litre" => Some("L".into()),
-            "tsp" | "teaspoon" => Some("tsp".into()),
-            "tbsp" | "tablespoon" => Some("tbsp".into()),
-            _ => None,
-        };
-        if unit.is_some() {
-            i = 2;
-        }
-    }
-
-    if parts.get(i).copied() == Some("of") {
-        i += 1;
-    }
-    if i >= parts.len() {
-        return (qty, unit, String::new());
-    }
-
-    let clean = parts[i..].join(" ");
-    (qty, unit, clean)
-}
-
-fn parse_free_text_item(s: &str) -> Option<(String, Option<&str>, Option<f64>)> {
-    let raw = s.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let tokens: Vec<String> = raw
-        .split_whitespace()
-        .map(|t| t.trim().replace(',', "."))
-        .collect();
-    if tokens.is_empty() {
-        return None;
-    }
-
-    let mut qty: Option<f64> = None;
-    let t0 = tokens.first().map(|s| s.as_str()).unwrap_or("");
-    let mut name_start_idx = 1;
-
-    if let Some((a, b)) = t0.split_once('-').or_else(|| t0.split_once('–')) {
-        if let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) {
-            qty = Some((x + y) / 2.0);
-        }
-    } else if let Ok(x) = t0.parse::<f64>() {
-        qty = Some(x);
-    } else {
-        return None;
-    }
-
-    let mut unit: Option<String> = None;
-    if let Some(t1) = tokens.get(1) {
-        let u = t1.trim().trim_end_matches('s').to_lowercase();
-        unit = match u.as_str() {
-            "g" | "gram" => Some("g".into()),
-            "kg" | "kilogram" => Some("kg".into()),
-            "ml" | "milliliter" | "millilitre" => Some("ml".into()),
-            "l" | "liter" | "litre" => Some("L".into()),
-            "tsp" | "teaspoon" => Some("tsp".into()),
-            "tbsp" | "tablespoon" => Some("tbsp".into()),
-            _ => None,
-        };
-        if unit.is_some() {
-            name_start_idx = 2;
-        }
-    }
-
-    if tokens.get(name_start_idx).map(|s| s.as_str()) == Some("of") {
-        name_start_idx += 1;
-    }
-    if name_start_idx >= tokens.len() {
-        return None;
-    }
-
-    let name_raw = tokens[name_start_idx..].join(" ");
-    let name_norm = normalize_name(&name_raw);
-
-    let (unit_norm, qty_norm) = to_canonical_qty_unit(unit.as_deref(), qty);
-
-    Some((name_norm, unit_norm, qty_norm))
-}
-
+/// Unique key used for merging rows: "<unit>|<name>" with normalized name/unit.
+/// For unit-less items the key starts with a leading pipe: "|<name>".
 fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
     match unit_norm {
         Some(u) if !u.is_empty() => format!("{u}|{name_norm}"),
@@ -371,9 +334,14 @@ pub async fn create(
         return Err(anyhow::anyhow!("empty shopping item").into());
     }
 
-    if let Some((name_norm, unit_norm, qty_norm)) = parse_free_text_item(text) {
-        let key = make_key(&name_norm, unit_norm);
-        let category_guess = guess_category(&name_norm).map(|s| s.to_string());
+    let parsed = parse_item_line(text, ParseMode::Create)
+        .ok_or_else(|| anyhow::anyhow!("empty shopping item"))?;
+
+    // Structured path only if a leading qty was detected
+    if parsed.qty.is_some() {
+        let (unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
+        let key = make_key(&parsed.name_norm, unit_norm);
+        let category_guess = guess_category(&parsed.name_norm).map(|s| s.to_string());
 
         sqlx::query(
             r#"
@@ -385,7 +353,7 @@ pub async fn create(
               category = COALESCE(shopping_items.category, excluded.category)
             "#,
         )
-        .bind(&name_norm)
+        .bind(&parsed.name_norm)
         .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
@@ -402,7 +370,8 @@ pub async fn create(
         return Ok(Json(row));
     }
 
-    let name_norm = normalize_name(text);
+    // Fallback: plain-text item
+    let name_norm = parsed.name_norm;
     let category_guess = guess_category(&name_norm).map(|s| s.to_string());
     let key = make_key(&name_norm, None);
 
@@ -461,16 +430,18 @@ pub async fn patch_shopping_item(
     }
 
     if let Some(ref t) = payload.text {
-        let parsed = parse_line(t);
+        let parsed = parse_item_line(t, ParseMode::Patch)
+            .ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
 
         if wrote {
             qb.push(", ");
         }
+
         qb.push("name = ");
-        qb.push_bind(parsed.name);
+        qb.push_bind(parsed.name_raw);
 
         qb.push(", quantity = ");
-        if let Some(q) = parsed.quantity {
+        if let Some(q) = parsed.qty {
             qb.push_bind(q);
         } else {
             qb.push("NULL");
@@ -478,13 +449,7 @@ pub async fn patch_shopping_item(
 
         qb.push(", unit = ");
         if let Some(u) = parsed.unit {
-            let u_norm = match u.as_str() {
-                s if s.eq_ignore_ascii_case("l") => "L".to_string(),
-                s if s.eq_ignore_ascii_case("g") => "g".to_string(),
-                s if s.eq_ignore_ascii_case("ml") => "ml".to_string(),
-                _ => u,
-            };
-            qb.push_bind(u_norm);
+            qb.push_bind(u);
         } else {
             qb.push("NULL");
         }
@@ -511,6 +476,57 @@ pub async fn patch_shopping_item(
     Ok(Json(dto))
 }
 
+// PATCH /shopping/{id}
+pub async fn toggle_done(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(t): Json<UpdateItem>,
+) -> AppResult<Json<ShoppingItemView>> {
+    let mut sets: Vec<&'static str> = Vec::new();
+    let mut args = SqliteArguments::default();
+
+    if let Some(done) = t.done {
+        sets.push("done = ?");
+        args.add(if done { 1i64 } else { 0i64 })
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
+    if let Some(cat_raw) = t.category {
+        let cat_norm = crate::units::norm_whitespace(&cat_raw);
+        if cat_norm.is_empty() {
+            sets.push("category = NULL");
+        } else {
+            sets.push("category = ?");
+            args.add(cat_norm)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+    }
+
+    if sets.is_empty() {
+        return Err(StatusCode::BAD_REQUEST.into());
+    }
+
+    let sql = format!(
+        r#"
+        UPDATE shopping_items
+           SET {}
+         WHERE id = ?
+         RETURNING id
+        "#,
+        sets.join(", ")
+    );
+
+    args.add(id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (rid,): (i64,) = sqlx::query_as_with(&sql, args)
+        .fetch_one(&state.pool)
+        .await?;
+
+    let row = fetch_view_by_id(&state, rid).await?;
+    Ok(Json(row))
+}
+
 // DELETE /shopping/{id}
 pub async fn delete(
     State(state): State<AppState>,
@@ -531,26 +547,27 @@ pub async fn merge_items(
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
     for it in req.items {
-        let mut qty = it.quantity;
-        let mut unit = it.unit.map(|u| u.trim().to_lowercase());
+        // Parse embedded qty/unit from name, if any
+        let parsed_name = parse_item_line(&it.name, ParseMode::Merge).unwrap_or(ParsedItem {
+            qty: None,
+            unit: None,
+            name_raw: it.name.clone(),
+            name_norm: normalize_name(&it.name),
+        });
 
-        let (qty_from_name, unit_from_name, clean_name) = strip_leading_qty_unit(&it.name);
-        let base_name = normalize_name(&clean_name);
+        // Prefer explicit fields; fall back to parsed-from-name
+        let qty = it.quantity.or(parsed_name.qty);
+        let unit = it.unit.map(|u| u.trim().to_string()).or(parsed_name.unit);
 
-        if qty.is_none() {
-            qty = qty_from_name;
-        }
-        if unit.is_none() {
-            unit = unit_from_name;
-        }
-
+        // Canonicalize units & quantities
         let (mut unit_norm, qty_norm) = to_canonical_qty_unit(unit.as_deref(), qty);
 
+        // If there's no real quantity, treat as unitless so it merges with plain items
         if qty_norm.is_none() {
             unit_norm = None;
         }
 
-        let key = make_key(&base_name, unit_norm);
+        let key = make_key(&parsed_name.name_norm, unit_norm);
 
         let chosen_cat = it
             .category
@@ -558,7 +575,7 @@ pub async fn merge_items(
                 let s = crate::units::norm_whitespace(&s);
                 if s.is_empty() { None } else { Some(s) }
             })
-            .or_else(|| guess_category(&base_name).map(|s| s.to_string()));
+            .or_else(|| guess_category(&parsed_name.name_norm).map(|s| s.to_string()));
 
         sqlx::query(
             r#"
@@ -575,7 +592,7 @@ pub async fn merge_items(
               category = COALESCE(shopping_items.category, excluded.category)
             "#,
         )
-        .bind(&base_name)
+        .bind(&parsed_name.name_norm) // keep normalized name in DB for consistency
         .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
