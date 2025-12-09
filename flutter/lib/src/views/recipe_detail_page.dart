@@ -84,6 +84,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       title: 'Add to shopping list',
       items: r.ingredients,
     );
+
+    if (!mounted) return;
     if (selected == null || selected.isEmpty) return;
 
     try {
@@ -108,6 +110,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 2),
     );
+
+    if (!mounted) return;
     if (picked == null) return;
 
     try {
@@ -150,10 +154,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Macro estimation failed: $e')));
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _estimatingMacros = false;
-      });
+      if (mounted) {
+        setState(() {
+          _estimatingMacros = false;
+        });
+      }
     }
   }
 
@@ -332,7 +337,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     Navigator.of(context, rootNavigator: true).push(
       PageRouteBuilder(
         opaque: false,
-        barrierColor: Colors.black.withOpacity(0.95),
+        barrierColor: Colors.black.withValues(alpha: 0.95),
         pageBuilder: (_, __, ___) =>
             _ImageViewerPage(url: fullUrl, heroTag: heroTag),
         transitionsBuilder: (_, anim, __, child) =>
@@ -371,13 +376,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             icon: const Icon(Icons.edit_outlined),
             onPressed: () async {
               final r = await _future;
+              if (!context.mounted) return;
+
               final changed = await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(builder: (_) => EditRecipePage(recipe: r)),
               );
+              if (!mounted) return;
+
               if (changed == true) _refresh();
             },
           ),
+
           IconButton(
             tooltip: 'Delete',
             icon: const Icon(Icons.delete_outline),
@@ -581,8 +591,8 @@ class _Bullet extends StatelessWidget {
     final style = base?.copyWith(
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
-          ? (base?.color ?? Colors.black).withOpacity(0.55)
-          : base?.color,
+          ? (base.color ?? Colors.black).withValues(alpha: 0.55)
+          : base.color,
     );
     return InkWell(
       onTap: onTap,
@@ -625,8 +635,8 @@ class _Numbered extends StatelessWidget {
     final style = base?.copyWith(
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
-          ? (base?.color ?? Colors.black).withOpacity(0.55)
-          : base?.color,
+          ? (base.color ?? Colors.black).withValues(alpha: 0.55)
+          : base.color,
     );
     return InkWell(
       onTap: onTap,
@@ -734,7 +744,7 @@ class _MacrosSection extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: c.surfaceVariant,
+        color: c.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text('$label: $value'),
@@ -774,7 +784,7 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
       onTap: () => Navigator.pop(context),
       onDoubleTap: _toggleZoom,
       child: Material(
-        color: Colors.black.withOpacity(0.95),
+        color: Colors.black.withValues(alpha: 0.95),
         child: Stack(
           children: [
             Center(

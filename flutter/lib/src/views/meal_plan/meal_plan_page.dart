@@ -123,6 +123,7 @@ class _MealPlanPageState extends State<MealPlanPage> {
         }
       });
     }
+    if (!mounted) return;
 
     final picked = await showRecipePickerSheet(
       context: context,

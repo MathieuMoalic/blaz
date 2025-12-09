@@ -1,8 +1,8 @@
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
 
 String? read(String key) {
   try {
-    return html.window.localStorage[key];
+    return web.window.localStorage.getItem(key);
   } catch (_) {
     return null;
   }
@@ -10,11 +10,11 @@ String? read(String key) {
 
 void write(String key, String? value) {
   try {
-    final s = html.window.localStorage;
+    final s = web.window.localStorage;
     if (value == null || value.isEmpty) {
-      s.remove(key);
+      s.removeItem(key);
     } else {
-      s[key] = value;
+      s.setItem(key, value);
     }
   } catch (_) {}
 }

@@ -42,7 +42,7 @@ class DayTimelineBox extends StatelessWidget {
     );
 
     final cardColor = isToday
-        ? theme.colorScheme.primaryContainer.withOpacity(0.08)
+        ? theme.colorScheme.primaryContainer.withValues(alpha: 0.08)
         : null;
 
     return Padding(

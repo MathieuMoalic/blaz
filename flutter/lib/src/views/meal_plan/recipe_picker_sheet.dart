@@ -77,7 +77,9 @@ Future<Set<int>?> showRecipePickerSheet({
                             setSheetState(() {
                               selected.clear();
                               if (!allSelected) {
-                                for (final r in filtered) selected.add(r.id);
+                                for (final r in filtered) {
+                                  selected.add(r.id);
+                                }
                               }
                             });
                           },

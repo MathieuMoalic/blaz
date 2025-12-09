@@ -396,7 +396,7 @@ class _RowTile extends StatelessWidget {
         Container(
           decoration: BoxDecoration(
             // Slight translucency so the global background peeks through.
-            color: c.surface.withOpacity(0.65),
+            color: c.surface.withValues(alpha: 0.65),
           ),
           child: ListTile(
             dense: true,

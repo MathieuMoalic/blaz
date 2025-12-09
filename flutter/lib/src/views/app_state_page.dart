@@ -61,7 +61,7 @@ class _AppStatePageState extends State<AppStatePage> {
 
     setState(() => _busy = true);
     try {
-      final updated = await api.updateAppSettings(
+      await api.updateAppSettings(
         api.AppSettings(
           llmApiKey: _apiKeyCtrl.text.trim().isEmpty
               ? null

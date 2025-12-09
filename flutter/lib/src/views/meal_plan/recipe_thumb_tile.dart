@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class RecipeThumbTile extends StatelessWidget {
@@ -44,7 +43,9 @@ class RecipeThumbTile extends StatelessWidget {
                     flex: 7,
                     child: imageUrl != null && imageUrl!.isNotEmpty
                         ? Image.network(imageUrl!, fit: BoxFit.cover)
-                        : Container(color: theme.colorScheme.surfaceVariant),
+                        : Container(
+                            color: theme.colorScheme.surfaceContainerHighest,
+                          ),
                   ),
                   // Title area (constrained)
                   Padding(
@@ -69,7 +70,9 @@ class RecipeThumbTile extends StatelessWidget {
                 child: IconButton(
                   visualDensity: VisualDensity.compact,
                   style: IconButton.styleFrom(
-                    backgroundColor: theme.colorScheme.surface.withOpacity(0.6),
+                    backgroundColor: theme.colorScheme.surface.withValues(
+                      alpha: 0.6,
+                    ),
                   ),
                   icon: const Icon(Icons.close, size: 16),
                   onPressed: onDelete,
