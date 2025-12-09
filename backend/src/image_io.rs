@@ -3,7 +3,7 @@ use image::GenericImageView;
 use webp::Encoder as WebpEncoder;
 
 pub const FULL_WEBP_QUALITY: f32 = 90.0;
-pub const THUMB_WEBP_QUALITY: f32 = 3.0;
+pub const THUMB_WEBP_QUALITY: f32 = 10.0;
 pub const THUMB_MAX_DIM: u32 = 1024;
 
 /// # Errors

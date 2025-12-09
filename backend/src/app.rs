@@ -28,8 +28,6 @@ fn cors_layer() -> CorsLayer {
 pub fn build_app(state: AppState) -> Router {
     let media_service = ServeDir::new(state.config.media_dir.clone());
 
-    // Request-ID middleware comes first so everything downstream
-    // has access to the x-request-id header.
     let request_id_layer = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(PropagateRequestIdLayer::x_request_id());

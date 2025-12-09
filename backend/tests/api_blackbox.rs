@@ -196,7 +196,11 @@ async fn recipes_crud_smoke() {
             "source": "unit-test",
             "yield": "2 servings",
             "notes": "",
-            "ingredients": ["200 g pasta", "1 tbsp olive oil", "salt"],
+            "ingredients": [
+                { "quantity": 200.0, "unit": "g",    "name": "pasta" },
+                { "quantity":   1.0, "unit": "tbsp", "name": "olive oil" },
+                {                          "name": "salt" }
+            ],
             "instructions": ["Boil pasta", "Toss with oil", "Salt to taste"]
         }))
         .send()
@@ -246,6 +250,59 @@ async fn recipes_crud_smoke() {
         .await
         .unwrap();
     assert_eq!(del.status(), reqwest::StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn shopping_done_and_category_behavior() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+
+    let client = reqwest::Client::new();
+
+    // Create an item
+    let created = client
+        .post(format!("{base}/shopping"))
+        .json(&json!({"text":"2 apples"}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(created.status(), reqwest::StatusCode::OK);
+    let item_js = created.json::<serde_json::Value>().await.unwrap();
+    let id = item_js["id"].as_i64().expect("id");
+
+    // With no LLM API key configured, classifier falls back to "Other"
+    assert_eq!(item_js["category"].as_str(), Some("Other"));
+    assert_eq!(item_js["done"].as_i64(), Some(0));
+
+    // Mark item as done
+    let patched = client
+        .patch(format!("{base}/shopping/{id}"))
+        .json(&json!({ "done": true }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(patched.status(), reqwest::StatusCode::OK);
+    let patched_js = patched.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(patched_js["done"].as_i64(), Some(1));
+
+    // Listing active shopping items should now hide this one
+    let list = client
+        .get(format!("{base}/shopping"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let arr = list.as_array().expect("shopping list must be an array");
+    assert!(
+        arr.iter().all(|row| row["id"] != id),
+        "done item should not appear in /shopping list"
+    );
 }
 
 #[tokio::test]

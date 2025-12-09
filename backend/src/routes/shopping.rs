@@ -1,3 +1,4 @@
+use crate::categories::{Category, guess_category};
 use crate::error::AppError;
 use axum::http::StatusCode;
 use axum::{
@@ -34,7 +35,15 @@ fn patch_update_err(err: sqlx::Error) -> AppError {
 pub struct UpdateShoppingItem {
     pub done: Option<bool>,
     pub category: Option<String>,
+
+    /// Backwards-compatible free-form update.
+    /// If provided, it takes priority over name/unit/quantity fields.
     pub text: Option<String>,
+
+    /// Structured edits:
+    pub name: Option<String>,
+    pub unit: Option<String>,
+    pub quantity: Option<f64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -54,6 +63,7 @@ pub struct MergeReq {
 pub struct ParsedItem {
     pub qty: Option<f64>,
     pub unit: Option<String>, // normalized short unit, e.g. "g","kg","ml","L","tsp","tbsp"
+    pub name_raw: String,     // as extracted from the line
     pub name_norm: String,    // normalized for merge key/category
 }
 
@@ -111,6 +121,7 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
         return Some(ParsedItem {
             qty: None,
             unit: None,
+            name_raw,
             name_norm,
         });
     }
@@ -133,12 +144,13 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
 
     // Remaining tokens are the name
     if idx >= tokens.len() {
-        // Mirror old parse_line fallback: ignore parsed qty/unit if name is missing
+        // Mirror old fallback: ignore parsed qty/unit if name is missing
         let name_raw = raw.to_string();
         let name_norm = normalize_name(&name_raw);
         return Some(ParsedItem {
             qty: None,
             unit: None,
+            name_raw,
             name_norm,
         });
     }
@@ -149,11 +161,12 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     Some(ParsedItem {
         qty,
         unit,
+        name_raw,
         name_norm,
     })
 }
 
-/* ---------- Other helpers ---------- */
+/* ---------- DB helpers ---------- */
 
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemView>(
@@ -168,106 +181,24 @@ async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView,
     .await
 }
 
-fn guess_category(name_norm: &str) -> Option<&'static str> {
-    const MAP: &[(&[&str], &str)] = &[
-        (
-            &[
-                "apple", "banana", "tomato", "cucumber", "lettuce", "carrot", "onion", "garlic",
-                "pepper", "spinach", "potato", "avocado", "lemon", "lime", "orange", "berry",
-            ],
-            "Produce",
-        ),
-        (
-            &[
-                "milk",
-                "yogurt",
-                "cheese",
-                "feta",
-                "mozzarella",
-                "butter",
-                "cream",
-                "egg",
-            ],
-            "Dairy",
-        ),
-        (
-            &["bread", "bun", "baguette", "roll", "tortilla", "pita"],
-            "Bakery",
-        ),
-        (
-            &[
-                "chicken", "beef", "pork", "turkey", "ham", "salmon", "tuna", "shrimp", "sausage",
-                "bacon",
-            ],
-            "Meat & Fish",
-        ),
-        (
-            &[
-                "flour",
-                "sugar",
-                "salt",
-                "rice",
-                "pasta",
-                "noodle",
-                "bean",
-                "lentil",
-                "canned",
-                "tomato paste",
-                "tomato sauce",
-                "oil",
-                "vinegar",
-                "mustard",
-                "ketchup",
-                "honey",
-            ],
-            "Pantry",
-        ),
-        (
-            &[
-                "cumin",
-                "paprika",
-                "oregano",
-                "basil",
-                "thyme",
-                "coriander",
-                "curry",
-                "chili",
-                "turmeric",
-                "peppercorn",
-                "spice",
-            ],
-            "Spices",
-        ),
-        (
-            &["frozen", "ice cream", "frozen berries", "frozen peas"],
-            "Frozen",
-        ),
-        (
-            &["coffee", "tea", "juice", "soda", "water", "sparkling"],
-            "Beverages",
-        ),
-        (
-            &[
-                "paper",
-                "towel",
-                "foil",
-                "wrap",
-                "detergent",
-                "soap",
-                "shampoo",
-                "bag",
-                "trash",
-            ],
-            "Household",
-        ),
-    ];
-    let n = name_norm;
-    for (needles, cat) in MAP {
-        if needles.iter().any(|k| n.contains(k)) {
-            return Some(*cat);
-        }
-    }
-    None
+#[derive(sqlx::FromRow)]
+struct ShoppingItemRow {
+    name: String,
+    unit: Option<String>,
+    quantity: Option<f64>,
+}
+
+async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, sqlx::Error> {
+    sqlx::query_as::<_, ShoppingItemRow>(
+        r"
+        SELECT name, unit, quantity
+          FROM shopping_items
+         WHERE id = ?
+        ",
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await
 }
 
 /// Unique key used for merging rows: "<unit>|<name>" with normalized name/unit.
@@ -283,18 +214,32 @@ fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
 
 /// GET /shopping
 ///
+/// Returns ONLY non-done items.
+/// Done items are kept in DB so their unit/category data remains for future edits.
+///
 /// # Errors
 /// Err if querying the database fails.
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    let rows = sqlx::query_as::<_, ShoppingItemView>(
+    let mut rows = sqlx::query_as::<_, ShoppingItemView>(
         r"
         SELECT id, text, done, category
           FROM shopping_items_view
+         WHERE done = 0
          ORDER BY id
         ",
     )
     .fetch_all(&state.pool)
     .await?;
+
+    // Optional nicer ordering: category order (enum order), then id.
+    rows.sort_by_key(|r| {
+        let cat_key = r
+            .category
+            .as_deref()
+            .and_then(Category::from_str)
+            .map_or(255u8, Category::sort_key);
+        (cat_key, r.id)
+    });
 
     Ok(Json(rows))
 }
@@ -319,8 +264,8 @@ pub async fn create(
     if parsed.qty.is_some() {
         let (unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
         let key = make_key(&parsed.name_norm, unit_norm);
-        let category_guess =
-            guess_category(&parsed.name_norm).map(std::string::ToString::to_string);
+
+        let category_guess = guess_category(&state, &parsed.name_raw).await;
 
         sqlx::query(
             r"
@@ -349,9 +294,9 @@ pub async fn create(
         return Ok(Json(row));
     }
 
-    // Fallback: plain-text item
+    // Fallback: unitless item
     let name_norm = parsed.name_norm;
-    let category_guess = guess_category(&name_norm).map(std::string::ToString::to_string);
+    let category_guess = guess_category(&state, &parsed.name_raw).await;
     let key = make_key(&name_norm, None);
 
     sqlx::query(
@@ -376,11 +321,200 @@ pub async fn create(
     Ok(Json(row))
 }
 
-/// PATCH /shopping/{id}
+/* ---------- PATCH helpers ---------- */
+
+fn push_sep(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool) {
+    if *wrote {
+        qb.push(", ");
+    } else {
+        *wrote = true;
+    }
+}
+
+fn apply_done_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, done: Option<bool>) {
+    if let Some(d) = done {
+        push_sep(qb, wrote);
+        qb.push("done = ");
+        qb.push_bind(i64::from(d));
+    }
+}
+
+fn apply_category_update(
+    qb: &mut QueryBuilder<Sqlite>,
+    wrote: &mut bool,
+    category: Option<String>,
+) -> AppResult<()> {
+    let Some(mut cat) = category else {
+        return Ok(());
+    };
+
+    push_sep(qb, wrote);
+
+    cat = cat.trim().to_string();
+    if cat.is_empty() {
+        qb.push("category = NULL");
+        return Ok(());
+    }
+
+    if Category::from_str(&cat).is_none() {
+        return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
+    }
+
+    qb.push("category = ");
+    qb.push_bind(cat);
+
+    Ok(())
+}
+
+async fn apply_text_update(
+    qb: &mut QueryBuilder<'_, Sqlite>,
+    wrote: &mut bool,
+    state: &AppState,
+    payload: &UpdateShoppingItem,
+) -> AppResult<bool> {
+    let Some(t) = payload.text.as_deref() else {
+        return Ok(false);
+    };
+
+    let parsed =
+        parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
+
+    let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
+    if qty_norm.is_none() {
+        unit_norm = None;
+    }
+
+    let key = make_key(&parsed.name_norm, unit_norm);
+
+    push_sep(qb, wrote);
+
+    qb.push("name = ");
+    qb.push_bind(parsed.name_norm);
+
+    qb.push(", quantity = ");
+    if let Some(q) = qty_norm {
+        qb.push_bind(q);
+    } else {
+        qb.push("NULL");
+    }
+
+    qb.push(", unit = ");
+    if let Some(u) = unit_norm {
+        qb.push_bind(u);
+    } else {
+        qb.push("NULL");
+    }
+
+    qb.push(", key = ");
+    qb.push_bind(key);
+
+    // If `category` was NOT explicitly provided, refresh it based on the name.
+    if payload.category.is_none() {
+        let cat_guess = guess_category(state, &parsed.name_raw).await;
+        qb.push(", category = ");
+        qb.push_bind(cat_guess);
+    }
+
+    Ok(true)
+}
+
+async fn apply_structured_update(
+    qb: &mut QueryBuilder<'_, Sqlite>,
+    wrote: &mut bool,
+    state: &AppState,
+    id: i64,
+    payload: &UpdateShoppingItem,
+) -> AppResult<bool> {
+    let has_structured =
+        payload.name.is_some() || payload.unit.is_some() || payload.quantity.is_some();
+
+    if !has_structured {
+        return Ok(false);
+    }
+
+    let current = fetch_raw_by_id(state, id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let new_name_raw = if let Some(n) = payload.name.clone() {
+        let n = n.trim().to_string();
+        if n.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "empty name".into()).into());
+        }
+        n
+    } else {
+        current.name.clone()
+    };
+
+    let new_name_norm = normalize_name(&new_name_raw);
+
+    let new_unit_raw = payload.unit.clone().map(|u| u.trim().to_string());
+    let new_unit_raw = match new_unit_raw.as_deref() {
+        Some("") => None, // allow clearing
+        Some(u) => Some(u.to_string()),
+        None => current.unit.clone(),
+    };
+
+    let new_qty = payload.quantity.or(current.quantity);
+
+    let (mut unit_norm, qty_norm) = to_canonical_qty_unit(new_unit_raw.as_deref(), new_qty);
+    if qty_norm.is_none() {
+        unit_norm = None;
+    }
+
+    let key = make_key(&new_name_norm, unit_norm);
+
+    push_sep(qb, wrote);
+
+    qb.push("name = ");
+    qb.push_bind(new_name_norm);
+
+    qb.push(", quantity = ");
+    if let Some(q) = qty_norm {
+        qb.push_bind(q);
+    } else {
+        qb.push("NULL");
+    }
+
+    qb.push(", unit = ");
+    if let Some(u) = unit_norm {
+        qb.push_bind(u);
+    } else {
+        qb.push("NULL");
+    }
+
+    qb.push(", key = ");
+    qb.push_bind(key);
+
+    // Auto-guess category only if:
+    // - `category` wasn't explicitly provided
+    // - and `name` was part of this patch
+    if payload.category.is_none() && payload.name.is_some() {
+        let cat_guess = guess_category(state, &new_name_raw).await;
+        qb.push(", category = ");
+        qb.push_bind(cat_guess);
+    }
+
+    Ok(true)
+}
+
+/* ---------- Route ---------- */
+
+/// PATCH `/shopping/{id}`
+///
+/// Supports updates to:
+/// - `done`
+/// - `category`
+/// - `text` (free-form; re-parses qty/unit/name; takes priority)
+/// - `name`, `unit`, `quantity` (structured)
+///
+/// Done items remain in DB; `list()` simply hides them.
 ///
 /// # Errors
-/// Err with `400` if the provided text is empty.
-/// Err with `500` if updating or fetching the item fails.
+/// - Returns `400` if `text`/`name` is empty or if `category` is invalid.
+/// - Returns `409` on `key` conflict.
+/// - Returns `404` if the item does not exist.
+/// - Returns `500` on unexpected database errors.
 pub async fn patch_shopping_item(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -389,66 +523,14 @@ pub async fn patch_shopping_item(
     let mut qb = QueryBuilder::<Sqlite>::new("UPDATE shopping_items SET ");
     let mut wrote = false;
 
-    if let Some(d) = payload.done {
-        if wrote {
-            qb.push(", ");
-        }
-        qb.push("done = ");
-        qb.push_bind(i64::from(d));
-        wrote = true;
-    }
+    apply_done_update(&mut qb, &mut wrote, payload.done);
+    apply_category_update(&mut qb, &mut wrote, payload.category.clone())?;
 
-    if let Some(mut cat) = payload.category.clone() {
-        if wrote {
-            qb.push(", ");
-        }
-        cat = cat.trim().to_string();
-        if cat.is_empty() {
-            qb.push("category = NULL");
-        } else {
-            qb.push("category = ");
-            qb.push_bind(cat);
-        }
-        wrote = true;
-    }
-
-    if let Some(ref t) = payload.text {
-        let parsed =
-            parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
-
-        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
-
-        if qty_norm.is_none() {
-            unit_norm = None;
-        }
-
-        let key = make_key(&parsed.name_norm, unit_norm);
-
-        if wrote {
-            qb.push(", ");
-        }
-
-        qb.push("name = ");
-        qb.push_bind(parsed.name_norm);
-
-        qb.push(", quantity = ");
-        if let Some(q) = qty_norm {
-            qb.push_bind(q);
-        } else {
-            qb.push("NULL");
-        }
-
-        qb.push(", unit = ");
-        if let Some(u) = unit_norm {
-            qb.push_bind(u);
-        } else {
-            qb.push("NULL");
-        }
-
-        qb.push(", key = ");
-        qb.push_bind(key);
-
-        wrote = true;
+    // `text` takes priority over structured fields.
+    let did_text = apply_text_update(&mut qb, &mut wrote, &state, &payload).await?;
+    if !did_text {
+        let _did_struct =
+            apply_structured_update(&mut qb, &mut wrote, &state, id, &payload).await?;
     }
 
     if !wrote {
@@ -471,6 +553,9 @@ pub async fn patch_shopping_item(
 }
 
 /// DELETE /shopping/{id}
+///
+/// This is still a hard delete for explicit user intent.
+/// The normal "tick off" flow should use PATCH { done: true }.
 ///
 /// # Errors
 /// Err if deleting the shopping item fails.
@@ -501,6 +586,7 @@ pub async fn merge_items(
         let parsed_name = parse_item_line(&it.name).unwrap_or_else(|| ParsedItem {
             qty: None,
             unit: None,
+            name_raw: it.name.clone(),
             name_norm: normalize_name(&it.name),
         });
 
@@ -518,15 +604,21 @@ pub async fn merge_items(
 
         let key = make_key(&parsed_name.name_norm, unit_norm);
 
-        let chosen_cat = it
-            .category
-            .and_then(|s| {
-                let s = crate::units::norm_whitespace(&s);
-                if s.is_empty() { None } else { Some(s) }
-            })
-            .or_else(|| {
-                guess_category(&parsed_name.name_norm).map(std::string::ToString::to_string)
-            });
+        let chosen_cat = it.category.and_then(|s| {
+            let s = crate::units::norm_whitespace(&s);
+            if s.is_empty() { None } else { Some(s) }
+        });
+
+        let chosen_cat = match chosen_cat {
+            Some(c) => {
+                // Validate enum
+                if Category::from_str(&c).is_none() {
+                    return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
+                }
+                Some(c)
+            }
+            None => Some(guess_category(&state, &parsed_name.name_raw).await),
+        };
 
         sqlx::query(
             r"
@@ -552,15 +644,6 @@ pub async fn merge_items(
         .await?;
     }
 
-    let rows: Vec<ShoppingItemView> = sqlx::query_as::<_, ShoppingItemView>(
-        r"
-        SELECT id, text, done, category
-          FROM shopping_items_view
-         ORDER BY id
-        ",
-    )
-    .fetch_all(&state.pool)
-    .await?;
-
-    Ok(Json(rows))
+    // Return the active (not done) list
+    list(State(state)).await
 }
