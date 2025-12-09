@@ -91,7 +91,7 @@ impl Category {
             "Seasoning" => Self::Seasoning,
             "Canned" => Self::Canned,
             "Pantry" => Self::Pantry,
-            "Non-food" => Self::NonFood,
+            "Non-Food" => Self::NonFood,
             "Pharmacy" => Self::Pharmacy,
             "Online" => Self::Online,
             "Online Alcohol" => Self::OnlineAlcohol,

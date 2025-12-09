@@ -1,18 +1,15 @@
 import 'package:flutter/material.dart';
 import '../api.dart';
+import 'dart:async';
 
-const kCategories = <String>[
-  'Produce',
-  'Dairy',
-  'Bakery',
-  'Meat & Fish',
-  'Pantry',
-  'Spices',
-  'Frozen',
-  'Beverages',
-  'Household',
-  'Other',
-];
+final List<CategoryOption> kShoppingCategoryOptions = kCategoryOptions;
+
+final Map<String, String> kShoppingCategoryLabelByValue = {
+  for (final o in kShoppingCategoryOptions) o.value: o.label,
+};
+
+List<String> get kShoppingCategoryValues =>
+    kShoppingCategoryOptions.map((o) => o.value).toList(growable: false);
 
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
@@ -76,26 +73,52 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
     _ctrl.clear();
 
+    final tempId = -DateTime.now().microsecondsSinceEpoch;
+    final tempItem = ShoppingItem(
+      id: tempId,
+      text: raw,
+      done: false,
+      category: null,
+    );
+
+    // Show instantly
+    _applyLocalUpdate((list) => [tempItem, ...list]);
+
     try {
-      debugPrint('[_add] POST /shopping "$raw"');
-      await addShoppingItems([raw]);
-      await _refresh(); // pulls the latest list from the server
+      final created = await createShoppingItem(raw);
+
+      if (!mounted) return;
+
+      _applyLocalUpdate((list) {
+        final idx = list.indexWhere((x) => x.id == tempId);
+        if (idx != -1) {
+          list[idx] = created;
+        } else {
+          list.insert(0, created);
+        }
+        return list;
+      });
+
+      // If your backend assigns category asynchronously,
+      // this picks up the final category without blocking UI.
+      unawaited(Future.delayed(const Duration(milliseconds: 800), _refresh));
     } catch (e) {
-      debugPrint('POST /shopping failed from ShoppingListPage: $e');
+      _applyLocalUpdate((list) => list.where((x) => x.id != tempId).toList());
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Could not add item')));
+        ).showSnackBar(SnackBar(content: Text('Could not add item: $e')));
       }
     }
   }
 
-  String _catLabel(String? c) => (c == null || c.trim().isEmpty) ? 'Other' : c;
+  String _catValue(String? c) =>
+      (c == null || c.trim().isEmpty) ? 'Other' : c.trim();
 
   Map<String, List<ShoppingItem>> _group(List<ShoppingItem> items) {
     final map = <String, List<ShoppingItem>>{};
     for (final it in items) {
-      final key = _catLabel(it.category);
+      final key = _catValue(it.category);
       map.putIfAbsent(key, () => []).add(it);
     }
     for (final v in map.values) {
@@ -147,10 +170,9 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 }
                 final all = (snap.data ?? const <ShoppingItem>[]);
                 // Only show active, non-hidden items.
-                final items =
-                    all
-                        .where((i) => !i.done && !_hidden.contains(i.id))
-                        .toList();
+                final items = all
+                    .where((i) => !i.done && !_hidden.contains(i.id))
+                    .toList();
 
                 if (items.isEmpty) {
                   return const Center(child: Text('No items'));
@@ -158,8 +180,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
                 final grouped = _group(items);
                 final orderedCats = <String>[
-                  ...kCategories.where(grouped.containsKey),
-                  ...grouped.keys.where((c) => !kCategories.contains(c)),
+                  ...kShoppingCategoryValues.where(grouped.containsKey),
+                  ...grouped.keys.where(
+                    (c) => !kShoppingCategoryValues.contains(c),
+                  ),
                 ];
 
                 return ListView.separated(
@@ -177,7 +201,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             color: theme.colorScheme.surfaceContainerHighest,
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
                             child: Text(
-                              cat,
+                              kShoppingCategoryLabelByValue[cat] ?? cat,
                               style: theme.textTheme.titleMedium,
                             ),
                           ),
@@ -194,10 +218,9 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                                   );
                                   // Remove it from local cache immediately too.
                                   _applyLocalUpdate(
-                                    (list) =>
-                                        list
-                                            .where((x) => x.id != updated.id)
-                                            .toList(),
+                                    (list) => list
+                                        .where((x) => x.id != updated.id)
+                                        .toList(),
                                   );
                                 } finally {
                                   // Ensure server state and local state stay in sync.
@@ -223,7 +246,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
 
   Future<void> _editItem(BuildContext context, ShoppingItem it) async {
     final ctrl = TextEditingController(text: it.text);
-    String cat = _catLabel(it.category);
+    String cat = _catValue(it.category);
 
     final changed = await showModalBottomSheet<bool>(
       context: context,
@@ -270,18 +293,16 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             const SizedBox(width: 12),
                             DropdownButton<String>(
                               value: cat,
-                              onChanged:
-                                  (v) =>
-                                      setSheetState(() => cat = v ?? 'Other'),
-                              items:
-                                  kCategories
-                                      .map(
-                                        (c) => DropdownMenuItem(
-                                          value: c,
-                                          child: Text(c),
-                                        ),
-                                      )
-                                      .toList(),
+                              onChanged: (v) =>
+                                  setSheetState(() => cat = v ?? 'Other'),
+                              items: kShoppingCategoryOptions
+                                  .map(
+                                    (o) => DropdownMenuItem(
+                                      value: o.value,
+                                      child: Text(o.label),
+                                    ),
+                                  )
+                                  .toList(),
                             ),
                             const Spacer(),
                             IconButton(
@@ -315,6 +336,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                             onPressed: () async {
                               final newText = ctrl.text.trim();
                               final newCat = cat == 'Other' ? '' : cat;
+
                               final updated = await updateShoppingItem(
                                 id: it.id,
                                 text: newText.isEmpty ? it.text : newText,

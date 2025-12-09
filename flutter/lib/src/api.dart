@@ -27,6 +27,29 @@ Future<void> initApi() async {
   }
 }
 
+class CategoryOption {
+  final String value;
+  final String label;
+  const CategoryOption(this.value, this.label);
+}
+
+const kCategoryOptions = <CategoryOption>[
+  CategoryOption('Other', 'Other'),
+  CategoryOption('Fruits', 'Fruits'),
+  CategoryOption('Vegetables', 'Vegetables'),
+  CategoryOption('Bakery', 'Bakery'),
+  CategoryOption('Vegan', 'Vegan'),
+  CategoryOption('Drinks', 'Drinks'),
+  CategoryOption('Alcohol', 'Alcohol'),
+  CategoryOption('Seasoning', 'Seasoning'),
+  CategoryOption('Canned', 'Canned'),
+  CategoryOption('Pantry', 'Pantry'),
+  CategoryOption('Non-food', 'Non-Food'),
+  CategoryOption('Pharmacy', 'Pharmacy'),
+  CategoryOption('Online', 'Online'),
+  CategoryOption('Online Alcohol', 'Online Alcohol'),
+];
+
 /// Verifies `/healthz` on the provided URL, then saves & activates it.
 Future<void> verifyAndSaveBaseUrl(
   String url, {
@@ -105,13 +128,19 @@ Future<void> register({required String email, required String password}) async {
 
 /// Add multiple plain-text shopping items (one request per line).
 Future<void> addShoppingItems(List<String> lines) async {
-  // Fire them sequentially to keep server load modest (or use Future.wait for parallel).
-  for (final text in lines) {
-    final r = await http.post(
+  final items = lines.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  if (items.isEmpty) return;
+
+  final futures = items.map(
+    (t) => http.post(
       _u('/shopping'),
       headers: _headers({'content-type': 'application/json'}),
-      body: jsonEncode({'text': text}),
-    );
+      body: jsonEncode({'text': t}),
+    ),
+  );
+
+  final responses = await Future.wait(futures);
+  for (final r in responses) {
     if (r.statusCode != 200) _throw(r);
   }
 }
@@ -121,11 +150,15 @@ Future<ShoppingItem> updateShoppingItem({
   bool? done,
   String? category,
   String? text,
+  String? unit,
+  double? quantity,
 }) async {
   final body = <String, dynamic>{
     if (done != null) 'done': done,
     if (category != null) 'category': category,
     if (text != null) 'text': text,
+    if (unit != null) 'unit': unit,
+    if (quantity != null) 'quantity': quantity,
   };
 
   final r = await http.patch(
@@ -135,18 +168,7 @@ Future<ShoppingItem> updateShoppingItem({
   );
   if (r.statusCode != 200) _throw(r);
 
-  final parsed = ShoppingItem.fromJson(
-    jsonDecode(r.body) as Map<String, dynamic>,
-  );
-  if (text != null && (parsed.text != text)) {
-    return ShoppingItem(
-      id: parsed.id,
-      text: text,
-      done: parsed.done,
-      category: parsed.category,
-    );
-  }
-  return parsed;
+  return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
 Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
@@ -232,8 +254,9 @@ class MealPlanEntry {
 class ShoppingItem {
   final int id;
   final String text;
-  final bool done;
+  final bool done; // derived from 0/1
   final String? category;
+
   ShoppingItem({
     required this.id,
     required this.text,
@@ -241,47 +264,72 @@ class ShoppingItem {
     this.category,
   });
 
-  factory ShoppingItem.fromJson(Map<String, dynamic> j) => ShoppingItem(
-    id: (j['id'] as num).toInt(),
-    text: j['text'] as String,
-    done: (j['done'] as num).toInt() != 0,
-    category: (j['category'] as String?)?.isNotEmpty == true
-        ? j['category'] as String
-        : null,
-  );
+  factory ShoppingItem.fromJson(Map<String, dynamic> j) {
+    final doneRaw = j['done'];
+    final doneBool = switch (doneRaw) {
+      bool b => b,
+      num n => n.toInt() != 0,
+      String s => int.tryParse(s) != null && int.parse(s) != 0,
+      _ => false,
+    };
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'text': text,
-    'done': done,
-    'category': category,
-  };
+    return ShoppingItem(
+      id: (j['id'] as num).toInt(),
+      text: j['text'] as String,
+      done: doneBool,
+      category: j['category'] as String?,
+    );
+  }
 }
 
 class Ingredient {
   final double? quantity;
   final String? unit;
   final String name;
+  final String? prep;
 
-  Ingredient({this.quantity, this.unit, required this.name});
+  Ingredient({this.quantity, this.unit, required this.name, this.prep});
 
-  factory Ingredient.fromJson(Map<String, dynamic> j) => Ingredient(
-    quantity: (j['quantity'] is num) ? (j['quantity'] as num).toDouble() : null,
-    unit: (j['unit'] as String?)?.isNotEmpty == true
-        ? j['unit'] as String
-        : null,
-    name: j['name'] as String,
-  );
+  factory Ingredient.fromJson(Map<String, dynamic> j) {
+    String? prep;
+
+    final p = j['prep'];
+    if (p is String && p.trim().isNotEmpty) {
+      prep = p.trim();
+    } else {
+      final pw = j['prep_words'];
+      if (pw is List) {
+        final words = pw
+            .whereType<String>()
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (words.isNotEmpty) prep = words.join(' ');
+      }
+    }
+
+    return Ingredient(
+      quantity: (j['quantity'] is num)
+          ? (j['quantity'] as num).toDouble()
+          : null,
+      unit: (j['unit'] as String?)?.isNotEmpty == true
+          ? j['unit'] as String
+          : null,
+      name: j['name'] as String,
+      prep: prep,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'quantity': quantity,
     'unit': unit,
     'name': name,
+    if (prep != null) 'prep': prep,
   };
 }
 
 extension IngredientFormat on Ingredient {
-  String toLine({double factor = 1.0}) {
+  String toLine({double factor = 1.0, bool includePrep = true}) {
     double? q = quantity;
     if (q != null) q = q * factor;
 
@@ -298,13 +346,17 @@ extension IngredientFormat on Ingredient {
       return trimZeros(s);
     }
 
+    final prepSuffix = (includePrep && prep != null && prep!.isNotEmpty)
+        ? ', ${prep!}'
+        : '';
+
     if (q != null && unit != null && unit!.isNotEmpty) {
-      return '${numStr(q, unit)} $unit $name';
+      return '${numStr(q, unit)} $unit $name$prepSuffix';
     } else if (q != null) {
       final s = ((q * 100).round() / 100.0).toString();
-      return '${trimZeros(s)} $name';
+      return '${trimZeros(s)} $name$prepSuffix';
     } else {
-      return name;
+      return '$name$prepSuffix';
     }
   }
 }
@@ -616,15 +668,7 @@ Future<ShoppingItem> createShoppingItem(String text) async {
 Future<ShoppingItem> toggleShoppingItem({
   required int id,
   required bool done,
-}) async {
-  final r = await http.patch(
-    _u('/shopping/$id'),
-    headers: _headers({'content-type': 'application/json'}),
-    body: jsonEncode({'done': done}),
-  );
-  if (r.statusCode != 200) _throw(r);
-  return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
-}
+}) => updateShoppingItem(id: id, done: done);
 
 Future<void> deleteShoppingItem(int id) async {
   final r = await http.delete(_u('/shopping/$id'), headers: _headers());

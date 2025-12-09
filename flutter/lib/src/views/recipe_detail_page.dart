@@ -297,7 +297,10 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                       for (var i = 0; i < items.length; i++) {
                                         if (selections[i]) {
                                           picked.add(
-                                            items[i].toLine(factor: _scale),
+                                            items[i].toLine(
+                                              factor: _scale,
+                                              includePrep: false,
+                                            ),
                                           );
                                         }
                                       }
