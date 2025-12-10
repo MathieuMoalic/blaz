@@ -10,58 +10,52 @@ import 'recipe_picker_sheet.dart';
 class MealPlanPage extends StatefulWidget {
   const MealPlanPage({super.key});
   @override
-  State<MealPlanPage> createState() => _MealPlanPageState();
+  State<MealPlanPage> createState() => MealPlanPageState();
 }
 
-class _MealPlanPageState extends State<MealPlanPage> {
-  // how many days to show around today
-  static const int _pastDays = 60; // shown above today (offscreen initially)
-  static const int _futureDays = 30; // shown below today
-
-  // warm enough visible days so content shows immediately
+// RENAMED to public
+class MealPlanPageState extends State<MealPlanPage> {
+  static const int _pastDays = 60;
+  static const int _futureDays = 30;
   static const int _initialWarmCount = 8;
 
   final _fmt = DateFormat('yyyy-MM-dd');
   late final DateTime _today;
 
-  // Offsets from today: -_pastDays..0.._futureDays
   late final List<int> _dayOffsets;
 
-  // Per-day async/cache
   final Map<String, Future<List<MealPlanEntry>>> _futures = {};
   final Map<String, List<MealPlanEntry>> _cache = {};
-  final Map<int, Recipe> _recipeIndex = {}; // id -> Recipe (thumb/title)
+  final Map<int, Recipe> _recipeIndex = {};
 
-  // Index-based list controllers
   final _itemScrollController = ItemScrollController();
   final _itemPositionsListener = ItemPositionsListener.create();
+
+  bool _refreshing = false; // NEW
 
   @override
   void initState() {
     super.initState();
     _today = _stripTime(DateTime.now());
 
-    // Build fixed range
     _dayOffsets = List.generate(
       _pastDays + _futureDays + 1,
       (i) => i - _pastDays,
-    ); // [-past .. +future]
+    );
 
-    // Warm today's future + a few below so we see data immediately
-    final firstWarmIndex = _pastDays; // index of "today"
+    final firstWarmIndex = _pastDays;
     final lastWarmIndex = (_pastDays + _initialWarmCount).clamp(
       0,
       _dayOffsets.length - 1,
     );
+
     for (int i = firstWarmIndex; i <= lastWarmIndex; i++) {
       final iso = _dayForOffset(_dayOffsets[i]);
       _futures.putIfAbsent(iso, () => fetchMealPlanForDay(iso));
     }
 
-    // Warm recipe index (for thumbs/titles)
     _warmRecipeIndex();
 
-    // After first frame, jump so TODAY is at the top of the viewport.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_itemScrollController.isAttached) {
         _itemScrollController.jumpTo(index: _pastDays, alignment: 0.0);
@@ -69,7 +63,6 @@ class _MealPlanPageState extends State<MealPlanPage> {
     });
   }
 
-  // Helpers
   DateTime _stripTime(DateTime d) => DateTime(d.year, d.month, d.day);
 
   String _dayForOffset(int offset) =>
@@ -98,9 +91,131 @@ class _MealPlanPageState extends State<MealPlanPage> {
           _recipeIndex[r.id] = r;
         }
       });
-    } catch (_) {
-      /* soft-fail */
+    } catch (_) {}
+  }
+
+  List<String> _visibleDayIsos() {
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty) {
+      return [_dayForOffset(0)];
     }
+
+    final indices = positions.map((p) => p.index).toList();
+    indices.sort();
+    final minI = (indices.first - 1).clamp(0, _dayOffsets.length - 1);
+    final maxI = (indices.last + 1).clamp(0, _dayOffsets.length - 1);
+
+    final days = <String>[];
+    for (int i = minI; i <= maxI; i++) {
+      days.add(_dayForOffset(_dayOffsets[i]));
+    }
+    return days;
+  }
+
+  /// Public refresh for HomeShell + pull-to-refresh.
+  /// Re-fetches only visible (and near-visible) days to keep it light.
+  Future<void> refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+
+    final days = _visibleDayIsos();
+
+    try {
+      // Start day fetches without clearing UI.
+      setState(() {
+        for (final d in days) {
+          _futures[d] = fetchMealPlanForDay(d);
+        }
+      });
+
+      // In parallel, refresh recipe thumbnails/titles.
+      final recipeFuture = _warmRecipeIndex();
+
+      final results = await Future.wait(days.map((d) => _futures[d]!));
+      await recipeFuture;
+
+      if (!mounted) return;
+      setState(() {
+        for (int i = 0; i < days.length; i++) {
+          _cache[days[i]] = results[i];
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              RefreshIndicator(
+                onRefresh: refresh,
+                child: ScrollablePositionedList.builder(
+                  itemScrollController: _itemScrollController,
+                  itemPositionsListener: _itemPositionsListener,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: _dayOffsets.length,
+                  itemBuilder: (context, i) {
+                    final offset = _dayOffsets[i];
+                    final dayIso = _dayForOffset(offset);
+                    final isToday = offset == 0;
+
+                    _futures.putIfAbsent(
+                      dayIso,
+                      () => fetchMealPlanForDay(dayIso),
+                    );
+
+                    return KeyedSubtree(
+                      key: ValueKey(dayIso),
+                      child: DayTimelineBox(
+                        dayLabel: _labelForOffset(offset),
+                        isToday: isToday,
+                        dayIso: dayIso,
+                        railColor: _railColorForOffset(offset, theme),
+                        future: _futures[dayIso]!,
+                        cached: _cache[dayIso],
+                        recipeIndex: _recipeIndex,
+                        onAssign: () => _openRecipePicker(dayIso),
+                        onOpenRecipe: (id) async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => RecipeDetailPage(recipeId: id),
+                            ),
+                          );
+                        },
+                        onUnassign: (meal) async {
+                          await unassignRecipeFromDay(
+                            day: meal.day,
+                            recipeId: meal.recipeId,
+                          );
+                          // Keep targeted reload if you like:
+                          await _reloadDay(dayIso);
+                        },
+                        onLoaded: (items) => _cache[dayIso] = items,
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              if (_refreshing)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _reloadDay(String dayIso) async {
@@ -116,6 +231,7 @@ class _MealPlanPageState extends State<MealPlanPage> {
     final all = _recipeIndex.isNotEmpty
         ? _recipeIndex.values.toList()
         : await fetchRecipes();
+
     if (_recipeIndex.isEmpty) {
       setState(() {
         for (final r in all) {
@@ -149,60 +265,5 @@ class _MealPlanPageState extends State<MealPlanPage> {
         ? 'Assigned $ok recipe(s) to $dayIso'
         : 'Assigned $ok, failed ${failures.length} (IDs: ${failures.join(', ')})';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Column(
-      children: [
-        Expanded(
-          child: ScrollablePositionedList.builder(
-            itemScrollController: _itemScrollController,
-            itemPositionsListener: _itemPositionsListener,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: _dayOffsets.length,
-            itemBuilder: (context, i) {
-              final offset = _dayOffsets[i];
-              final dayIso = _dayForOffset(offset);
-              final isToday = offset == 0;
-
-              // Lazily create the future only when this row builds the first time.
-              _futures.putIfAbsent(dayIso, () => fetchMealPlanForDay(dayIso));
-
-              return KeyedSubtree(
-                key: ValueKey(dayIso),
-                child: DayTimelineBox(
-                  dayLabel: _labelForOffset(offset),
-                  isToday: isToday,
-                  dayIso: dayIso,
-                  railColor: _railColorForOffset(offset, theme),
-                  future: _futures[dayIso]!,
-                  cached: _cache[dayIso],
-                  recipeIndex: _recipeIndex,
-                  onAssign: () => _openRecipePicker(dayIso),
-                  onOpenRecipe: (id) async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => RecipeDetailPage(recipeId: id),
-                      ),
-                    );
-                  },
-                  onUnassign: (meal) async {
-                    await unassignRecipeFromDay(
-                      day: meal.day,
-                      recipeId: meal.recipeId,
-                    );
-                    await _reloadDay(dayIso);
-                  },
-                  onLoaded: (items) => _cache[dayIso] = items,
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
   }
 }

@@ -22,11 +22,21 @@ class RecipesPageState extends State<RecipesPage> {
   String _query = '';
   Timer? _debounce;
 
+  // NEW: cache + soft loading flag
+  List<Recipe> _cache = const <Recipe>[];
+  bool _refreshing = false;
+
   @override
   void initState() {
     super.initState();
-    _future = fetchRecipes();
+    _future = _loadInitial();
     _filterCtrl.addListener(_onFilterChanged);
+  }
+
+  Future<List<Recipe>> _loadInitial() async {
+    final list = await fetchRecipes();
+    _cache = list;
+    return list;
   }
 
   @override
@@ -45,12 +55,25 @@ class RecipesPageState extends State<RecipesPage> {
     });
   }
 
+  /// Refresh without blanking the grid.
   Future<void> refresh() async {
-    final f = fetchRecipes();
-    setState(() {
-      _future = f;
-    });
-    await f;
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+
+    try {
+      final list = await fetchRecipes();
+      if (!mounted) return;
+
+      setState(() {
+        _cache = list;
+        // Important: set to an already-completed future to avoid flicker.
+        _future = Future.value(list);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _refreshing = false);
+      }
+    }
   }
 
   String _ymd(DateTime d) =>
@@ -156,7 +179,6 @@ class RecipesPageState extends State<RecipesPage> {
           ),
         ),
 
-        // Filter field
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
           child: TextField(
@@ -184,70 +206,95 @@ class RecipesPageState extends State<RecipesPage> {
         ),
 
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: refresh,
-            child: FutureBuilder<List<Recipe>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(child: Text('Error: ${snap.error}'));
-                }
-                final items = snap.data ?? const <Recipe>[];
-                final filtered = items
-                    .where((r) => _matches(r, _query))
-                    .toList();
-                if (filtered.isEmpty) {
-                  return const _EmptyState();
-                }
+          child: Stack(
+            children: [
+              RefreshIndicator(
+                onRefresh: refresh,
+                child: FutureBuilder<List<Recipe>>(
+                  future: _future,
+                  builder: (context, snap) {
+                    // Use cache during loading to avoid flicker.
+                    final items =
+                        (snap.connectionState == ConnectionState.done &&
+                            snap.data != null)
+                        ? snap.data!
+                        : _cache;
 
-                return LayoutBuilder(
-                  builder: (context, c) {
-                    int cols = 2;
-                    final w = c.maxWidth;
-                    if (w >= 1200) {
-                      cols = 5;
-                    } else if (w >= 900) {
-                      cols = 4;
-                    } else if (w >= 600) {
-                      cols = 3;
+                    if (items.isEmpty) {
+                      if (snap.hasError) {
+                        return Center(child: Text('Error: ${snap.error}'));
+                      }
+                      if (snap.connectionState != ConnectionState.done) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      return const _EmptyState();
                     }
 
-                    return GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: cols,
-                        mainAxisSpacing: 12,
-                        crossAxisSpacing: 12,
-                        childAspectRatio: 3 / 4,
-                      ),
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) {
-                        final r = filtered[i];
-                        final thumb = mediaUrl(r.imagePathSmall);
+                    final filtered = items
+                        .where((r) => _matches(r, _query))
+                        .toList();
 
-                        return _RecipeCard(
-                          title: r.title,
-                          imageUrl: thumb,
-                          onOpen: () async {
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    RecipeDetailPage(recipeId: r.id),
+                    if (filtered.isEmpty) {
+                      return const _EmptyState();
+                    }
+
+                    return LayoutBuilder(
+                      builder: (context, c) {
+                        int cols = 2;
+                        final w = c.maxWidth;
+                        if (w >= 1200) {
+                          cols = 5;
+                        } else if (w >= 900) {
+                          cols = 4;
+                        } else if (w >= 600) {
+                          cols = 3;
+                        }
+
+                        return GridView.builder(
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: cols,
+                                mainAxisSpacing: 12,
+                                crossAxisSpacing: 12,
+                                childAspectRatio: 3 / 4,
                               ),
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) {
+                            final r = filtered[i];
+                            final thumb = mediaUrl(r.imagePathSmall);
+
+                            return _RecipeCard(
+                              title: r.title,
+                              imageUrl: thumb,
+                              onOpen: () async {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        RecipeDetailPage(recipeId: r.id),
+                                  ),
+                                );
+                                await refresh();
+                              },
+                              onAssign: () => _assignRecipe(r),
                             );
-                            await refresh();
                           },
-                          onAssign: () => _assignRecipe(r),
                         );
                       },
                     );
                   },
-                );
-              },
-            ),
+                ),
+              ),
+
+              // Subtle top loading bar instead of full-screen spinner.
+              if (_refreshing)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
           ),
         ),
       ],

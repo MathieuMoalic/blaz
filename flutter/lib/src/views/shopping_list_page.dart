@@ -14,10 +14,11 @@ List<String> get kShoppingCategoryValues =>
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
   @override
-  State<ShoppingListPage> createState() => _ShoppingListPageState();
+  State<ShoppingListPage> createState() => ShoppingListPageState();
 }
 
-class _ShoppingListPageState extends State<ShoppingListPage> {
+// RENAMED to be accessible by GlobalKey
+class ShoppingListPageState extends State<ShoppingListPage> {
   late Future<List<ShoppingItem>> _future;
   final _ctrl = TextEditingController();
 
@@ -27,10 +28,13 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   /// Hide rows immediately when checked; they vanish before the network round-trip.
   final Set<int> _hidden = <int>{};
 
+  // NEW: soft loading flag
+  bool _refreshing = false;
+
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = _loadInitial();
   }
 
   @override
@@ -39,22 +43,38 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
     super.dispose();
   }
 
-  Future<List<ShoppingItem>> _load() async {
+  Future<List<ShoppingItem>> _loadInitial() async {
     final list = await fetchShoppingList();
     _cache = list;
     return list;
   }
 
-  Future<void> _refresh() async {
-    final f = _load();
-    setState(() {
-      _future = f;
-    });
-    await f;
-    if (!mounted) return;
-    setState(() {
-      _hidden.clear();
-    });
+  Future<List<ShoppingItem>> _loadFromServer() async {
+    final list = await fetchShoppingList();
+    _cache = list;
+    return list;
+  }
+
+  /// Public refresh callable from HomeShell.
+  /// Does not blank the list.
+  Future<void> refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+
+    try {
+      final list = await _loadFromServer();
+      if (!mounted) return;
+      setState(() {
+        _hidden.clear();
+        _future = Future<List<ShoppingItem>>.value(list);
+      });
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<void> _refreshPull() async {
+    await refresh();
   }
 
   void _applyLocalUpdate(
@@ -81,12 +101,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       category: null,
     );
 
-    // Show instantly
     _applyLocalUpdate((list) => [tempItem, ...list]);
 
     try {
       final created = await createShoppingItem(raw);
-
       if (!mounted) return;
 
       _applyLocalUpdate((list) {
@@ -99,9 +117,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
         return list;
       });
 
-      // If your backend assigns category asynchronously,
-      // this picks up the final category without blocking UI.
-      unawaited(Future.delayed(const Duration(milliseconds: 800), _refresh));
+      unawaited(Future.delayed(const Duration(milliseconds: 800), refresh));
     } catch (e) {
       _applyLocalUpdate((list) => list.where((x) => x.id != tempId).toList());
       if (mounted) {
@@ -157,93 +173,119 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
           ),
         ),
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: _refresh,
-            child: FutureBuilder<List<ShoppingItem>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(child: Text('Error: ${snap.error}'));
-                }
-                final all = (snap.data ?? const <ShoppingItem>[]);
-                // Only show active, non-hidden items.
-                final items = all
-                    .where((i) => !i.done && !_hidden.contains(i.id))
-                    .toList();
+          child: Stack(
+            children: [
+              RefreshIndicator(
+                onRefresh: _refreshPull,
+                child: FutureBuilder<List<ShoppingItem>>(
+                  future: _future,
+                  builder: (context, snap) {
+                    // Use cache while loading to avoid flicker.
+                    final all =
+                        (snap.connectionState == ConnectionState.done &&
+                            snap.data != null)
+                        ? snap.data!
+                        : _cache;
 
-                if (items.isEmpty) {
-                  return const Center(child: Text('No items'));
-                }
+                    if (all.isEmpty) {
+                      if (snap.hasError) {
+                        return Center(child: Text('Error: ${snap.error}'));
+                      }
+                      if (snap.connectionState != ConnectionState.done) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      return const Center(child: Text('No items'));
+                    }
 
-                final grouped = _group(items);
-                final orderedCats = <String>[
-                  ...kShoppingCategoryValues.where(grouped.containsKey),
-                  ...grouped.keys.where(
-                    (c) => !kShoppingCategoryValues.contains(c),
-                  ),
-                ];
+                    final items = all
+                        .where((i) => !i.done && !_hidden.contains(i.id))
+                        .toList();
 
-                return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  itemBuilder: (context, section) {
-                    final cat = orderedCats[section];
-                    final rows = grouped[cat]!;
-                    return Card(
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // Section header (category printed once)
-                          Container(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-                            child: Text(
-                              kShoppingCategoryLabelByValue[cat] ?? cat,
-                              style: theme.textTheme.titleMedium,
-                            ),
-                          ),
-                          for (final it in rows)
-                            _RowTile(
-                              item: it,
-                              onChanged: (v) async {
-                                // Optimistically hide immediately.
-                                setState(() => _hidden.add(it.id));
-                                try {
-                                  final updated = await toggleShoppingItem(
-                                    id: it.id,
-                                    done: v ?? false,
-                                  );
-                                  // Remove it from local cache immediately too.
-                                  _applyLocalUpdate(
-                                    (list) => list
-                                        .where((x) => x.id != updated.id)
-                                        .toList(),
-                                  );
-                                } finally {
-                                  // Ensure server state and local state stay in sync.
-                                  _refresh();
-                                }
-                              },
-                              onEdit: () => _editItem(context, it),
-                            ),
-                        ],
+                    if (items.isEmpty) {
+                      return const Center(child: Text('No items'));
+                    }
+
+                    final grouped = _group(items);
+                    final orderedCats = <String>[
+                      ...kShoppingCategoryValues.where(grouped.containsKey),
+                      ...grouped.keys.where(
+                        (c) => !kShoppingCategoryValues.contains(c),
                       ),
+                    ];
+
+                    return ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      itemBuilder: (context, section) {
+                        final cat = orderedCats[section];
+                        final rows = grouped[cat]!;
+                        return Card(
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Container(
+                                color:
+                                    theme.colorScheme.surfaceContainerHighest,
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  8,
+                                  12,
+                                  6,
+                                ),
+                                child: Text(
+                                  kShoppingCategoryLabelByValue[cat] ?? cat,
+                                  style: theme.textTheme.titleMedium,
+                                ),
+                              ),
+                              for (final it in rows)
+                                _RowTile(
+                                  item: it,
+                                  onChanged: (v) async {
+                                    setState(() => _hidden.add(it.id));
+                                    try {
+                                      final updated = await toggleShoppingItem(
+                                        id: it.id,
+                                        done: v ?? false,
+                                      );
+                                      _applyLocalUpdate(
+                                        (list) => list
+                                            .where((x) => x.id != updated.id)
+                                            .toList(),
+                                      );
+                                    } finally {
+                                      // Keep state consistent; still no flicker.
+                                      await refresh();
+                                    }
+                                  },
+                                  onEdit: () => _editItem(context, it),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemCount: orderedCats.length,
                     );
                   },
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemCount: orderedCats.length,
-                );
-              },
-            ),
+                ),
+              ),
+
+              // Subtle progress bar during refresh.
+              if (_refreshing)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
           ),
         ),
       ],
     );
   }
 
+  // _editItem unchanged except replace any _refresh() calls with refresh()
   Future<void> _editItem(BuildContext context, ShoppingItem it) async {
     final ctrl = TextEditingController(text: it.text);
     String cat = _catValue(it.category);
@@ -343,9 +385,8 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                                 category: newCat,
                               );
                               if (!context.mounted) return;
-                              // Close first so the sheet feels instant…
                               Navigator.pop(ctx, true);
-                              // …then reflect the change locally right away.
+
                               _applyLocalUpdate((list) {
                                 final idx = list.indexWhere(
                                   (x) => x.id == it.id,
@@ -368,10 +409,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       },
     );
 
-    // If deleted or saved via the sheet, refresh grouping; otherwise do nothing.
     if (changed == true) {
-      // Grouping may change when category changes; ensure fresh order from cache.
-      setState(() {}); // triggers rebuild using already-updated _cache
+      setState(() {});
+      // Optionally pull a fresh server snapshot
+      unawaited(refresh());
     }
   }
 }
