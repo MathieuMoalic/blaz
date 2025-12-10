@@ -262,10 +262,24 @@ pub async fn create(
 
     // Structured path only if a leading qty was detected
     if parsed.qty.is_some() {
-        let (unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
+        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
+        if qty_norm.is_none() {
+            unit_norm = None;
+        }
+
         let key = make_key(&parsed.name_norm, unit_norm);
 
-        let category_guess = guess_category(&state, &parsed.name_raw).await;
+        // Reuse existing category if present to avoid redundant LLM calls.
+        let existing: Option<(i64, Option<String>, i64)> =
+            sqlx::query_as(r"SELECT id, category, done FROM shopping_items WHERE key = ?")
+                .bind(&key)
+                .fetch_optional(&state.pool)
+                .await?;
+
+        let category_guess = match existing.as_ref().and_then(|(_, c, _)| c.clone()) {
+            Some(c) if !c.trim().is_empty() => c,
+            _ => guess_category(&state, &parsed.name_raw).await,
+        };
 
         sqlx::query(
             r"
@@ -274,7 +288,10 @@ pub async fn create(
             ON CONFLICT(key) DO UPDATE SET
               quantity = COALESCE(shopping_items.quantity, 0)
                        + COALESCE(excluded.quantity, 0),
-              category = COALESCE(shopping_items.category, excluded.category)
+              category = COALESCE(shopping_items.category, excluded.category),
+              name = excluded.name,
+              unit = excluded.unit,
+              done = 0
             ",
         )
         .bind(&parsed.name_norm)
@@ -296,14 +313,28 @@ pub async fn create(
 
     // Fallback: unitless item
     let name_norm = parsed.name_norm;
-    let category_guess = guess_category(&state, &parsed.name_raw).await;
     let key = make_key(&name_norm, None);
+
+    // Reuse existing category if present to avoid redundant LLM calls.
+    let existing_cat: Option<String> =
+        sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
+            .bind(&key)
+            .fetch_optional(&state.pool)
+            .await?;
+
+    let category_guess = match existing_cat {
+        Some(c) if !c.trim().is_empty() => c,
+        _ => guess_category(&state, &parsed.name_raw).await,
+    };
 
     sqlx::query(
         r"
         INSERT INTO shopping_items (name, unit, quantity, done, key, category)
         VALUES (?, NULL, NULL, 0, ?, ?)
-        ON CONFLICT(key) DO NOTHING
+        ON CONFLICT(key) DO UPDATE SET
+          category = COALESCE(shopping_items.category, excluded.category),
+          name = excluded.name,
+          done = 0
         ",
     )
     .bind(&name_norm)
@@ -604,20 +635,29 @@ pub async fn merge_items(
 
         let key = make_key(&parsed_name.name_norm, unit_norm);
 
+        // Normalize/validate incoming category, if present
         let chosen_cat = it.category.and_then(|s| {
             let s = crate::units::norm_whitespace(&s);
             if s.is_empty() { None } else { Some(s) }
         });
 
-        let chosen_cat = match chosen_cat {
-            Some(c) => {
-                // Validate enum
-                if Category::from_str(&c).is_none() {
-                    return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
-                }
-                Some(c)
+        let chosen_cat = if let Some(c) = chosen_cat {
+            if Category::from_str(&c).is_none() {
+                return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
             }
-            None => Some(guess_category(&state, &parsed_name.name_raw).await),
+            Some(c)
+        } else {
+            // Reuse existing category if present to avoid redundant LLM calls.
+            let existing_cat: Option<String> =
+                sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
+                    .bind(&key)
+                    .fetch_optional(&state.pool)
+                    .await?;
+
+            Some(match existing_cat {
+                Some(c) if !c.trim().is_empty() => c,
+                _ => guess_category(&state, &parsed_name.name_raw).await,
+            })
         };
 
         sqlx::query(
@@ -632,10 +672,11 @@ pub async fn merge_items(
               END,
               name = excluded.name,
               unit = excluded.unit,
-              category = COALESCE(shopping_items.category, excluded.category)
+              category = COALESCE(shopping_items.category, excluded.category),
+              done = 0
             ",
         )
-        .bind(&parsed_name.name_norm) // keep normalized name in DB for consistency
+        .bind(&parsed_name.name_norm)
         .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
