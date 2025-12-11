@@ -118,12 +118,23 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     if qty.is_none() {
         let name_raw = raw.to_string();
         let name_norm = normalize_name(&name_raw);
-        return Some(ParsedItem {
+        let parsed = ParsedItem {
             qty: None,
             unit: None,
             name_raw,
             name_norm,
-        });
+        };
+
+        tracing::info!(
+            raw = %raw,
+            qty = ?parsed.qty,
+            unit = ?parsed.unit,
+            name_raw = %parsed.name_raw,
+            name_norm = %parsed.name_norm,
+            "parsed ingredient line (no leading quantity)"
+        );
+
+        return Some(parsed);
     }
 
     // Optional unit
@@ -147,23 +158,45 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
         // Mirror old fallback: ignore parsed qty/unit if name is missing
         let name_raw = raw.to_string();
         let name_norm = normalize_name(&name_raw);
-        return Some(ParsedItem {
+        let parsed = ParsedItem {
             qty: None,
             unit: None,
             name_raw,
             name_norm,
-        });
+        };
+
+        tracing::info!(
+            raw = %raw,
+            qty = ?parsed.qty,
+            unit = ?parsed.unit,
+            name_raw = %parsed.name_raw,
+            name_norm = %parsed.name_norm,
+            "parsed ingredient line (missing name after qty)"
+        );
+
+        return Some(parsed);
     }
 
     let name_raw = tokens[idx..].join(" ");
     let name_norm = normalize_name(&name_raw);
 
-    Some(ParsedItem {
+    let parsed = ParsedItem {
         qty,
         unit,
         name_raw,
         name_norm,
-    })
+    };
+
+    tracing::info!(
+        raw = %raw,
+        qty = ?parsed.qty,
+        unit = ?parsed.unit,
+        name_raw = %parsed.name_raw,
+        name_norm = %parsed.name_norm,
+        "parsed ingredient line"
+    );
+
+    Some(parsed)
 }
 
 /* ---------- DB helpers ---------- */
