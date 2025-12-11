@@ -52,9 +52,9 @@ flutter_launcher_icons:
   ios: false
   image_path_android: assets/icon/icon_foreground.png # fallback for legacy
   adaptive_icon_foreground: assets/icon/icon_foreground.png
-  adaptive_icon_background: "#FFFFFF" # or assets/icon/icon_background.png
+  adaptive_icon_background: "#222222" 
   adaptive_icon_monochrome: assets/icon/icon_foreground.png
-  min_sdk_android: 2.1
+  min_sdk_android: 21
 
 dev_dependencies:
   flutter_test:
