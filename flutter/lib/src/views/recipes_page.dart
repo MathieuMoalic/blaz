@@ -3,12 +3,8 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
-import 'login_page.dart';
-import '../auth.dart';
 import '../widgets/app_title.dart';
 import 'app_state_page.dart';
-
-enum _MenuAction { settings, logout }
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -22,7 +18,7 @@ class RecipesPageState extends State<RecipesPage> {
   String _query = '';
   Timer? _debounce;
 
-  // NEW: cache + soft loading flag
+  // cache + soft loading flag
   List<Recipe> _cache = const <Recipe>[];
   bool _refreshing = false;
 
@@ -104,6 +100,15 @@ class RecipesPageState extends State<RecipesPage> {
     }
   }
 
+  Future<void> _onAddRecipe() async {
+    final created = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (_) => const AddRecipePage()));
+    if (created == true) {
+      await refresh();
+    }
+  }
+
   bool _matches(Recipe r, String q) {
     if (q.isEmpty) return true;
     final needle = q.toLowerCase();
@@ -132,48 +137,13 @@ class RecipesPageState extends State<RecipesPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                tooltip: 'Add recipe',
-                icon: const Icon(Icons.add),
+                tooltip: 'App settings',
+                icon: const Icon(Icons.settings), // cog wheel
                 onPressed: () async {
-                  final created = await Navigator.of(context).push<bool>(
-                    MaterialPageRoute(builder: (_) => const AddRecipePage()),
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AppStatePage()),
                   );
-                  if (created == true) {
-                    await refresh();
-                  }
                 },
-              ),
-              PopupMenuButton<_MenuAction>(
-                tooltip: 'Account',
-                icon: const Icon(Icons.account_circle),
-                onSelected: (choice) async {
-                  switch (choice) {
-                    case _MenuAction.settings:
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const AppStatePage()),
-                      );
-                      break;
-                    case _MenuAction.logout:
-                      await Auth.logout();
-                      if (!context.mounted) return;
-                      Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (_) => const LoginPage()),
-                        (_) => false,
-                      );
-                      break;
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem<_MenuAction>(
-                    value: _MenuAction.settings,
-                    child: ListTile(
-                      leading: Icon(Icons.settings),
-                      title: Text('App settings'),
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                ],
               ),
             ],
           ),
@@ -294,6 +264,17 @@ class RecipesPageState extends State<RecipesPage> {
                   top: 0,
                   child: LinearProgressIndicator(minHeight: 2),
                 ),
+
+              // Floating "Add recipe" button in lower right
+              Positioned(
+                right: 16,
+                bottom: 16,
+                child: FloatingActionButton(
+                  onPressed: _onAddRecipe,
+                  tooltip: 'Add recipe',
+                  child: const Icon(Icons.add),
+                ),
+              ),
             ],
           ),
         ),

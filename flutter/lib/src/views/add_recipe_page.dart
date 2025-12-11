@@ -295,7 +295,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                 controller: _ingredientsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Ingredients (one per line)',
-                  hintText: 'e.g.\n2 eggs\n150 g flour\nPinch of salt',
+                  hintText: 'e.g.\n2 cloves garlic\n150 g flour\nPinch of salt',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
@@ -307,7 +307,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
                 controller: _instructionsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Instructions (one step per line)',
-                  hintText: 'e.g.\nWhisk eggs.\nFold in flour.\nBake 20 min.',
+                  hintText:
+                      'e.g.\nMince the garlic.\nFold in flour.\nBake 20 min.',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),

@@ -183,7 +183,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
                 controller: _instructionsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Instructions (one step per line)',
-                  hintText: 'e.g.\nWhisk eggs.\nFold in flour.\nBake 20 min.',
+                  hintText: 'e.g.\nFold in flour.\nBake 20 min.',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
