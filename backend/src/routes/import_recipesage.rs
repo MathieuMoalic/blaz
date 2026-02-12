@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -82,20 +82,8 @@ struct ImportResponse {
 
 pub async fn import_recipesage(
     State(state): State<AppState>,
-    headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    // Verify JWT authentication
-    if let Err(status) = verify_auth(&state, &headers).await {
-        return (
-            status,
-            Json(ImportResponse {
-                imported_count: 0,
-                failed: vec!["Unauthorized".to_string()],
-            }),
-        );
-    }
-
     // Parse the JSON manually to avoid exposing private types in the signature
     let recipes: Vec<JsonLdRecipe> = match serde_json::from_str(&body) {
         Ok(r) => r,
@@ -349,37 +337,5 @@ async fn store_recipe_image_bytes(
     .execute(&state.pool)
     .await?;
 
-    Ok(())
-}
-
-async fn verify_auth(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
-    // Extract token from Authorization header
-    let auth_header = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let token = auth_header
-        .strip_prefix("Bearer ")
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    // Decode and verify JWT
-    let settings = state.settings.read().await;
-    let decoding_key = jsonwebtoken::DecodingKey::from_secret(settings.jwt_secret.as_bytes());
-    
-    #[allow(dead_code)]
-    #[derive(serde::Deserialize)]
-    struct Claims {
-        sub: i64,
-        exp: u64,
-    }
-    
-    let _token_data = jsonwebtoken::decode::<Claims>(
-        token,
-        &decoding_key,
-        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
-    )
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    
     Ok(())
 }

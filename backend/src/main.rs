@@ -8,6 +8,7 @@
 #![allow(clippy::multiple_crate_versions)]
 
 mod app;
+mod auth_middleware;
 mod categories;
 mod config;
 mod db;

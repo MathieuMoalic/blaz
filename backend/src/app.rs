@@ -1,12 +1,13 @@
 use crate::routes::auth;
 use crate::{
+    auth_middleware::require_auth,
     logging::{access_log, log_payloads},
     models::AppState,
     routes::{app_state, import_recipesage, meal_plan, parse_recipe, recipes, shopping},
 };
 
 use axum::extract::DefaultBodyLimit;
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 
@@ -33,8 +34,15 @@ pub fn build_app(state: AppState) -> Router {
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(PropagateRequestIdLayer::x_request_id());
 
-    Router::new()
+    // Public routes (no authentication required)
+    let public_routes = Router::new()
         .route("/healthz", get(healthz))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/status", get(auth::auth_status));
+
+    // Protected routes (authentication required)
+    let protected_routes = Router::new()
         .route(
             "/app-state",
             get(app_state::get)
@@ -66,9 +74,11 @@ pub fn build_app(state: AppState) -> Router {
             patch(shopping::patch_shopping_item).delete(shopping::delete),
         )
         .route("/shopping/merge", post(shopping::merge_items))
-        .route("/auth/register", post(auth::register))
-        .route("/auth/login", post(auth::login))
-        .route("/auth/status", get(auth::auth_status))
+        .route_layer(from_fn_with_state(state.clone(), require_auth));
+
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .nest_service("/media", media_service)
         .with_state(state)
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for large imports
