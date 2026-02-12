@@ -28,6 +28,11 @@ pub struct Config {
     /// Optional log file path (logs are written to stdout + this file)
     #[arg(long, env = "BLAZ_LOG_FILE", default_value = "blaz.logs")]
     pub log_file: PathBuf,
+
+    /// CORS allowed origin (e.g., https://blaz.yourdomain.com)
+    /// If not set, allows all origins (⚠️ insecure for production!)
+    #[arg(long, env = "BLAZ_CORS_ORIGIN")]
+    pub cors_origin: Option<String>,
 }
 
 impl Config {

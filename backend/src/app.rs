@@ -1,6 +1,7 @@
 use crate::routes::auth;
 use crate::{
     auth_middleware::require_auth,
+    config::Config,
     logging::{access_log, log_payloads},
     models::AppState,
     routes::{app_state, import_recipesage, meal_plan, parse_recipe, recipes, shopping},
@@ -20,11 +21,23 @@ async fn healthz() -> Json<&'static str> {
     Json("ok")
 }
 
-fn cors_layer() -> CorsLayer {
-    CorsLayer::new()
-        .allow_origin(Any)
+fn cors_layer(config: &Config) -> CorsLayer {
+    let cors = CorsLayer::new()
         .allow_methods(Any)
-        .allow_headers(Any)
+        .allow_headers(Any);
+
+    if let Some(origin) = &config.cors_origin {
+        // Specific origin for production
+        cors.allow_origin(
+            origin
+                .parse::<axum::http::HeaderValue>()
+                .expect("Invalid CORS origin")
+        )
+    } else {
+        // Allow any origin (development only)
+        tracing::warn!("CORS configured to allow any origin - not secure for production!");
+        cors.allow_origin(Any)
+    }
 }
 
 pub fn build_app(state: AppState) -> Router {
@@ -80,10 +93,10 @@ pub fn build_app(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/media", media_service)
-        .with_state(state)
+        .with_state(state.clone())
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for large imports
         .layer(request_id_layer)
         .layer(from_fn(access_log))
         .layer(from_fn(log_payloads))
-        .layer(cors_layer())
+        .layer(cors_layer(&state.config))
 }
