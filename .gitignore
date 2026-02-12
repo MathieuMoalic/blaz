@@ -9,3 +9,5 @@ dist
 flutter/blaz-keystore.jks
 flutter/blaz-keystore.jks.base64
 target/rust-analyzer/flycheck0
+postgres
+recipesage-data-*

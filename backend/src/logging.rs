@@ -203,8 +203,8 @@ async fn maybe_log_response_body(
         return Response::from_parts(parts, body);
     }
 
-    // Avoid consuming large bodies.
-    if len > BODY_READ_LIMIT as u64 {
+    // Skip logging if no Content-Length or if too large
+    if len == 0 || len > BODY_READ_LIMIT as u64 {
         return Response::from_parts(parts, body);
     }
 
@@ -225,6 +225,7 @@ async fn maybe_log_response_body(
                 error = %e,
                 "failed reading response body"
             );
+            // Body already consumed, can't recover
             Response::from_parts(parts, Body::empty())
         }
     }

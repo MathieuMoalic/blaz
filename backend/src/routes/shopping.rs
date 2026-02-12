@@ -90,6 +90,28 @@ fn normalize_unit_token(t: &str) -> Option<String> {
     canon_unit_str(u).map(std::string::ToString::to_string)
 }
 
+fn create_plain_name_item(raw: &str, reason: &str) -> ParsedItem {
+    let name_raw = raw.to_string();
+    let name_norm = normalize_name(&name_raw);
+    let parsed = ParsedItem {
+        qty: None,
+        unit: None,
+        name_raw,
+        name_norm,
+    };
+
+    tracing::info!(
+        raw = %raw,
+        qty = ?parsed.qty,
+        unit = ?parsed.unit,
+        name_raw = %parsed.name_raw,
+        name_norm = %parsed.name_norm,
+        "parsed ingredient line ({reason})"
+    );
+
+    parsed
+}
+
 /// Parse a line that may look like:
 /// - "120 g flour"
 /// - "2-3 apples"
@@ -116,25 +138,7 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
 
     // If no leading number, treat whole line as plain name
     if qty.is_none() {
-        let name_raw = raw.to_string();
-        let name_norm = normalize_name(&name_raw);
-        let parsed = ParsedItem {
-            qty: None,
-            unit: None,
-            name_raw,
-            name_norm,
-        };
-
-        tracing::info!(
-            raw = %raw,
-            qty = ?parsed.qty,
-            unit = ?parsed.unit,
-            name_raw = %parsed.name_raw,
-            name_norm = %parsed.name_norm,
-            "parsed ingredient line (no leading quantity)"
-        );
-
-        return Some(parsed);
+        return Some(create_plain_name_item(raw, "no leading quantity"));
     }
 
     // Optional unit
@@ -156,25 +160,7 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     // Remaining tokens are the name
     if idx >= tokens.len() {
         // Mirror old fallback: ignore parsed qty/unit if name is missing
-        let name_raw = raw.to_string();
-        let name_norm = normalize_name(&name_raw);
-        let parsed = ParsedItem {
-            qty: None,
-            unit: None,
-            name_raw,
-            name_norm,
-        };
-
-        tracing::info!(
-            raw = %raw,
-            qty = ?parsed.qty,
-            unit = ?parsed.unit,
-            name_raw = %parsed.name_raw,
-            name_norm = %parsed.name_norm,
-            "parsed ingredient line (missing name after qty)"
-        );
-
-        return Some(parsed);
+        return Some(create_plain_name_item(raw, "missing name after qty"));
     }
 
     let name_raw = tokens[idx..].join(" ");

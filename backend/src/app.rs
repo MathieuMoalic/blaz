@@ -2,9 +2,10 @@ use crate::routes::auth;
 use crate::{
     logging::{access_log, log_payloads},
     models::AppState,
-    routes::{app_state, meal_plan, parse_recipe, recipes, shopping},
+    routes::{app_state, import_recipesage, meal_plan, parse_recipe, recipes, shopping},
 };
 
+use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn;
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
@@ -53,6 +54,7 @@ pub fn build_app(state: AppState) -> Router {
             post(recipes::estimate_macros),
         )
         .route("/recipes/import", post(parse_recipe::import_from_url))
+        .route("/recipes/import/recipesage", post(import_recipesage::import_recipesage))
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),
@@ -69,6 +71,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/auth/status", get(auth::auth_status))
         .nest_service("/media", media_service)
         .with_state(state)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for large imports
         .layer(request_id_layer)
         .layer(from_fn(access_log))
         .layer(from_fn(log_payloads))
