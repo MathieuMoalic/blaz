@@ -1,12 +1,12 @@
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::SqlitePool;
+use sqlx::Row;
 
 use crate::models::{AppState, Ingredient};
 
@@ -39,6 +39,8 @@ struct JsonLdRecipe {
     recipe_cuisine: Option<String>,
     #[serde(default)]
     aggregate_rating: Option<Value>,
+    #[serde(default, deserialize_with = "string_or_array")]
+    image: Option<String>,
 }
 
 fn string_or_array<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -80,8 +82,20 @@ struct ImportResponse {
 
 pub async fn import_recipesage(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
+    // Verify JWT authentication
+    if let Err(status) = verify_auth(&state, &headers).await {
+        return (
+            status,
+            Json(ImportResponse {
+                imported_count: 0,
+                failed: vec!["Unauthorized".to_string()],
+            }),
+        );
+    }
+
     // Parse the JSON manually to avoid exposing private types in the signature
     let recipes: Vec<JsonLdRecipe> = match serde_json::from_str(&body) {
         Ok(r) => r,
@@ -90,7 +104,7 @@ pub async fn import_recipesage(
                 StatusCode::BAD_REQUEST,
                 Json(ImportResponse {
                     imported_count: 0,
-                    failed: vec![format!("Invalid JSON: {}", e)],
+                    failed: vec![format!("Invalid JSON: {e}")],
                 }),
             );
         }
@@ -100,7 +114,7 @@ pub async fn import_recipesage(
     let mut failed = Vec::new();
 
     for recipe in recipes {
-        match import_single_recipe(&state.pool, recipe).await {
+        match import_single_recipe(&state, recipe).await {
             Ok(()) => imported_count += 1,
             Err(e) => failed.push(e),
         }
@@ -116,7 +130,7 @@ pub async fn import_recipesage(
 }
 
 async fn import_single_recipe(
-    pool: &SqlitePool,
+    state: &AppState,
     recipe: JsonLdRecipe,
 ) -> Result<(), String> {
     let title = recipe.name.clone().unwrap_or_else(|| "Untitled Recipe".to_string());
@@ -193,10 +207,11 @@ async fn import_single_recipe(
         })
         .unwrap_or_default();
 
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions)
         VALUES (?, ?, ?, ?, ?, ?)
+        RETURNING id
         "#,
     )
     .bind(&title)
@@ -205,9 +220,18 @@ async fn import_single_recipe(
     .bind(&notes)
     .bind(&ingredients_json)
     .bind(&instructions_json)
-    .execute(pool)
+    .fetch_one(&state.pool)
     .await
     .map_err(|e| format!("{title}: Database error: {e}"))?;
+
+    let recipe_id: i64 = result.get("id");
+
+    // Import image if available
+    if let Some(image_url) = recipe.image {
+        if let Err(e) = import_recipe_image(state, recipe_id, &image_url).await {
+            tracing::warn!(recipe_id, image_url, error = %e, "Failed to import image");
+        }
+    }
 
     Ok(())
 }
@@ -247,4 +271,115 @@ fn extract_rating(rating: Value) -> Option<i32> {
     } else {
         None
     }
+}
+
+async fn import_recipe_image(
+    state: &AppState,
+    recipe_id: i64,
+    image_url: &str,
+) -> anyhow::Result<()> {
+    let bytes = if let Some(data_uri) = image_url.strip_prefix("data:") {
+        // Handle base64-encoded data URI
+        // Format: "data:image/png;base64,..."
+        let parts: Vec<&str> = data_uri.split(',').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid data URI format"));
+        }
+        
+        // Decode base64
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(parts[1])
+            .map_err(|e| anyhow::anyhow!("Failed to decode base64: {}", e))?
+    } else {
+        // Handle file path (for local RecipeSage files)
+        let path = image_url
+            .strip_prefix("/api/")
+            .or_else(|| image_url.strip_prefix("api/"))
+            .unwrap_or(image_url);
+        
+        let image_path = std::path::Path::new("recipeImage").join(path.strip_prefix("recipeImage/").unwrap_or(path));
+        
+        if !image_path.exists() {
+            return Err(anyhow::anyhow!("Image file not found: {}", image_path.display()));
+        }
+
+        tokio::fs::read(&image_path).await?
+    };
+    
+    // Process and store using the existing image processing logic
+    store_recipe_image_bytes(state, recipe_id, bytes).await?;
+    
+    Ok(())
+}
+
+async fn store_recipe_image_bytes(
+    state: &AppState,
+    recipe_id: i64,
+    bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    let (full_webp, thumb_webp) =
+        tokio::task::spawn_blocking(move || -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+            let img = image::load_from_memory(&bytes)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("decode error: {e}")))?;
+            crate::image_io::to_full_and_thumb_webp(&img)
+        })
+        .await??;
+
+    let rel_dir = format!("recipes/{recipe_id}");
+    let rel_full = format!("{rel_dir}/full.webp");
+    let rel_small = format!("{rel_dir}/small.webp");
+
+    let abs_dir = state.config.media_dir.join(&rel_dir);
+    tokio::fs::create_dir_all(&abs_dir).await?;
+    tokio::fs::write(abs_dir.join("full.webp"), &full_webp).await?;
+    tokio::fs::write(abs_dir.join("small.webp"), &thumb_webp).await?;
+
+    // Update the recipe with image paths
+    sqlx::query(
+        r#"
+        UPDATE recipes
+        SET image_path_full = ?, image_path_small = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&rel_full)
+    .bind(&rel_small)
+    .bind(recipe_id)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn verify_auth(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
+    // Extract token from Authorization header
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Decode and verify JWT
+    let settings = state.settings.read().await;
+    let decoding_key = jsonwebtoken::DecodingKey::from_secret(settings.jwt_secret.as_bytes());
+    
+    #[allow(dead_code)]
+    #[derive(serde::Deserialize)]
+    struct Claims {
+        sub: i64,
+        exp: u64,
+    }
+    
+    let _token_data = jsonwebtoken::decode::<Claims>(
+        token,
+        &decoding_key,
+        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+    )
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    Ok(())
 }

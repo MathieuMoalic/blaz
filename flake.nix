@@ -43,6 +43,7 @@
         pkg-config
         mold
         cargo-watch
+        sqlite
       ];
       ANDROID_SDK_ROOT = sdkRoot;
       shellHook = ''

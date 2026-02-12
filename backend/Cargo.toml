@@ -42,6 +42,7 @@ rand_core = "0.6"
 rand = "0.8"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 tracing-appender = "0.2.4"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
