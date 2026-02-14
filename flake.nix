@@ -52,8 +52,6 @@
       ANDROID_SDK_ROOT = sdkRoot;
       ANDROID_HOME = sdkRoot;
       JAVA_HOME = "${pkgs.jdk17}/lib/openjdk";
-      PUB_CACHE = ".pub-cache";
-      GRADLE_USER_HOME = ".gradle";
     };
 
     package = pkgs.rustPlatform.buildRustPackage {
