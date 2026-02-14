@@ -12,3 +12,6 @@ target/rust-analyzer/flycheck0
 postgres
 recipesage-data-*
 recipeImage
+flutter/**/build/
+flutter/android/.gradle/
+flutter/android/.cxx/
