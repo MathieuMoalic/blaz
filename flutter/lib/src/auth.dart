@@ -2,11 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import './api.dart' as api;
-
-// Conditional storage: real localStorage on web, no-op elsewhere
-import './web_storage_stub.dart'
-    if (dart.library.html) './web_storage_web.dart'
-    as webstore;
+import './platform/kv_store.dart' as kv;
 
 Future<bool> serverAllowsRegistration() async {
   final uri = Uri.parse('${api.baseUrl}/auth/status');
@@ -23,7 +19,7 @@ class Auth {
   static bool allowRegistration = true;
 
   static Future<void> init() async {
-    _token = webstore.read('auth_token');
+    _token = await kv.getString('auth_token');
     api.setAuthToken(_token);
     try {
       allowRegistration = await serverAllowsRegistration();
@@ -45,13 +41,16 @@ class Auth {
 
   static Future<void> save(String token) async {
     _token = token;
-    webstore.write('auth_token', token);
+    await kv.setString('auth_token', token);
     api.setAuthToken(token);
   }
 
   static Future<void> logout() async {
     _token = null;
-    webstore.write('auth_token', null);
+    final prefs = await kv.getString('auth_token');
+    if (prefs != null) {
+      await kv.setString('auth_token', '');
+    }
     api.setAuthToken(null);
   }
 
