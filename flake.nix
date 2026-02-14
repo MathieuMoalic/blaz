@@ -37,7 +37,6 @@
         android-tools
         jdk17
         just
-
         rustc
         cargo
         clippy
@@ -47,19 +46,14 @@
         cargo-watch
         sqlite
       ];
-      ANDROID_SDK_ROOT = sdkRoot;
-      shellHook = ''
-        export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
-        cat > "flutter/android/local.properties" <<EOF
-        sdk.dir=${sdkRoot}
-        cmake.dir=${sdkRoot}/cmake/3.22.1
-        ndk.dir=${sdkRoot}/ndk/27.0.12077973
-        flutter.buildMode=debug
-        flutter.versionName=1.0.0
-        flutter.versionCode=1
-        EOF
-      '';
+      RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+
+      ANDROID_SDK_ROOT = sdkRoot;
+      ANDROID_HOME = sdkRoot;
+      JAVA_HOME = "${pkgs.jdk17}/lib/openjdk";
+      PUB_CACHE = ".pub-cache";
+      GRADLE_USER_HOME = ".gradle";
     };
 
     package = pkgs.rustPlatform.buildRustPackage {
