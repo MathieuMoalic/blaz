@@ -187,3 +187,73 @@ pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
         .as_str()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_category_from_str() {
+        assert_eq!(Category::from_str("Other"), Some(Category::Other));
+        assert_eq!(Category::from_str("Fruits"), Some(Category::Fruits));
+        assert_eq!(Category::from_str("Vegetables"), Some(Category::Vegetables));
+        assert_eq!(Category::from_str("Bakery"), Some(Category::Bakery));
+        assert_eq!(Category::from_str("Vegan"), Some(Category::Vegan));
+        assert_eq!(Category::from_str("Drinks"), Some(Category::Drinks));
+        assert_eq!(Category::from_str("Alcohol"), Some(Category::Alcohol));
+        assert_eq!(Category::from_str("Seasoning"), Some(Category::Seasoning));
+        assert_eq!(Category::from_str("Canned"), Some(Category::Canned));
+        assert_eq!(Category::from_str("Pantry"), Some(Category::Pantry));
+        assert_eq!(Category::from_str("Non-Food"), Some(Category::NonFood));
+        assert_eq!(Category::from_str("Pharmacy"), Some(Category::Pharmacy));
+        assert_eq!(Category::from_str("Online"), Some(Category::Online));
+        assert_eq!(Category::from_str("Online Alcohol"), Some(Category::OnlineAlcohol));
+        
+        assert_eq!(Category::from_str("Invalid"), None);
+        assert_eq!(Category::from_str("fruits"), None); // Case sensitive
+        assert_eq!(Category::from_str(""), None);
+    }
+
+    #[test]
+    fn test_category_as_str() {
+        assert_eq!(Category::Other.as_str(), "Other");
+        assert_eq!(Category::Fruits.as_str(), "Fruits");
+        assert_eq!(Category::Vegetables.as_str(), "Vegetables");
+        assert_eq!(Category::Bakery.as_str(), "Bakery");
+        assert_eq!(Category::Vegan.as_str(), "Vegan");
+        assert_eq!(Category::Drinks.as_str(), "Drinks");
+        assert_eq!(Category::Alcohol.as_str(), "Alcohol");
+        assert_eq!(Category::Seasoning.as_str(), "Seasoning");
+        assert_eq!(Category::Canned.as_str(), "Canned");
+        assert_eq!(Category::Pantry.as_str(), "Pantry");
+        assert_eq!(Category::NonFood.as_str(), "Non-Food");
+        assert_eq!(Category::Pharmacy.as_str(), "Pharmacy");
+        assert_eq!(Category::Online.as_str(), "Online");
+        assert_eq!(Category::OnlineAlcohol.as_str(), "Online Alcohol");
+    }
+
+    #[test]
+    fn test_category_sort_key() {
+        assert_eq!(Category::Other.sort_key(), 0);
+        assert_eq!(Category::Fruits.sort_key(), 1);
+        assert_eq!(Category::Vegetables.sort_key(), 2);
+        assert_eq!(Category::OnlineAlcohol.sort_key(), 13);
+        
+        assert!(Category::Other.sort_key() < Category::Fruits.sort_key());
+        assert!(Category::Fruits.sort_key() < Category::Vegetables.sort_key());
+    }
+
+    #[test]
+    fn test_category_roundtrip() {
+        for cat in Category::ALL {
+            let s = cat.as_str();
+            let parsed = Category::from_str(s);
+            assert_eq!(parsed, Some(*cat));
+        }
+    }
+
+    #[test]
+    fn test_all_categories_count() {
+        assert_eq!(Category::ALL.len(), 14);
+    }
+}

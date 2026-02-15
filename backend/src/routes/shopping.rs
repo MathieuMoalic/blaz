@@ -707,3 +707,148 @@ pub async fn merge_items(
     // Return the active (not done) list
     list(State(state)).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_qty_token() {
+        assert_eq!(parse_qty_token("2"), Some(2.0));
+        assert_eq!(parse_qty_token("10"), Some(10.0));
+        assert_eq!(parse_qty_token("1.5"), Some(1.5));
+        assert_eq!(parse_qty_token("1,5"), Some(1.5));
+        
+        assert_eq!(parse_qty_token("2-3"), Some(2.5));
+        assert_eq!(parse_qty_token("2–3"), Some(2.5));
+        assert_eq!(parse_qty_token("1.5-2.5"), Some(2.0));
+        assert_eq!(parse_qty_token("10–20"), Some(15.0));
+        
+        assert_eq!(parse_qty_token(""), None);
+        assert_eq!(parse_qty_token("  "), None);
+        assert_eq!(parse_qty_token("abc"), None);
+    }
+
+    #[test]
+    fn test_normalize_unit_token() {
+        assert_eq!(normalize_unit_token("g"), Some("g".to_string()));
+        assert_eq!(normalize_unit_token("kg"), Some("kg".to_string()));
+        assert_eq!(normalize_unit_token("ml"), Some("ml".to_string()));
+        assert_eq!(normalize_unit_token("L"), Some("L".to_string()));
+        assert_eq!(normalize_unit_token("tsp"), Some("tsp".to_string()));
+        assert_eq!(normalize_unit_token("tbsp"), Some("tbsp".to_string()));
+        
+        assert_eq!(normalize_unit_token("gram"), Some("g".to_string()));
+        assert_eq!(normalize_unit_token("GRAMS"), Some("g".to_string()));
+        
+        assert_eq!(normalize_unit_token(""), None);
+        assert_eq!(normalize_unit_token("  "), None);
+        assert_eq!(normalize_unit_token("cup"), None);
+        assert_eq!(normalize_unit_token("oz"), None);
+    }
+
+    #[test]
+    fn test_parse_item_line_simple() {
+        let p = parse_item_line("milk").unwrap();
+        assert_eq!(p.qty, None);
+        assert_eq!(p.unit, None);
+        assert_eq!(p.name_raw, "milk");
+        assert_eq!(p.name_norm, "milk");
+    }
+
+    #[test]
+    fn test_parse_item_line_with_qty() {
+        let p = parse_item_line("2 apples").unwrap();
+        assert_eq!(p.qty, Some(2.0));
+        assert_eq!(p.unit, None);
+        assert_eq!(p.name_raw, "apples");
+        assert_eq!(p.name_norm, "apples");
+    }
+
+    #[test]
+    fn test_parse_item_line_with_qty_and_unit() {
+        let p = parse_item_line("120 g flour").unwrap();
+        assert_eq!(p.qty, Some(120.0));
+        assert_eq!(p.unit, Some("g".to_string()));
+        assert_eq!(p.name_raw, "flour");
+        assert_eq!(p.name_norm, "flour");
+    }
+
+    #[test]
+    fn test_parse_item_line_range() {
+        let p = parse_item_line("2-3 kg potatoes").unwrap();
+        assert_eq!(p.qty, Some(2.5));
+        assert_eq!(p.unit, Some("kg".to_string()));
+        assert_eq!(p.name_raw, "potatoes");
+        assert_eq!(p.name_norm, "potatoes");
+    }
+
+    #[test]
+    fn test_parse_item_line_with_of() {
+        let p = parse_item_line("2 kg of rice").unwrap();
+        assert_eq!(p.qty, Some(2.0));
+        assert_eq!(p.unit, Some("kg".to_string()));
+        assert_eq!(p.name_raw, "rice");
+        assert_eq!(p.name_norm, "rice");
+    }
+
+    #[test]
+    fn test_parse_item_line_decimal() {
+        let p = parse_item_line("1.5 L water").unwrap();
+        assert_eq!(p.qty, Some(1.5));
+        assert_eq!(p.unit, Some("L".to_string()));
+        assert_eq!(p.name_raw, "water");
+        assert_eq!(p.name_norm, "water");
+    }
+
+    #[test]
+    fn test_parse_item_line_comma_decimal() {
+        let p = parse_item_line("1,5 kg sugar").unwrap();
+        assert_eq!(p.qty, Some(1.5));
+        assert_eq!(p.unit, Some("kg".to_string()));
+        assert_eq!(p.name_raw, "sugar");
+        assert_eq!(p.name_norm, "sugar");
+    }
+
+    #[test]
+    fn test_parse_item_line_case_insensitive() {
+        let p = parse_item_line("200 ML Milk").unwrap();
+        assert_eq!(p.qty, Some(200.0));
+        assert_eq!(p.unit, Some("ml".to_string()));
+        assert_eq!(p.name_raw, "Milk");
+        assert_eq!(p.name_norm, "milk");
+    }
+
+    #[test]
+    fn test_parse_item_line_missing_name_fallback() {
+        let p = parse_item_line("2 kg").unwrap();
+        assert_eq!(p.qty, None);
+        assert_eq!(p.unit, None);
+        assert_eq!(p.name_raw, "2 kg");
+        assert_eq!(p.name_norm, "2 kg");
+    }
+
+    #[test]
+    fn test_parse_item_line_empty() {
+        assert!(parse_item_line("").is_none());
+        assert!(parse_item_line("   ").is_none());
+    }
+
+    #[test]
+    fn test_parse_item_line_unknown_unit() {
+        let p = parse_item_line("2 cups flour").unwrap();
+        assert_eq!(p.qty, Some(2.0));
+        assert_eq!(p.unit, None);
+        assert_eq!(p.name_raw, "cups flour");
+        assert_eq!(p.name_norm, "cups flour");
+    }
+
+    #[test]
+    fn test_parse_item_line_whitespace_normalization() {
+        let p = parse_item_line("  2   kg    of   flour  ").unwrap();
+        assert_eq!(p.qty, Some(2.0));
+        assert_eq!(p.unit, Some("kg".to_string()));
+        assert_eq!(p.name_raw, "flour");
+        assert_eq!(p.name_norm, "flour");
+    }
+}

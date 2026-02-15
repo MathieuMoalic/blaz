@@ -101,3 +101,112 @@ pub fn clean_title(input: &str) -> String {
 
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_title() {
+        assert_eq!(
+            extract_title("<html><head><title>Test Title</title></head></html>"),
+            Some("Test Title".to_string())
+        );
+        assert_eq!(
+            extract_title("<title>  Whitespace  </title>"),
+            Some("Whitespace".to_string())
+        );
+        assert_eq!(
+            extract_title("<TITLE>UPPERCASE</TITLE>"),
+            Some("UPPERCASE".to_string())
+        );
+        assert_eq!(
+            extract_title("<title>Entities &amp; &lt;&gt;</title>"),
+            Some("Entities & <>".to_string())
+        );
+        assert_eq!(extract_title("<html>no title</html>"), None);
+        assert_eq!(extract_title(""), None);
+    }
+
+    #[test]
+    fn test_fallback_title_from_url() {
+        assert_eq!(
+            fallback_title_from_url("https://example.com/recipe/pasta"),
+            Some("example.com — recipe/pasta".to_string())
+        );
+        assert_eq!(
+            fallback_title_from_url("https://example.com"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            fallback_title_from_url("https://example.com/"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(fallback_title_from_url("not a url"), None);
+    }
+
+    #[test]
+    fn test_decode_entities_basic() {
+        assert_eq!(decode_entities_basic("&amp;"), "&");
+        assert_eq!(decode_entities_basic("&lt;&gt;"), "<>");
+        assert_eq!(decode_entities_basic("&quot;test&quot;"), "\"test\"");
+        assert_eq!(decode_entities_basic("&#39;"), "'");
+        assert_eq!(decode_entities_basic("&#039;"), "'");
+        assert_eq!(decode_entities_basic("&#x27;"), "'");
+        assert_eq!(decode_entities_basic("&#8211;"), "–");
+        assert_eq!(decode_entities_basic("&#8212;"), "—");
+        assert_eq!(decode_entities_basic("&#8226;"), "•");
+        assert_eq!(decode_entities_basic("&nbsp;"), " ");
+        assert_eq!(decode_entities_basic("no entities"), "no entities");
+    }
+
+    #[test]
+    fn test_html_to_plain_text() {
+        assert_eq!(
+            html_to_plain_text("<p>Hello <b>world</b></p>"),
+            "Hello \nworld"
+        );
+        assert_eq!(
+            html_to_plain_text("<div><script>alert('test')</script>Content</div>"),
+            "Content"
+        );
+        assert_eq!(
+            html_to_plain_text("<style>body{color:red}</style><p>Text</p>"),
+            "Text"
+        );
+        assert_eq!(
+            html_to_plain_text("<p>Line 1</p><p>Line 2</p>"),
+            "Line 1\n\nLine 2"
+        );
+        assert_eq!(html_to_plain_text(""), "");
+    }
+
+    #[test]
+    fn test_clean_title() {
+        assert_eq!(clean_title("Best Pasta Recipe"), "Pasta");
+        assert_eq!(clean_title("Easy Quick Simple Cake"), "Cake");
+        assert_eq!(clean_title("Ultimate Vegan Burger Recipe"), "Burger");
+        assert_eq!(clean_title("Gluten-Free Pizza"), "Pizza");
+        assert_eq!(clean_title("Pasta | Site Name"), "Pasta");
+        assert_eq!(clean_title("Pasta • Recipe"), "Pasta");
+        assert_eq!(clean_title("Pasta — Site"), "Pasta");
+        assert_eq!(clean_title("Pasta: The Best"), "Pasta");
+        assert_eq!(clean_title("pasta recipe"), "Pasta");
+        assert_eq!(clean_title("  whitespace  "), "Whitespace");
+        assert_eq!(clean_title("Pasta & Sauce"), "Pasta & Sauce");
+        assert_eq!(clean_title("Multiple  Spaces"), "Multiple Spaces");
+    }
+
+    #[test]
+    fn test_clean_title_capitalization() {
+        assert_eq!(clean_title("pasta"), "Pasta");
+        assert_eq!(clean_title("PASTA"), "PASTA");
+        assert_eq!(clean_title("pASTA"), "PASTA");
+    }
+
+    #[test]
+    fn test_clean_title_no_changes_needed() {
+        assert_eq!(clean_title("Pasta Carbonara"), "Pasta Carbonara");
+        assert_eq!(clean_title("Chicken Soup"), "Chicken Soup");
+    }
+}
