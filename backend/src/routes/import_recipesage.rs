@@ -4,6 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
@@ -275,10 +276,9 @@ async fn import_recipe_image(
         }
         
         // Decode base64
-        use base64::Engine;
         base64::engine::general_purpose::STANDARD
             .decode(parts[1])
-            .map_err(|e| anyhow::anyhow!("Failed to decode base64: {}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to decode base64: {e}"))?
     } else {
         // Handle file path (for local RecipeSage files)
         let path = image_url
@@ -325,11 +325,11 @@ async fn store_recipe_image_bytes(
 
     // Update the recipe with image paths
     sqlx::query(
-        r#"
+        r"
         UPDATE recipes
         SET image_path_full = ?, image_path_small = ?
         WHERE id = ?
-        "#,
+        ",
     )
     .bind(&rel_full)
     .bind(&rel_small)

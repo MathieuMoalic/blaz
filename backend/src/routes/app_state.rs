@@ -116,11 +116,10 @@ pub async fn patch(
 
     // 2) Update in-memory settings and prepare response
     let view = {
-        let mut guard = state.settings.write().await;
-        tracing::debug!("patch: acquired write lock");
-        *guard = settings.clone();
+        *state.settings.write().await = settings.clone();
+        tracing::debug!("patch: acquired write lock and updated");
         
-        // Create response while we have the settings
+        // Create response after dropping the lock
         AppStateView {
             llm_api_key_masked: mask_key(settings.llm_api_key.as_deref()),
             llm_model: settings.llm_model,

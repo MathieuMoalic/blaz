@@ -40,6 +40,7 @@ fn cors_layer(config: &Config) -> CorsLayer {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // Axum requires AppState ownership
 pub fn build_app(state: AppState) -> Router {
     let media_service = ServeDir::new(state.config.media_dir.clone());
 
