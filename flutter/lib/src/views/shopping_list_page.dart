@@ -11,6 +11,38 @@ final Map<String, String> kShoppingCategoryLabelByValue = {
 List<String> get kShoppingCategoryValues =>
     kShoppingCategoryOptions.map((o) => o.value).toList(growable: false);
 
+/// Format shopping item text with sentence case (capitalize first word, keep units lowercase)
+String _formatItemText(String text) {
+  if (text.isEmpty) return text;
+  
+  // Common measurement units to keep lowercase
+  const units = {'g', 'kg', 'ml', 'l', 'tsp', 'tbsp', 'oz', 'lb'};
+  
+  final words = text.toLowerCase().split(' ');
+  if (words.isEmpty) return text;
+  
+  // Find first word that's not a number or unit, and capitalize it
+  bool capitalized = false;
+  final formatted = words.map((word) {
+    if (word.isEmpty) return word;
+    
+    // If it's a unit or number, keep lowercase
+    if (units.contains(word) || double.tryParse(word) != null || word.contains('-')) {
+      return word;
+    }
+    
+    // Capitalize first non-unit word
+    if (!capitalized) {
+      capitalized = true;
+      return word[0].toUpperCase() + word.substring(1);
+    }
+    
+    return word;
+  }).join(' ');
+  
+  return formatted;
+}
+
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
   @override
@@ -451,7 +483,7 @@ class _RowTile extends StatelessWidget {
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             title: Text(
-              item.text,
+              _formatItemText(item.text),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
