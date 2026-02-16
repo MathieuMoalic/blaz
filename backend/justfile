@@ -1,7 +1,7 @@
 default: hot-reload
 
 hot-reload:
-        cargo watch -q -c -w src -w Cargo.toml -x 'run -- --bind 0.0.0.0:8080 --media-dir /tmp/blaz-media --database-path /tmp/blaz-db --log-file /tmp/blaz.logs -vv'
+        cargo watch -q -c -w src -w Cargo.toml -x 'run -- -vv'
 
 clippy-watch:
         cargo watch -q -c -w src -w Cargo.toml -x clippy

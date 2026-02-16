@@ -46,20 +46,18 @@ pub async fn import_from_url(
         return Err((StatusCode::BAD_GATEWAY, "page has no readable text".into()).into());
     }
 
-    let settings = state.settings.read().await.clone();
-
-    let token = settings.llm_api_key.clone().unwrap_or_default();
+    let token = state.config.llm_api_key.clone().unwrap_or_default();
     if token.is_empty() {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            "LLM API key is not configured (set it in /app-state)".into(),
+            "LLM API key is not configured (use --llm-api-key or BLAZ_LLM_API_KEY)".into(),
         )
             .into());
     }
 
-    let model = req.model.as_deref().unwrap_or(&settings.llm_model);
-    let base = settings.llm_api_url.as_str();
-    let system = settings.system_prompt_import.as_str();
+    let model = req.model.as_deref().unwrap_or(&state.config.llm_model);
+    let base = state.config.llm_api_url.as_str();
+    let system = state.config.system_prompt_import.as_str();
 
     let excerpt = if text.len() > MAX_CHARS {
         &text[..MAX_CHARS]

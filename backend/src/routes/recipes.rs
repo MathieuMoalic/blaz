@@ -398,10 +398,9 @@ pub async fn estimate_macros(
     let user = build_macros_user_prompt(servings, &row);
 
     let client = macros_http_client()?;
-    let st = state.settings.read().await.clone();
-    let sys = macros_system_prompt(&st);
+    let sys = &state.config.system_prompt_macros;
 
-    let macros = call_and_parse_macros_llm(&client, &st, &sys, &user, basis).await?;
+    let macros = call_and_parse_macros_llm(&client, &state.config, sys, &user, basis).await?;
 
     save_macros(&state, id, &macros).await?;
 
@@ -487,34 +486,9 @@ fn macros_http_client() -> Result<reqwest::Client, StatusCode> {
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-fn macros_system_prompt(st: &crate::models::AppSettings) -> String {
-    const DEFAULT_MACROS_PROMPT: &str = r#"You are a precise nutrition estimator.
-
-Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
-{
-  "protein_g": number,
-  "fat_g": number,     // saturated + unsaturated combined
-  "carbs_g": number    // carbohydrates EXCLUDING fiber
-}
-
-Rules:
-- Use common nutrition databases and reasonable approximations.
-- Always include ALL three keys.
-- Carbs exclude fiber (i.e., net carbs).
-- If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
-- Never add extra fields or commentary."#;
-
-    let s = st.system_prompt_macros.trim();
-    if s.is_empty() {
-        DEFAULT_MACROS_PROMPT.to_string()
-    } else {
-        s.to_string()
-    }
-}
-
 async fn call_and_parse_macros_llm(
     client: &reqwest::Client,
-    st: &crate::models::AppSettings,
+    config: &crate::config::Config,
     sys: &str,
     user: &str,
     basis: &'static str,
@@ -526,9 +500,9 @@ async fn call_and_parse_macros_llm(
         fat_g: f64,
         carbs_g: f64,
     }
-    let base = &st.llm_api_url;
-    let token = st.llm_api_key.clone().unwrap_or_default();
-    let model = &st.llm_model;
+    let base = &config.llm_api_url;
+    let token = config.llm_api_key.clone().unwrap_or_default();
+    let model = &config.llm_model;
 
     let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
 

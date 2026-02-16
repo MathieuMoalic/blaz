@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::config::Config;
 
@@ -11,20 +9,7 @@ use crate::config::Config;
 pub struct AppState {
     pub pool: SqlitePool,
     pub jwt_encoding: jsonwebtoken::EncodingKey,
-    pub settings: Arc<RwLock<AppSettings>>,
     pub config: Config,
-}
-
-#[derive(FromRow, Serialize, Deserialize, Clone, Debug)]
-pub struct AppSettings {
-    pub llm_api_key: Option<String>,
-    pub llm_model: String,
-    pub llm_api_url: String,
-    pub system_prompt_import: String,
-    pub system_prompt_macros: String,
-
-    #[serde(skip_serializing, skip_deserializing)]
-    pub jwt_secret: String,
 }
 
 /* ---------- API models ---------- */

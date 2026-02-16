@@ -1,4 +1,3 @@
-pub mod app_state;
 pub mod auth;
 pub mod import_recipesage;
 pub mod meal_plan;

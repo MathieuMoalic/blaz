@@ -4,7 +4,7 @@ use crate::{
     config::Config,
     logging::{access_log, log_payloads},
     models::AppState,
-    routes::{app_state, import_recipesage, meal_plan, parse_recipe, recipes, shopping},
+    routes::{import_recipesage, meal_plan, parse_recipe, recipes, shopping},
 };
 
 use axum::extract::DefaultBodyLimit;
@@ -57,12 +57,6 @@ pub fn build_app(state: AppState) -> Router {
 
     // Protected routes (authentication required)
     let protected_routes = Router::new()
-        .route(
-            "/app-state",
-            get(app_state::get)
-                .patch(app_state::patch)
-                .put(app_state::patch),
-        )
         .route("/recipes", get(recipes::list).post(recipes::create))
         .route(
             "/recipes/{id}",

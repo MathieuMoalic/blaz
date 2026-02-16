@@ -133,16 +133,7 @@ struct LlmCatOut {
 pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
     let fallback = || Category::Other.as_str().to_string();
 
-    // Grab what we need from settings, then drop the lock before awaits.
-    let (token, base, model) = {
-        let st = state.settings.read().await;
-        (
-            st.llm_api_key.clone().unwrap_or_default(),
-            st.llm_api_url.clone(),
-            st.llm_model.clone(),
-        )
-    };
-
+    let token = state.config.llm_api_key.clone().unwrap_or_default();
     if token.trim().is_empty() {
         return fallback();
     }
@@ -154,7 +145,11 @@ pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
         return fallback();
     };
 
-    let llm = LlmClient::new(base, token, model);
+    let llm = LlmClient::new(
+        state.config.llm_api_url.clone(),
+        token,
+        state.config.llm_model.clone(),
+    );
     let system = build_llm_system_prompt();
 
     let user = format!(

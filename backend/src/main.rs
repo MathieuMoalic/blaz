@@ -22,36 +22,57 @@ mod routes;
 mod units;
 
 use clap::Parser;
-use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 
 use crate::{
     app::build_app,
     config::Config,
     db::make_pool,
     logging::init_logging,
-    models::{AppSettings, AppState},
+    models::AppState,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::parse();
+    let mut config = Config::parse();
 
     // Keep guard alive so file logger flushes correctly
     let _log_guards = init_logging(&config);
 
+    // Generate JWT secret if not provided
+    if config.jwt_secret.is_none() {
+        use rand::Rng;
+        let secret: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect();
+        tracing::warn!("No JWT secret provided, generated random secret (tokens will be invalid on restart)");
+        config.jwt_secret = Some(secret);
+    }
+
+    // Log all configuration (mask sensitive values)
+    tracing::info!("=== Configuration ===");
+    tracing::info!("Bind address: {}", config.bind);
+    tracing::info!("Media directory: {}", config.media_dir.display());
+    tracing::info!("Database path: {}", config.database_path);
+    tracing::info!("Log file: {}", config.log_file.display());
+    tracing::info!("CORS origin: {}", config.cors_origin.as_deref().unwrap_or("<allow all>"));
+    tracing::info!("JWT secret: {}", if config.jwt_secret.is_some() { "<set>" } else { "<not set>" });
+    tracing::info!("LLM API key: {}", if config.llm_api_key.as_ref().is_some_and(|k| !k.is_empty()) { "<set>" } else { "<not set>" });
+    tracing::info!("LLM model: {}", config.llm_model);
+    tracing::info!("LLM API URL: {}", config.llm_api_url);
+    tracing::info!("System prompt import: {} chars", config.system_prompt_import.len());
+    tracing::info!("System prompt macros: {} chars", config.system_prompt_macros.len());
+    tracing::info!("====================");
+
     let pool = make_pool(config.database_path.clone()).await?;
     tokio::fs::create_dir_all(&config.media_dir).await.ok();
 
-    let settings = load_settings(&pool).await?;
-    let jwt_secret = settings.jwt_secret.clone();
-    let settings = Arc::new(RwLock::new(settings.clone()));
-
+    let jwt_secret = config.jwt_secret.as_ref().unwrap();
     let state = AppState {
         pool,
         jwt_encoding: jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
-        settings,
         config: config.clone(),
     };
 
@@ -60,24 +81,4 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind).await?;
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-// unchanged
-async fn load_settings(pool: &sqlx::SqlitePool) -> anyhow::Result<AppSettings> {
-    let settings = sqlx::query_as::<_, AppSettings>(
-        r"
-        SELECT llm_api_key,
-               llm_model,
-               llm_api_url,
-               jwt_secret,
-               system_prompt_import,
-               system_prompt_macros
-          FROM settings
-         WHERE id = 1
-        ",
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(settings)
 }

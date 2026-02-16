@@ -4,7 +4,6 @@ import '../api.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
 import '../widgets/app_title.dart';
-import 'app_state_page.dart';
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -132,23 +131,7 @@ class RecipesPageState extends State<RecipesPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        AppTitle(
-          'Recipes',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'App settings',
-                icon: const Icon(Icons.settings), // cog wheel
-                onPressed: () async {
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AppStatePage()),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
+        const AppTitle('Recipes'),
 
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
