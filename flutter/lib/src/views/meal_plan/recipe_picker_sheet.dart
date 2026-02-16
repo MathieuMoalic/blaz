@@ -10,15 +10,78 @@ Future<Set<int>?> showRecipePickerSheet({
   String query = '';
   final selected = <int>{};
 
+  /// Character-by-character fuzzy matching
+  /// Returns score 0-100 based on how many characters match in sequence
+  double fuzzyCharMatch(String text, String pattern) {
+    if (pattern.isEmpty) return 0;
+    
+    int patternIdx = 0;
+    int lastMatchIdx = -1;
+    int consecutiveMatches = 0;
+    double score = 0;
+    
+    for (int i = 0; i < text.length && patternIdx < pattern.length; i++) {
+      if (text[i] == pattern[patternIdx]) {
+        // Bonus for consecutive matches
+        if (i == lastMatchIdx + 1) {
+          consecutiveMatches++;
+          score += 10 + consecutiveMatches; // Increasing bonus
+        } else {
+          consecutiveMatches = 0;
+          score += 5;
+        }
+        
+        lastMatchIdx = i;
+        patternIdx++;
+      }
+    }
+    
+    // All characters must match
+    if (patternIdx != pattern.length) return 0;
+    
+    // Normalize score to 0-100
+    return (score / pattern.length).clamp(0, 100);
+  }
+
+  /// Fuzzy matching with scoring for better results ordering
+  double fuzzyScore(Recipe r, String q) {
+    final needle = q.toLowerCase();
+    final titleLower = r.title.toLowerCase();
+    
+    // Exact match (highest score)
+    if (titleLower == needle) return 1000.0;
+    
+    // Title starts with query
+    if (titleLower.startsWith(needle)) return 900.0;
+    
+    // Word boundary match (e.g., "chick" matches "Chicken Curry")
+    final words = titleLower.split(RegExp(r'\s+'));
+    for (final word in words) {
+      if (word.startsWith(needle)) return 800.0;
+    }
+    
+    // Contains exact substring
+    if (titleLower.contains(needle)) return 700.0;
+    
+    // Fuzzy character sequence match
+    double charScore = fuzzyCharMatch(titleLower, needle);
+    if (charScore > 0) return 500.0 + charScore;
+    
+    // Search in ingredients
+    for (final ing in r.ingredients) {
+      final ingLower = ing.name.toLowerCase();
+      if (ingLower.contains(needle)) return 400.0;
+      
+      final ingCharScore = fuzzyCharMatch(ingLower, needle);
+      if (ingCharScore > 0) return 300.0 + ingCharScore;
+    }
+    
+    return 0.0;
+  }
+
   bool matches(Recipe r, String q) {
     if (q.isEmpty) return true;
-    final needle = q.toLowerCase();
-    if (r.title.toLowerCase().contains(needle)) return true;
-    for (final ing in r.ingredients) {
-      if (ing.name.toLowerCase().contains(needle)) return true;
-      if (ing.toLine().toLowerCase().contains(needle)) return true;
-    }
-    return false;
+    return fuzzyScore(r, q) > 0;
   }
 
   return showModalBottomSheet<Set<int>>(
@@ -31,10 +94,20 @@ Future<Set<int>?> showRecipePickerSheet({
 
       return StatefulBuilder(
         builder: (ctx, setSheetState) {
-          final filtered = all.where((r) => matches(r, query)).toList()
-            ..sort(
+          final filtered = all.where((r) => matches(r, query)).toList();
+          
+          // Sort by fuzzy match score when searching, otherwise alphabetically
+          if (query.isNotEmpty) {
+            filtered.sort((a, b) {
+              final scoreA = fuzzyScore(a, query);
+              final scoreB = fuzzyScore(b, query);
+              return scoreB.compareTo(scoreA); // Best matches first
+            });
+          } else {
+            filtered.sort(
               (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
             );
+          }
 
           void toggle(int id) {
             setSheetState(() {
@@ -94,7 +167,7 @@ Future<Set<int>?> showRecipePickerSheet({
                       controller: ctrl,
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
-                        hintText: 'Search recipes by name or ingredient',
+                        hintText: 'Search recipes...',
                         prefixIcon: const Icon(Icons.search),
                         isDense: true,
                         border: OutlineInputBorder(
