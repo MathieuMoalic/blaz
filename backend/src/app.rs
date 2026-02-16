@@ -51,9 +51,7 @@ pub fn build_app(state: AppState) -> Router {
     // Public routes (no authentication required)
     let public_routes = Router::new()
         .route("/healthz", get(healthz))
-        .route("/auth/register", post(auth::register))
-        .route("/auth/login", post(auth::login))
-        .route("/auth/status", get(auth::auth_status));
+        .route("/auth/login", post(auth::login));
 
     // Protected routes (authentication required)
     let protected_routes = Router::new()

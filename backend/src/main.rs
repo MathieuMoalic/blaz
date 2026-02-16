@@ -26,7 +26,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     app::build_app,
-    config::Config,
+    config::{Cli, Commands},
     db::make_pool,
     logging::init_logging,
     models::AppState,
@@ -34,7 +34,14 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut config = Config::parse();
+    let cli = Cli::parse();
+
+    // Handle subcommands
+    if let Some(command) = cli.command {
+        return handle_command(command);
+    }
+
+    let mut config = cli.config;
 
     // Keep guard alive so file logger flushes correctly
     let _log_guards = init_logging(&config);
@@ -47,7 +54,9 @@ async fn main() -> anyhow::Result<()> {
             .take(32)
             .map(char::from)
             .collect();
-        tracing::warn!("No JWT secret provided, generated random secret (tokens will be invalid on restart)");
+        tracing::warn!(
+            "No JWT secret provided, generated random secret (tokens will be invalid on restart)"
+        );
         config.jwt_secret = Some(secret);
     }
 
@@ -57,13 +66,44 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Media directory: {}", config.media_dir.display());
     tracing::info!("Database path: {}", config.database_path);
     tracing::info!("Log file: {}", config.log_file.display());
-    tracing::info!("CORS origin: {}", config.cors_origin.as_deref().unwrap_or("<allow all>"));
-    tracing::info!("JWT secret: {}", if config.jwt_secret.is_some() { "<set>" } else { "<not set>" });
-    tracing::info!("LLM API key: {}", if config.llm_api_key.as_ref().is_some_and(|k| !k.is_empty()) { "<set>" } else { "<not set>" });
+    tracing::info!(
+        "CORS origin: {}",
+        config.cors_origin.as_deref().unwrap_or("<allow all>")
+    );
+    tracing::info!(
+        "JWT secret: {}",
+        if config.jwt_secret.is_some() {
+            "<set>"
+        } else {
+            "<not set>"
+        }
+    );
+    tracing::info!(
+        "LLM API key: {}",
+        if config.llm_api_key.as_ref().is_some_and(|k| !k.is_empty()) {
+            "<set>"
+        } else {
+            "<not set>"
+        }
+    );
     tracing::info!("LLM model: {}", config.llm_model);
     tracing::info!("LLM API URL: {}", config.llm_api_url);
-    tracing::info!("System prompt import: {} chars", config.system_prompt_import.len());
-    tracing::info!("System prompt macros: {} chars", config.system_prompt_macros.len());
+    tracing::info!(
+        "System prompt import: {} chars",
+        config.system_prompt_import.len()
+    );
+    tracing::info!(
+        "System prompt macros: {} chars",
+        config.system_prompt_macros.len()
+    );
+    tracing::info!(
+        "Password hash: {}",
+        if config.password_hash.is_some() {
+            "<set>"
+        } else {
+            "<not set>"
+        }
+    );
     tracing::info!("====================");
 
     let pool = make_pool(config.database_path.clone()).await?;
@@ -80,5 +120,41 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = TcpListener::bind(config.bind).await?;
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+fn handle_command(command: Commands) -> anyhow::Result<()> {
+    match command {
+        Commands::HashPassword => hash_password_interactive(),
+    }
+}
+
+fn hash_password_interactive() -> anyhow::Result<()> {
+    use argon2::Argon2;
+    use password_hash::{PasswordHasher, SaltString};
+    use rand::rngs::OsRng;
+
+    println!("Enter password to hash:");
+    let password = rpassword::read_password()?;
+
+    if password.trim().is_empty() {
+        anyhow::bail!("Password cannot be empty");
+    }
+
+    if password.len() < 8 {
+        anyhow::bail!("Password must be at least 8 characters");
+    }
+
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("Failed to hash password: {e}"))?
+        .to_string();
+
+    println!("\nArgon2 password hash:");
+    println!("{hash}");
+    println!("\nAdd this to your .env file:");
+    println!("BLAZ_PASSWORD_HASH=\"{hash}\"");
+
     Ok(())
 }

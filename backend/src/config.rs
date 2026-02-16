@@ -1,9 +1,24 @@
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, Subcommand};
 use std::{net::SocketAddr, path::PathBuf};
+
+#[derive(Parser, Debug)]
+#[command(name = "blaz", version, about = "HTTP API server for Blaz")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    #[command(flatten)]
+    pub config: Config,
+}
+
+#[derive(Subcommand, Debug, Clone, Copy)]
+pub enum Commands {
+    /// Generate an Argon2 password hash for authentication
+    HashPassword,
+}
 
 /// Blaz server configuration
 #[derive(Parser, Debug, Clone)]
-#[command(name = "blaz-server", version, about = "HTTP API server for Blaz")]
 pub struct Config {
     /// Increase verbosity (-v, -vv, -vvv)
     #[arg(short = 'v', action = ArgAction::Count, global = true)]
@@ -37,6 +52,11 @@ pub struct Config {
     /// JWT secret for authentication (if not set, generates a random one)
     #[arg(long, env = "BLAZ_JWT_SECRET")]
     pub jwt_secret: Option<String>,
+
+    /// Argon2 password hash for authentication (required for production)
+    /// Generate with: blaz hash-password
+    #[arg(long, env = "BLAZ_PASSWORD_HASH")]
+    pub password_hash: Option<String>,
 
     /// LLM API key (optional, for recipe parsing and macro estimation)
     #[arg(long, env = "BLAZ_LLM_API_KEY")]

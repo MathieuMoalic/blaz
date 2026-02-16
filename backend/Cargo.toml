@@ -40,6 +40,7 @@ argon2 = "0.5"
 password-hash = "0.5"
 rand_core = "0.6"
 rand = "0.8"
+rpassword = "7"
 clap = { version = "4.5.53", features = ["derive", "env"] }
 tracing-appender = "0.2.4"
 base64 = "0.22"

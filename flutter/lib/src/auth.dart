@@ -1,31 +1,12 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-
 import './api.dart' as api;
 import './platform/kv_store.dart' as kv;
 
-Future<bool> serverAllowsRegistration() async {
-  final uri = Uri.parse('${api.baseUrl}/auth/status');
-  final res = await http.get(uri);
-  if (res.statusCode != 200) {
-    throw Exception('HTTP ${res.statusCode} $uri: ${res.body}');
-  }
-  final data = jsonDecode(res.body) as Map<String, dynamic>;
-  return data['allow_registration'] == true;
-}
-
 class Auth {
   static String? _token;
-  static bool allowRegistration = true;
 
   static Future<void> init() async {
     _token = await kv.getString('auth_token');
     api.setAuthToken(_token);
-    try {
-      allowRegistration = await serverAllowsRegistration();
-    } catch (_) {
-      allowRegistration = true;
-    }
   }
 
   static String? get token => _token;
@@ -54,31 +35,8 @@ class Auth {
     api.setAuthToken(null);
   }
 
-  static Future<bool> register({
-    required String email,
-    required String password,
-  }) async {
-    final uri = Uri.parse('${api.baseUrl}/auth/register');
-    final res = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
-
-    if (res.statusCode == 201) {
-      allowRegistration = false;
-      return true;
-    }
-    if (res.statusCode == 403) throw Exception('Registration is disabled.');
-    if (res.statusCode == 409) throw Exception('Email already exists.');
-    throw Exception('HTTP ${res.statusCode} $uri: ${res.body}');
-  }
-
-  static Future<void> login({
-    required String email,
-    required String password,
-  }) async {
-    final token = await api.login(email: email, password: password);
+  static Future<void> login({required String password}) async {
+    final token = await api.login(password: password);
     await save(token);
   }
 }

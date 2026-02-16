@@ -4,8 +4,19 @@ use std::{
     time::Duration,
 };
 
+use argon2::Argon2;
+use password_hash::{PasswordHasher, SaltString};
+use rand::rngs::OsRng;
 use serde_json::json;
 use tempfile::TempDir;
+
+fn generate_password_hash(password: &str) -> String {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .unwrap()
+        .to_string()
+}
 
 fn pick_free_port() -> u16 {
     // Bind to port 0 to let OS pick a free port.
@@ -20,6 +31,8 @@ struct TestServer {
     child: Child,
 }
 
+const TEST_PASSWORD: &str = "testpassword123";
+
 impl TestServer {
     fn start() -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -32,6 +45,9 @@ impl TestServer {
         // Ensure dirs exist for cleaner startup
         std::fs::create_dir_all(&media_dir).ok();
 
+        // Generate password hash for this test run
+        let password_hash = generate_password_hash(TEST_PASSWORD);
+
         // NOTE: env!("CARGO_BIN_EXE_blaz") is provided by Cargo for integration tests
         // and points at the compiled binary.
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_blaz"));
@@ -39,6 +55,8 @@ impl TestServer {
             .env("BLAZ_DATABASE_PATH", db_path.to_string_lossy().to_string())
             .env("BLAZ_MEDIA_DIR", media_dir.to_string_lossy().to_string())
             .env("BLAZ_LOG_FILE", log_file.to_string_lossy().to_string())
+            .env("BLAZ_PASSWORD_HASH", password_hash)
+            .env_remove("BLAZ_LLM_API_KEY") // Don't use LLM in tests (for predictability)
             // keep output quiet unless test fails
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -84,19 +102,12 @@ async fn wait_ready(base: &str) {
     }
 }
 
-async fn register_and_login(base: &str) -> String {
+async fn login(base: &str) -> String {
     let client = reqwest::Client::new();
-
-    client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"test@example.com","password":"testpassword123"}))
-        .send()
-        .await
-        .unwrap();
 
     let login = client
         .post(format!("{base}/auth/login"))
-        .json(&json!({"email":"test@example.com","password":"testpassword123"}))
+        .json(&json!({"password": TEST_PASSWORD}))
         .send()
         .await
         .unwrap()
@@ -127,67 +138,17 @@ async fn healthz_ok() {
 }
 
 #[tokio::test]
-async fn auth_register_login_single_user_guard() {
+async fn auth_login_ok() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
 
     let client = reqwest::Client::new();
 
-    // Fresh DB => allow_registration = true
-    let st = client
-        .get(format!("{base}/auth/status"))
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-
-    assert_eq!(st["allow_registration"], true);
-
-    // Bad password => 400
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"a@b.com","password":"short"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    // Good registration => 201
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"user@example.com","password":"correcthorsebatterystaple"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
-
-    // Second registration attempt => 403 (single-user guard)
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"other@example.com","password":"anothergoodpassword"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
-
-    // Status now false
-    let st = client
-        .get(format!("{base}/auth/status"))
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    assert_eq!(st["allow_registration"], false);
-
-    // Login ok => returns token
+    // Login with correct password => returns token
     let login = client
         .post(format!("{base}/auth/login"))
-        .json(&json!({"email":"user@example.com","password":"correcthorsebatterystaple"}))
+        .json(&json!({"password": TEST_PASSWORD}))
         .send()
         .await
         .unwrap();
@@ -204,11 +165,29 @@ async fn auth_register_login_single_user_guard() {
 }
 
 #[tokio::test]
+async fn auth_login_wrong_password() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+
+    let client = reqwest::Client::new();
+
+    // Wrong password => 401
+    let resp = client
+        .post(format!("{base}/auth/login"))
+        .json(&json!({"password": "wrongpassword"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn recipes_crud_smoke() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -286,7 +265,7 @@ async fn shopping_done_and_category_behavior() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -343,7 +322,7 @@ async fn shopping_create_and_merge_smoke() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -384,101 +363,11 @@ async fn shopping_create_and_merge_smoke() {
 }
 
 #[tokio::test]
-async fn auth_bad_email_validation() {
-    let srv = TestServer::start();
-    let base = srv.base_url();
-    wait_ready(&base).await;
-
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"notanemail","password":"validpassword123"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"","password":"validpassword123"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"  ","password":"validpassword123"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn auth_password_length() {
-    let srv = TestServer::start();
-    let base = srv.base_url();
-    wait_ready(&base).await;
-
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"test@example.com","password":"1234567"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-
-    let resp = client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"test@example.com","password":"12345678"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
-}
-
-#[tokio::test]
-async fn auth_login_failures() {
-    let srv = TestServer::start();
-    let base = srv.base_url();
-    wait_ready(&base).await;
-
-    let client = reqwest::Client::new();
-
-    client
-        .post(format!("{base}/auth/register"))
-        .json(&json!({"email":"test@example.com","password":"correctpassword"}))
-        .send()
-        .await
-        .unwrap();
-
-    let resp = client
-        .post(format!("{base}/auth/login"))
-        .json(&json!({"email":"test@example.com","password":"wrongpassword"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-    let resp = client
-        .post(format!("{base}/auth/login"))
-        .json(&json!({"email":"nonexistent@example.com","password":"anypassword"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
 async fn recipes_not_found() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -513,7 +402,7 @@ async fn shopping_parsing_variations() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -559,7 +448,7 @@ async fn shopping_empty_text_rejected() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -587,7 +476,7 @@ async fn shopping_category_validation() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -635,7 +524,7 @@ async fn shopping_delete() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -675,7 +564,7 @@ async fn shopping_merge_accumulates_quantities() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -728,7 +617,7 @@ async fn meal_plan_crud() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -794,7 +683,7 @@ async fn meal_plan_non_existent_recipe() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -813,7 +702,7 @@ async fn meal_plan_duplicate_assignment() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -857,7 +746,7 @@ async fn recipes_invalid_title() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -895,7 +784,7 @@ async fn recipes_with_ingredients() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -968,7 +857,7 @@ async fn shopping_structured_update() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 
@@ -1002,7 +891,7 @@ async fn recipes_patch_updates() {
     let srv = TestServer::start();
     let base = srv.base_url();
     wait_ready(&base).await;
-    let token = register_and_login(&base).await;
+    let token = login(&base).await;
 
     let client = reqwest::Client::new();
 

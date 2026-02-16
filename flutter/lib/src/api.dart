@@ -104,26 +104,17 @@ Map<String, String> _headers([Map<String, String>? extra]) {
   return h;
 }
 
-Future<String> login({required String email, required String password}) async {
+Future<String> login({required String password}) async {
   final r = await http.post(
     _u('/auth/login'),
     headers: _headers({'content-type': 'application/json'}),
-    body: jsonEncode({'email': email.trim(), 'password': password}),
+    body: jsonEncode({'password': password}),
   );
   if (r.statusCode != 200) _throw(r);
   final data = jsonDecode(r.body) as Map<String, dynamic>;
   final token = data['token'] as String;
   setAuthToken(token); // keep it for subsequent calls
   return token;
-}
-
-Future<void> register({required String email, required String password}) async {
-  final r = await http.post(
-    _u('/auth/register'),
-    headers: _headers({'content-type': 'application/json'}),
-    body: jsonEncode({'email': email.trim(), 'password': password}),
-  );
-  if (r.statusCode != 201) _throw(r);
 }
 
 /// Add multiple plain-text shopping items (one request per line).
