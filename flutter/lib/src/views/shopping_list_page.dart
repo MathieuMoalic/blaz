@@ -191,29 +191,6 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _ctrl,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (v) => _add(v),
-                  decoration: const InputDecoration(
-                    labelText: 'Add item',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: () => _add(_ctrl.text),
-                child: const Text('Add'),
-              ),
-            ],
-          ),
-        ),
         Expanded(
           child: Stack(
             children: [
@@ -256,7 +233,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                     ];
 
                     return ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                       itemBuilder: (context, section) {
                         final cat = orderedCats[section];
                         final rows = grouped[cat]!;
@@ -346,10 +323,42 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                   top: 0,
                   child: LinearProgressIndicator(minHeight: 2),
                 ),
+
+              // Floating "Add item" button in lower right
+              Positioned(
+                right: 16,
+                bottom: 16,
+                child: FloatingActionButton(
+                  onPressed: _showAddItemDialog,
+                  tooltip: 'Add item',
+                  child: const Icon(Icons.add),
+                ),
+              ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _showAddItemDialog() async {
+    _ctrl.clear();
+    
+    // Get all unique item texts from cache for suggestions
+    final allItemTexts = _cache.map((item) => item.text).toSet().toList();
+    
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return _AddItemDialog(
+          controller: _ctrl,
+          allItemTexts: allItemTexts,
+          onAdd: (text) {
+            Navigator.pop(ctx);
+            _add(text);
+          },
+        );
+      },
     );
   }
 
@@ -527,6 +536,197 @@ class _RowTile extends StatelessWidget {
           ),
         ),
         const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+/// Stateful dialog for adding items with fuzzy search suggestions
+class _AddItemDialog extends StatefulWidget {
+  final TextEditingController controller;
+  final List<String> allItemTexts;
+  final ValueChanged<String> onAdd;
+
+  const _AddItemDialog({
+    required this.controller,
+    required this.allItemTexts,
+    required this.onAdd,
+  });
+
+  @override
+  State<_AddItemDialog> createState() => _AddItemDialogState();
+}
+
+class _AddItemDialogState extends State<_AddItemDialog> {
+  List<String> _suggestions = [];
+  
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onTextChanged);
+  }
+  
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onTextChanged);
+    super.dispose();
+  }
+  
+  void _onTextChanged() {
+    if (!mounted) return;
+    
+    try {
+      final query = widget.controller.text.trim().toLowerCase();
+      print('Query changed: "$query"');
+      
+      if (query.isEmpty) {
+        setState(() => _suggestions = []);
+        return;
+      }
+      
+      // Fuzzy match and score all items
+      final scored = <({String text, double score})>[];
+      for (final text in widget.allItemTexts) {
+        final score = fuzzyScore(text, query);
+        if (score > 0) {
+          scored.add((text: text, score: score));
+        }
+      }
+      
+      scored.sort((a, b) => b.score.compareTo(a.score));
+      final newSuggestions = scored.take(5).map((item) => item.text).toList();
+      
+      print('Found ${newSuggestions.length} suggestions');
+      
+      if (mounted) {
+        setState(() => _suggestions = newSuggestions);
+      }
+    } catch (e, stack) {
+      // If there's an error, just clear suggestions
+      print('Error in fuzzy search: $e\n$stack');
+      if (mounted) {
+        setState(() => _suggestions = []);
+      }
+    }
+  }
+  
+  double fuzzyScore(String text, String query) {
+    final textLower = text.toLowerCase();
+    
+    // Exact match
+    if (textLower == query) return 1000;
+    
+    // Starts with
+    if (textLower.startsWith(query)) return 900;
+    
+    // Word boundary match
+    final words = textLower.split(' ');
+    for (final word in words) {
+      if (word.startsWith(query)) return 800;
+    }
+    
+    // Contains substring
+    if (textLower.contains(query)) return 700;
+    
+    // Fuzzy character-by-character match
+    return fuzzyCharMatch(textLower, query);
+  }
+  
+  double fuzzyCharMatch(String text, String pattern) {
+    int textIdx = 0;
+    int patternIdx = 0;
+    int matchCount = 0;
+    int consecutiveMatches = 0;
+    double score = 0;
+    
+    while (textIdx < text.length && patternIdx < pattern.length) {
+      if (text[textIdx] == pattern[patternIdx]) {
+        matchCount++;
+        consecutiveMatches++;
+        score += 10 + consecutiveMatches;
+        patternIdx++;
+      } else {
+        consecutiveMatches = 0;
+      }
+      textIdx++;
+    }
+    
+    if (patternIdx != pattern.length) return 0;
+    
+    final matchRatio = matchCount / pattern.length;
+    final lengthRatio = pattern.length / text.length;
+    return score * matchRatio * lengthRatio;
+  }
+  
+  void _submitText() {
+    final text = widget.controller.text.trim();
+    if (text.isNotEmpty) {
+      widget.onAdd(text);
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    print('Building dialog, suggestions count: ${_suggestions.length}');
+    return AlertDialog(
+      title: const Text('Add item'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: widget.controller,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                hintText: 'e.g. 2 kg apples',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (v) => _submitText(),
+            ),
+            // Fixed height container for suggestions to prevent dialog resizing
+            if (_suggestions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Suggestions:',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 240,
+                child: ListView.builder(
+                  itemCount: _suggestions.length,
+                  itemBuilder: (context, index) {
+                    final suggestion = _suggestions[index];
+                    return ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      title: Text(_formatItemText(suggestion)),
+                      trailing: const Icon(Icons.arrow_forward, size: 16),
+                      onTap: () {
+                        widget.controller.text = suggestion;
+                        _submitText();
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submitText,
+          child: const Text('Add'),
+        ),
       ],
     );
   }
