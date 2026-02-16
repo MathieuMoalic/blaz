@@ -17,29 +17,17 @@ struct JsonLdRecipe {
     #[serde(default, deserialize_with = "string_or_array")]
     name: Option<String>,
     #[serde(default, deserialize_with = "string_or_array")]
-    description: Option<String>,
-    #[serde(default, deserialize_with = "string_or_array")]
     url: Option<String>,
+    #[serde(default, deserialize_with = "string_or_array")]
+    is_based_on: Option<String>,
     #[serde(default)]
     recipe_yield: Option<Value>,
-    #[serde(default, deserialize_with = "string_or_array")]
-    prep_time: Option<String>,
-    #[serde(default, deserialize_with = "string_or_array")]
-    cook_time: Option<String>,
-    #[serde(default, deserialize_with = "string_or_array")]
-    total_time: Option<String>,
     #[serde(default, deserialize_with = "string_vec_or_array")]
     recipe_ingredient: Vec<String>,
     #[serde(default)]
     recipe_instructions: Option<Value>,
-    #[serde(default)]
-    keywords: Option<Value>,
     #[serde(default, deserialize_with = "string_or_array")]
-    recipe_category: Option<String>,
-    #[serde(default, deserialize_with = "string_or_array")]
-    recipe_cuisine: Option<String>,
-    #[serde(default)]
-    aggregate_rating: Option<Value>,
+    notes: Option<String>,
     #[serde(default, deserialize_with = "string_or_array")]
     image: Option<String>,
 }
@@ -99,15 +87,26 @@ pub async fn import_recipesage(
         }
     };
 
+    tracing::info!("Starting RecipeSage import of {} recipes", recipes.len());
+
     let mut imported_count = 0;
     let mut failed = Vec::new();
 
     for recipe in recipes {
         match import_single_recipe(&state, recipe).await {
             Ok(()) => imported_count += 1,
-            Err(e) => failed.push(e),
+            Err(e) => {
+                tracing::error!("Import failed: {}", e);
+                failed.push(e);
+            }
         }
     }
+
+    tracing::info!(
+        "RecipeSage import complete: {} succeeded, {} failed",
+        imported_count,
+        failed.len()
+    );
 
     (
         StatusCode::OK,
@@ -123,6 +122,8 @@ async fn import_single_recipe(
     recipe: JsonLdRecipe,
 ) -> Result<(), String> {
     let title = recipe.name.clone().unwrap_or_else(|| "Untitled Recipe".to_string());
+    
+    tracing::info!("Importing recipe: {}", title);
 
     // Convert ingredients to structured format
     let ingredients: Vec<Ingredient> = recipe
@@ -144,50 +145,18 @@ async fn import_single_recipe(
     let instructions_json = serde_json::to_string(&instructions)
         .map_err(|e| format!("{title}: Failed to serialize instructions: {e}"))?;
 
-    // Build notes from various fields
-    let mut notes_parts = Vec::new();
+    // Use only the notes field from RecipeSage
+    let notes = recipe.notes.unwrap_or_default();
     
-    if let Some(desc) = recipe.description {
-        if !desc.is_empty() {
-            notes_parts.push(desc);
-        }
+    // Prefer isBasedOn over url for source
+    let source = recipe.is_based_on
+        .or(recipe.url)
+        .unwrap_or_default();
+    
+    if !source.is_empty() {
+        tracing::info!("  Source URL: {}", source);
     }
     
-    if let Some(prep) = recipe.prep_time {
-        notes_parts.push(format!("Prep Time: {prep}"));
-    }
-    
-    if let Some(cook) = recipe.cook_time {
-        notes_parts.push(format!("Cook Time: {cook}"));
-    }
-    
-    if let Some(total) = recipe.total_time {
-        notes_parts.push(format!("Total Time: {total}"));
-    }
-    
-    if let Some(keywords) = recipe.keywords {
-        let tags = extract_keywords(keywords);
-        if !tags.is_empty() {
-            notes_parts.push(format!("Tags: {tags}"));
-        }
-    }
-    
-    if let Some(cat) = recipe.recipe_category {
-        notes_parts.push(format!("Category: {cat}"));
-    }
-    
-    if let Some(cuisine) = recipe.recipe_cuisine {
-        notes_parts.push(format!("Cuisine: {cuisine}"));
-    }
-    
-    if let Some(rating_val) = recipe.aggregate_rating {
-        if let Some(rating) = extract_rating(rating_val) {
-            notes_parts.push(format!("Rating: {rating}/5"));
-        }
-    }
-    
-    let notes = notes_parts.join("\n\n");
-    let source = recipe.url.unwrap_or_default();
     let yield_str = recipe.recipe_yield
         .and_then(|y| match y {
             Value::String(s) => Some(s),
@@ -214,14 +183,30 @@ async fn import_single_recipe(
     .map_err(|e| format!("{title}: Database error: {e}"))?;
 
     let recipe_id: i64 = result.get("id");
+    tracing::info!("  Created recipe with ID: {}", recipe_id);
 
-    // Import image if available
-    if let Some(image_url) = recipe.image {
-        if let Err(e) = import_recipe_image(state, recipe_id, &image_url).await {
-            tracing::warn!(recipe_id, image_url, error = %e, "Failed to import image");
+    // Import image - if there's a URL source, fetch from web; otherwise use local image
+    if !source.is_empty() && (source.starts_with("http://") || source.starts_with("https://")) {
+        // Fetch image from the source URL
+        tracing::info!("  Fetching image from URL: {}", source);
+        if let Err(e) = import_image_from_url(state, recipe_id, &source).await {
+            tracing::warn!(recipe_id, source, error = %e, "Failed to import image from URL");
+        } else {
+            tracing::info!("  ✓ Image imported from URL");
         }
+    } else if let Some(image_url) = recipe.image {
+        // Use local image from recipeImage directory
+        tracing::info!("  Using local image: {}", image_url);
+        if let Err(e) = import_recipe_image(state, recipe_id, &image_url).await {
+            tracing::warn!(recipe_id, image_url, error = %e, "Failed to import local image");
+        } else {
+            tracing::info!("  ✓ Local image imported");
+        }
+    } else {
+        tracing::info!("  No image available");
     }
 
+    tracing::info!("✓ Successfully imported: {}", title);
     Ok(())
 }
 
@@ -240,26 +225,46 @@ fn parse_instructions(instructions: Option<Value>) -> Vec<String> {
     }
 }
 
-fn extract_keywords(keywords: Value) -> String {
-    match keywords {
-        Value::String(s) => s,
-        Value::Array(arr) => arr
-            .into_iter()
-            .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-            .collect::<Vec<_>>()
-            .join(", "),
-        _ => String::new(),
+async fn import_image_from_url(
+    state: &AppState,
+    recipe_id: i64,
+    source_url: &str,
+) -> anyhow::Result<()> {
+    // Fetch the page HTML to extract the image
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(source_url)
+        .timeout(std::time::Duration::from_secs(45))
+        .send()
+        .await?;
+    
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!("HTTP {} fetching {}", resp.status(), source_url));
     }
-}
-
-fn extract_rating(rating: Value) -> Option<i32> {
-    if let Value::Object(obj) = rating {
-        obj.get("ratingValue")
-            .and_then(serde_json::Value::as_i64)
-            .and_then(|n| i32::try_from(n).ok())
-    } else {
-        None
+    
+    let html = resp.text().await?;
+    
+    // Use the same image extraction logic as URL import
+    if let Some(img_url) = crate::routes::parse_recipe_image::extract_main_image_url(&html, source_url) {
+        let (rel_full, rel_small) =
+            crate::routes::recipes::fetch_and_store_recipe_image(&client, &img_url, state, recipe_id).await?;
+        
+        sqlx::query(
+            r"
+            UPDATE recipes
+            SET image_path_small = ?,
+                image_path_full  = ?
+            WHERE id = ?
+            ",
+        )
+        .bind(&rel_small)
+        .bind(&rel_full)
+        .bind(recipe_id)
+        .execute(&state.pool)
+        .await?;
     }
+    
+    Ok(())
 }
 
 async fn import_recipe_image(

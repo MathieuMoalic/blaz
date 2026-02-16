@@ -15,3 +15,4 @@ recipeImage
 flutter/**/build/
 flutter/android/.gradle/
 flutter/android/.cxx/
+backend/recipesage.json
