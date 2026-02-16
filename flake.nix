@@ -86,7 +86,6 @@
       lib,
       config,
       pkgs,
-      utils,
       ...
     }: let
       cfg = config.services.blaz;
@@ -114,7 +113,7 @@
 
         logFile = lib.mkOption {
           type = lib.types.str;
-          default = "/var/log/blaz/blaz.log";
+          default = "/var/lib/blaz/blaz.log";
           description = "Path to log file";
         };
 
@@ -130,9 +129,90 @@
           default = 0;
           description = "Log verbosity level (-2 to 3, where 0 is info)";
         };
+
+        # Authentication options
+        passwordHash = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Argon2 password hash for authentication. Generate with: blaz hash-password";
+        };
+
+        passwordHashFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = null;
+          description = "Path to file containing password hash (for use with sops-nix)";
+        };
+
+        jwtSecret = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "JWT secret for token signing. If not set, generates a random one (tokens won't persist across restarts)";
+        };
+
+        jwtSecretFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = null;
+          description = "Path to file containing JWT secret (for use with sops-nix)";
+        };
+
+        # LLM options
+        llmApiKey = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "LLM API key for recipe parsing and macro estimation";
+        };
+
+        llmApiKeyFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = null;
+          description = "Path to file containing LLM API key (for use with sops-nix)";
+        };
+
+        llmModel = lib.mkOption {
+          type = lib.types.str;
+          default = "deepseek/deepseek-chat";
+          description = "LLM model to use";
+        };
+
+        llmApiUrl = lib.mkOption {
+          type = lib.types.str;
+          default = "https://openrouter.ai/api/v1";
+          description = "LLM API URL";
+        };
+
+        systemPromptImport = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for recipe import (uses default if not set)";
+        };
+
+        systemPromptMacros = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for macro estimation (uses default if not set)";
+        };
       };
 
       config = lib.mkIf cfg.enable {
+        assertions = [
+          {
+            assertion = cfg.passwordHash != null || cfg.passwordHashFile != null;
+            message = "services.blaz.passwordHash or services.blaz.passwordHashFile must be set";
+          }
+          {
+            assertion = !(cfg.passwordHash != null && cfg.passwordHashFile != null);
+            message = "services.blaz.passwordHash and services.blaz.passwordHashFile are mutually exclusive";
+          }
+          {
+            assertion = !(cfg.jwtSecret != null && cfg.jwtSecretFile != null);
+            message = "services.blaz.jwtSecret and services.blaz.jwtSecretFile are mutually exclusive";
+          }
+          {
+            assertion = !(cfg.llmApiKey != null && cfg.llmApiKeyFile != null);
+            message = "services.blaz.llmApiKey and services.blaz.llmApiKeyFile are mutually exclusive";
+          }
+        ];
+
         users.users.blaz = {
           isSystemUser = true;
           group = "blaz";
@@ -141,29 +221,85 @@
         };
         users.groups.blaz = {};
 
+        # Create directories before service starts (required due to ProtectSystem = strict)
+        systemd.tmpfiles.rules = [
+          # Database directory
+          "d ${dirOf cfg.databasePath} 0750 blaz blaz - -"
+          
+          # Media directory
+          "d ${cfg.mediaDir} 0750 blaz blaz - -"
+          
+          # Log directory and file
+          "d ${dirOf cfg.logFile} 0750 blaz blaz - -"
+          "f ${cfg.logFile} 0640 blaz blaz - -"
+        ];
+
         systemd.services.blaz = {
           description = "Blaz recipe manager backend";
           after = ["network.target"];
           wantedBy = ["multi-user.target"];
 
+          # Basic environment variables (non-secrets)
           environment =
             {
               BLAZ_BIND_ADDR = cfg.bindAddr;
               BLAZ_DATABASE_PATH = cfg.databasePath;
               BLAZ_MEDIA_DIR = cfg.mediaDir;
               BLAZ_LOG_FILE = cfg.logFile;
+              BLAZ_LLM_MODEL = cfg.llmModel;
+              BLAZ_LLM_API_URL = cfg.llmApiUrl;
             }
             // lib.optionalAttrs (cfg.corsOrigin != null) {
               BLAZ_CORS_ORIGIN = cfg.corsOrigin;
+            }
+            // lib.optionalAttrs (cfg.passwordHash != null) {
+              BLAZ_PASSWORD_HASH = cfg.passwordHash;
+            }
+            // lib.optionalAttrs (cfg.jwtSecret != null) {
+              BLAZ_JWT_SECRET = cfg.jwtSecret;
+            }
+            // lib.optionalAttrs (cfg.llmApiKey != null) {
+              BLAZ_LLM_API_KEY = cfg.llmApiKey;
+            }
+            // lib.optionalAttrs (cfg.systemPromptImport != null) {
+              BLAZ_SYSTEM_PROMPT_IMPORT = cfg.systemPromptImport;
+            }
+            // lib.optionalAttrs (cfg.systemPromptMacros != null) {
+              BLAZ_SYSTEM_PROMPT_MACROS = cfg.systemPromptMacros;
             };
 
-          serviceConfig = {
-            ExecStart = utils.escapeSystemdExecArgs ([
-                "${package}/bin/blaz"
-              ]
-              ++ lib.optionals (cfg.verbosity > 0) (lib.genList (_: "-v") cfg.verbosity)
-              ++ lib.optionals (cfg.verbosity < 0) (lib.genList (_: "-q") (- cfg.verbosity)));
+          # Script to load secrets from files before starting
+          script = let
+            # Load password hash from file if specified
+            passwordHashLoader =
+              if cfg.passwordHashFile != null
+              then ''export BLAZ_PASSWORD_HASH="$(cat ${cfg.passwordHashFile})"''
+              else "";
+            
+            # Load JWT secret from file if specified
+            jwtSecretLoader =
+              if cfg.jwtSecretFile != null
+              then ''export BLAZ_JWT_SECRET="$(cat ${cfg.jwtSecretFile})"''
+              else "";
+            
+            # Load LLM API key from file if specified
+            llmApiKeyLoader =
+              if cfg.llmApiKeyFile != null
+              then ''export BLAZ_LLM_API_KEY="$(cat ${cfg.llmApiKeyFile})"''
+              else "";
+          in ''
+            ${passwordHashLoader}
+            ${jwtSecretLoader}
+            ${llmApiKeyLoader}
+            
+            exec ${package}/bin/blaz \
+              ${lib.concatStringsSep " " (
+                lib.optionals (cfg.verbosity > 0) (lib.genList (_: "-v") cfg.verbosity)
+                ++ lib.optionals (cfg.verbosity < 0) (lib.genList (_: "-q") (- cfg.verbosity))
+              )}
+          '';
 
+          serviceConfig = {
             WorkingDirectory = "/var/lib/blaz";
             User = "blaz";
             Group = "blaz";
