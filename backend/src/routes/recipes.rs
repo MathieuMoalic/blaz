@@ -1,7 +1,7 @@
 use crate::llm::LlmClient;
 use axum::{
     Json,
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, State, rejection::JsonRejection},
     http::StatusCode,
 };
 use serde::Deserialize;
@@ -245,8 +245,14 @@ pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppRe
 pub async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(up): Json<UpdateRecipe>,
+    payload: Result<Json<UpdateRecipe>, JsonRejection>,
 ) -> AppResult<Json<Recipe>> {
+    let Json(up) = payload.map_err(|rejection| {
+        let msg = rejection.body_text();
+        tracing::error!("JSON deserialization failed in recipes::update: {}", msg);
+        (StatusCode::UNPROCESSABLE_ENTITY, msg)
+    })?;
+    
     let mut sets: Vec<&'static str> = Vec::new();
     let mut args = SqliteArguments::default();
 

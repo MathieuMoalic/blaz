@@ -55,6 +55,14 @@ impl From<tokio::task::JoinError> for AppError {
     }
 }
 
+impl From<axum::extract::rejection::JsonRejection> for AppError {
+    fn from(rejection: axum::extract::rejection::JsonRejection) -> Self {
+        let msg = rejection.body_text();
+        tracing::debug!("JSON deserialization failed: {}", msg);
+        Self::Msg(StatusCode::UNPROCESSABLE_ENTITY, msg)
+    }
+}
+
 #[derive(Serialize)]
 struct ErrBody {
     error: String,
@@ -64,7 +72,15 @@ impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         match self {
             Self::Status(code) => code.into_response(), // empty body
-            Self::Msg(code, msg) => (code, msg).into_response(), // preserves old tuple behavior
+            Self::Msg(code, msg) => {
+                // Log client errors (4xx) at debug level, server errors (5xx) at error level
+                if code.is_client_error() {
+                    tracing::debug!("Client error {}: {}", code, msg);
+                } else {
+                    tracing::error!("Server error {}: {}", code, msg);
+                }
+                (code, msg).into_response()
+            }
             Self::Anyhow(err) => {
                 tracing::error!("{:#}", err);
                 let body = Json(ErrBody {
