@@ -140,16 +140,23 @@ class ShoppingListPageState extends State<ShoppingListPage> {
       if (!mounted) return;
 
       _applyLocalUpdate((list) {
-        final idx = list.indexWhere((x) => x.id == tempId);
-        if (idx != -1) {
-          list[idx] = created;
+        // Remove the temp item
+        list = list.where((x) => x.id != tempId).toList();
+        
+        // Check if an item with the same ID already exists (merge case)
+        final existingIdx = list.indexWhere((x) => x.id == created.id);
+        if (existingIdx != -1) {
+          // Replace the existing item with the merged one
+          list[existingIdx] = created;
         } else {
+          // Add as new item
           list.insert(0, created);
         }
         return list;
       });
 
-      unawaited(Future.delayed(const Duration(milliseconds: 800), refresh));
+      // Immediate refresh to sync with server state
+      unawaited(refresh());
     } catch (e) {
       _applyLocalUpdate((list) => list.where((x) => x.id != tempId).toList());
       if (mounted) {
