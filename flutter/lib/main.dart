@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:window_manager/window_manager.dart';
 import 'src/api.dart' as api;
 import 'src/platform_io.dart'
@@ -55,6 +56,15 @@ class BlazApp extends StatelessWidget {
       darkTheme: _theme(
         Brightness.dark,
       ).copyWith(scaffoldBackgroundColor: Colors.transparent),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('en', 'GB'), // English UK - weeks start on Monday
+        Locale('en', 'US'),
+      ],
       builder: (context, child) {
         final tint = Theme.of(context).brightness == Brightness.dark
             ? Colors.black.withAlpha(80)

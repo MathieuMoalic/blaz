@@ -109,6 +109,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       initialDate: now,
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 2),
+      locale: const Locale('en', 'GB'), // UK locale starts weeks on Monday
     );
 
     if (!mounted) return;

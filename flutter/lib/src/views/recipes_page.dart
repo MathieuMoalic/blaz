@@ -82,6 +82,7 @@ class RecipesPageState extends State<RecipesPage> {
       initialDate: now,
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 2),
+      locale: const Locale('en', 'GB'), // UK locale starts weeks on Monday
     );
     if (picked == null) return;
 
