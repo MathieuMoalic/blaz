@@ -33,9 +33,12 @@ pub async fn require_auth(
         .strip_prefix("Bearer ")
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    // Decode and verify JWT
-    let settings = state.settings.read().await;
-    let decoding_key = DecodingKey::from_secret(settings.jwt_secret.as_bytes());
+    // Decode and verify JWT - clone jwt_secret to drop the lock immediately
+    let jwt_secret = {
+        let settings = state.settings.read().await;
+        settings.jwt_secret.clone()
+    };
+    let decoding_key = DecodingKey::from_secret(jwt_secret.as_bytes());
 
     decode::<Claims>(token, &decoding_key, &Validation::new(Algorithm::HS256))
         .map_err(|_| StatusCode::UNAUTHORIZED)?;

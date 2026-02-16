@@ -58,6 +58,8 @@ pub async fn patch(
     State(state): State<AppState>,
     Json(p): Json<PatchAppState>,
 ) -> AppResult<Json<AppStateView>> {
+    tracing::debug!("patch: starting");
+    
     // 1) Apply to DB (singleton row id=1)
     let mut settings = sqlx::query_as::<_, AppSettings>(
         r"
@@ -68,6 +70,8 @@ pub async fn patch(
     )
     .fetch_one(&state.pool)
     .await?;
+
+    tracing::debug!("patch: fetched current settings");
 
     if let Some(v) = p.llm_api_key {
         settings.llm_api_key = if v.trim().is_empty() { None } else { Some(v) };
@@ -84,6 +88,8 @@ pub async fn patch(
     if let Some(v) = p.system_prompt_macros {
         settings.system_prompt_macros = v;
     }
+
+    tracing::debug!("patch: updated settings struct, about to UPDATE db");
 
     sqlx::query(
         r"
@@ -106,12 +112,24 @@ pub async fn patch(
     .execute(&state.pool)
     .await?;
 
-    // 2) Update in-memory settings
-    {
-        let mut guard = state.settings.write().await;
-        *guard = settings;
-    }
+    tracing::debug!("patch: db updated, acquiring write lock");
 
-    // 3) Return masked view
-    get(State(state)).await
+    // 2) Update in-memory settings and prepare response
+    let view = {
+        let mut guard = state.settings.write().await;
+        tracing::debug!("patch: acquired write lock");
+        *guard = settings.clone();
+        
+        // Create response while we have the settings
+        AppStateView {
+            llm_api_key_masked: mask_key(settings.llm_api_key.as_deref()),
+            llm_model: settings.llm_model,
+            llm_api_url: settings.llm_api_url,
+            system_prompt_import: settings.system_prompt_import,
+            system_prompt_macros: settings.system_prompt_macros,
+        }
+    };
+
+    tracing::debug!("patch: returning response");
+    Ok(Json(view))
 }
