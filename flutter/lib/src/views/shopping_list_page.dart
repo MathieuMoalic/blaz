@@ -60,6 +60,9 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   /// Hide rows immediately when checked; they vanish before the network round-trip.
   final Set<int> _hidden = <int>{};
 
+  /// Track collapsed categories
+  final Set<String> _collapsedCategories = <String>{};
+
   // NEW: soft loading flag
   bool _refreshing = false;
 
@@ -257,52 +260,78 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                       itemBuilder: (context, section) {
                         final cat = orderedCats[section];
                         final rows = grouped[cat]!;
+                        final isCollapsed = _collapsedCategories.contains(cat);
+                        
                         return Card(
+                          margin: EdgeInsets.zero,
                           clipBehavior: Clip.antiAlias,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Container(
-                                color:
-                                    theme.colorScheme.surfaceContainerHighest,
-                                padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  8,
-                                  12,
-                                  6,
-                                ),
-                                child: Text(
-                                  kShoppingCategoryLabelByValue[cat] ?? cat,
-                                  style: theme.textTheme.titleMedium,
+                              InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    if (isCollapsed) {
+                                      _collapsedCategories.remove(cat);
+                                    } else {
+                                      _collapsedCategories.add(cat);
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  color:
+                                      theme.colorScheme.surfaceContainerHighest,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        isCollapsed
+                                            ? Icons.chevron_right
+                                            : Icons.expand_more,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          kShoppingCategoryLabelByValue[cat] ?? cat,
+                                          style: theme.textTheme.titleMedium,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                              for (final it in rows)
-                                _RowTile(
-                                  item: it,
-                                  onChanged: (v) async {
-                                    setState(() => _hidden.add(it.id));
-                                    try {
-                                      final updated = await toggleShoppingItem(
-                                        id: it.id,
-                                        done: v ?? false,
-                                      );
-                                      _applyLocalUpdate(
-                                        (list) => list
-                                            .where((x) => x.id != updated.id)
-                                            .toList(),
-                                      );
-                                    } finally {
-                                      // Keep state consistent; still no flicker.
-                                      await refresh();
-                                    }
-                                  },
-                                  onEdit: () => _editItem(context, it),
-                                ),
+                              if (!isCollapsed)
+                                for (final it in rows)
+                                  _RowTile(
+                                    item: it,
+                                    onChanged: (v) async {
+                                      setState(() => _hidden.add(it.id));
+                                      try {
+                                        final updated = await toggleShoppingItem(
+                                          id: it.id,
+                                          done: v ?? false,
+                                        );
+                                        _applyLocalUpdate(
+                                          (list) => list
+                                              .where((x) => x.id != updated.id)
+                                              .toList(),
+                                        );
+                                      } finally {
+                                        // Keep state consistent; still no flicker.
+                                        await refresh();
+                                      }
+                                    },
+                                    onEdit: () => _editItem(context, it),
+                                  ),
                             ],
                           ),
                         );
                       },
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      separatorBuilder: (_, __) => const SizedBox(height: 4),
                       itemCount: orderedCats.length,
                     );
                   },
@@ -480,8 +509,9 @@ class _RowTile extends StatelessWidget {
           ),
           child: ListTile(
             dense: true,
-            minVerticalPadding: 6,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+            visualDensity: VisualDensity.compact,
+            minVerticalPadding: 0,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
             onTap: onEdit,
             leading: Checkbox(
               value: false, // only active items are shown
