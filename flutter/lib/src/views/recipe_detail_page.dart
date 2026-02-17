@@ -445,78 +445,108 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 ],
 
                 // Ingredients + scale
-                Text(
-                  'Ingredients',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Text(
-                      'Scale',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(width: 10),
-                    DropdownButton<double>(
-                      value: _scale,
-                      onChanged: (v) => setState(() => _scale = v ?? 1.0),
-                      items: const [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
-                          .map(
-                            (v) => DropdownMenuItem(
-                              value: v,
-                              child: Text('${v}x'),
+                Card(
+                  margin: const EdgeInsets.only(top: 4, bottom: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ingredients',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Text(
+                              'Scale',
+                              style: Theme.of(context).textTheme.bodyLarge,
                             ),
-                          )
-                          .toList(),
+                            const SizedBox(width: 10),
+                            DropdownButton<double>(
+                              value: _scale,
+                              onChanged: (v) => setState(() => _scale = v ?? 1.0),
+                              items: const [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+                                  .map(
+                                    (v) => DropdownMenuItem(
+                                      value: v,
+                                      child: Text('${v}x'),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                            const SizedBox(width: 8),
+                            TextButton(
+                              onPressed: () => setState(() => _scale = 1.0),
+                              child: const Text('Reset'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (r.ingredients.isEmpty)
+                          const Text('—')
+                        else
+                          ...r.ingredients.asMap().entries.map((e) {
+                            final idx = e.key;
+                            final ing = e.value;
+                            final line = ing.toLine(factor: _scale);
+                            final checked = _checkedIngredients.contains(idx);
+                            return _Bullet(
+                              text: line,
+                              checked: checked,
+                              onTap: () => _toggleIngredient(idx),
+                            );
+                          }),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    TextButton(
-                      onPressed: () => setState(() => _scale = 1.0),
-                      child: const Text('Reset'),
-                    ),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 6),
-                if (r.ingredients.isEmpty)
-                  const Text('—')
-                else
-                  ...r.ingredients.asMap().entries.map((e) {
-                    final idx = e.key;
-                    final ing = e.value;
-                    final line = ing.toLine(factor: _scale);
-                    final checked = _checkedIngredients.contains(idx);
-                    return _Bullet(
-                      text: line,
-                      checked: checked,
-                      onTap: () => _toggleIngredient(idx),
-                    );
-                  }),
 
                 // Instructions
-                const SizedBox(height: 16),
-                Text(
-                  'Instructions',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                if (r.instructions.isEmpty)
-                  const Text('—')
-                else
-                  for (int i = 0; i < r.instructions.length; i++)
-                    _Numbered(
-                      step: i + 1,
-                      text: r.instructions[i],
-                      checked: _checkedSteps.contains(i),
-                      onTap: () => _toggleStep(i),
+                Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Instructions',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        if (r.instructions.isEmpty)
+                          const Text('—')
+                        else
+                          for (int i = 0; i < r.instructions.length; i++)
+                            _Numbered(
+                              step: i + 1,
+                              text: r.instructions[i],
+                              checked: _checkedSteps.contains(i),
+                              onTap: () => _toggleStep(i),
+                            ),
+                      ],
                     ),
+                  ),
+                ),
 
                 // Notes
-                if (r.notes.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text('Notes', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 6),
-                  Text(r.notes),
-                ],
+                if (r.notes.isNotEmpty)
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Notes', style: Theme.of(context).textTheme.titleMedium),
+                          const SizedBox(height: 8),
+                          Text(r.notes, style: Theme.of(context).textTheme.bodyLarge),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 // Meta
                 const SizedBox(height: 16),
@@ -588,22 +618,23 @@ class _Bullet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.bodyMedium;
+    final base = Theme.of(context).textTheme.bodyLarge;  // Changed from bodyMedium to bodyLarge
     final style = base?.copyWith(
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
           ? (base.color ?? Colors.black).withValues(alpha: 0.55)
           : base.color,
+      height: 1.3,  // Tighter line height
     );
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 4),  // Reduced from 6
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('•  '),
+            Text('•  ', style: base),
             Expanded(
               child: AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 120),
@@ -632,22 +663,23 @@ class _Numbered extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.bodyMedium;
+    final base = Theme.of(context).textTheme.bodyLarge;  // Changed from bodyMedium to bodyLarge
     final style = base?.copyWith(
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
           ? (base.color ?? Colors.black).withValues(alpha: 0.55)
           : base.color,
+      height: 1.3,  // Tighter line height
     );
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 6),  // Slightly more padding for steps
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('$step. '),
+            Text('$step. ', style: base),
             Expanded(
               child: AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 120),
