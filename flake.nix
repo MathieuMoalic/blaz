@@ -96,6 +96,35 @@
       };
     };
 
+    # Prebuilt binary from GitHub releases (faster, no compilation needed)
+    prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {
+      pname = "blaz";
+      version = "1.0.10";
+
+      src = pkgs.fetchurl {
+        url = "https://github.com/MathieuMoalic/blaz/releases/download/v${version}/blaz-v${version}-x86_64-linux";
+        sha256 = "sha256-nP/yjqkzp7AiiTpNsSqr5OMY3n6DpDw/2smNaxx8gUo=";
+      };
+
+      dontUnpack = true;
+
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin"
+        cp "$src" "$out/bin/blaz"
+        chmod +x "$out/bin/blaz"
+        runHook postInstall
+      '';
+
+      meta = with lib; {
+        description = "Recipe manager backend (prebuilt binary)";
+        homepage = "https://github.com/MathieuMoalic/blaz";
+        license = licenses.gpl3;
+        platforms = ["x86_64-linux"];
+        mainProgram = "blaz";
+      };
+    };
+
     service = {
       lib,
       config,
@@ -106,6 +135,13 @@
     in {
       options.services.blaz = {
         enable = lib.mkEnableOption "Blaz recipe manager backend";
+
+        package = lib.mkOption {
+          type = lib.types.package;
+          default = package;
+          defaultText = lib.literalExpression "package (built from source)";
+          description = "The blaz package to use. Set to prebuiltPackage to use prebuilt binaries from GitHub releases.";
+        };
 
         bindAddr = lib.mkOption {
           type = lib.types.str;
@@ -239,10 +275,10 @@
         systemd.tmpfiles.rules = [
           # Database directory
           "d ${dirOf cfg.databasePath} 0750 blaz blaz - -"
-          
+
           # Media directory
           "d ${cfg.mediaDir} 0750 blaz blaz - -"
-          
+
           # Log directory and file
           "d ${dirOf cfg.logFile} 0750 blaz blaz - -"
           "f ${cfg.logFile} 0640 blaz blaz - -"
@@ -289,13 +325,13 @@
               if cfg.passwordHashFile != null
               then ''export BLAZ_PASSWORD_HASH="$(cat ${cfg.passwordHashFile})"''
               else "";
-            
+
             # Load JWT secret from file if specified
             jwtSecretLoader =
               if cfg.jwtSecretFile != null
               then ''export BLAZ_JWT_SECRET="$(cat ${cfg.jwtSecretFile})"''
               else "";
-            
+
             # Load LLM API key from file if specified
             llmApiKeyLoader =
               if cfg.llmApiKeyFile != null
@@ -305,12 +341,12 @@
             ${passwordHashLoader}
             ${jwtSecretLoader}
             ${llmApiKeyLoader}
-            
-            exec ${package}/bin/blaz \
+
+            exec ${cfg.package}/bin/blaz \
               ${lib.concatStringsSep " " (
-                lib.optionals (cfg.verbosity > 0) (lib.genList (_: "-v") cfg.verbosity)
-                ++ lib.optionals (cfg.verbosity < 0) (lib.genList (_: "-q") (- cfg.verbosity))
-              )}
+              lib.optionals (cfg.verbosity > 0) (lib.genList (_: "-v") cfg.verbosity)
+              ++ lib.optionals (cfg.verbosity < 0) (lib.genList (_: "-q") (- cfg.verbosity))
+            )}
           '';
 
           serviceConfig = {
@@ -375,6 +411,7 @@
       default = package;
       backend = package;
       web = webBuild;
+      prebuilt = prebuiltPackage;
     };
   };
 }

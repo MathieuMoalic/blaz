@@ -61,3 +61,81 @@ and shopping lists easier to generate.
 - **Frontend:** Flutter (Dart)
 - **Database:** SQLite
 - **Build:** Nix flake support, Justfile for common tasks
+
+---
+
+## 🚢 NixOS Deployment
+
+Blaz includes a NixOS module for easy deployment. The backend binary includes the embedded Flutter web frontend.
+
+### Option 1: Prebuilt Binary (Recommended - Fast!)
+
+Use prebuilt binaries from GitHub releases (no compilation needed):
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    blaz.url = "github:MathieuMoalic/blaz";
+  };
+
+  outputs = { nixpkgs, blaz, ... }: {
+    nixosConfigurations.yourhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        blaz.nixosModules.blaz-service
+        {
+          services.blaz = {
+            enable = true;
+            package = blaz.packages.x86_64-linux.prebuilt;  # Use prebuilt binary!
+            bindAddr = "127.0.0.1:8080";
+            passwordHashFile = "/run/secrets/blaz-password-hash";
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+### Option 2: Build from Source
+
+Build from source (takes longer but always up-to-date):
+
+```nix
+services.blaz = {
+  enable = true;
+  # package = blaz.packages.x86_64-linux.backend;  # Optional: explicit source build
+  bindAddr = "127.0.0.1:8080";
+  passwordHashFile = "/run/secrets/blaz-password-hash";
+};
+```
+
+### Generate Password Hash
+
+```bash
+# Build and run the binary to generate a password hash
+nix run github:MathieuMoalic/blaz#prebuilt hash-password
+# Or if building from source:
+nix run github:MathieuMoalic/blaz hash-password
+```
+
+### Complete Example with Caddy
+
+```nix
+services.blaz = {
+  enable = true;
+  package = blaz.packages.x86_64-linux.prebuilt;
+  bindAddr = "127.0.0.1:8080";
+  passwordHashFile = "/run/secrets/blaz-password-hash";
+  llmApiKeyFile = "/run/secrets/openrouter-api-key";  # Optional
+};
+
+services.caddy = {
+  enable = true;
+  virtualHosts."blaz.yourdomain.com".extraConfig = ''
+    reverse_proxy localhost:8080
+  '';
+};
+```
+
+---
