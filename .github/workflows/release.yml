@@ -64,6 +64,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.FLUTTER_PROJECT }}/.dart_tool
+            ${{ env.FLUTTER_PROJECT }}/.pub-cache
+            ~/.pub-cache
+          key: ${{ runner.os }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-pub-
+
+      - name: Flutter pub get
+        working-directory: ${{ env.FLUTTER_PROJECT }}
+        run: flutter pub get --offline || flutter pub get
+
+      - name: Build Flutter web
+        working-directory: ${{ env.FLUTTER_PROJECT }}
+        run: flutter build web --release --no-pub
+
+      - name: Copy web build to backend
+        run: |
+          mkdir -p backend/web_build
+          cp -r flutter/build/web/* backend/web_build/
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
