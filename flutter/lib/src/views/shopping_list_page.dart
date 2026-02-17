@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 import 'dart:async';
 
@@ -61,7 +62,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   final Set<int> _hidden = <int>{};
 
   /// Track collapsed categories
-  final Set<String> _collapsedCategories = <String>{};
+  Set<String> _collapsedCategories = <String>{};
 
   // NEW: soft loading flag
   bool _refreshing = false;
@@ -69,6 +70,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   @override
   void initState() {
     super.initState();
+    _loadCollapsedState();
     _future = _loadInitial();
   }
 
@@ -76,6 +78,19 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   void dispose() {
     _ctrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCollapsedState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final collapsed = prefs.getStringList('shopping_collapsed_categories') ?? [];
+    setState(() {
+      _collapsedCategories = collapsed.toSet();
+    });
+  }
+
+  Future<void> _saveCollapsedState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('shopping_collapsed_categories', _collapsedCategories.toList());
   }
 
   Future<List<ShoppingItem>> _loadInitial() async {
@@ -254,6 +269,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                       _collapsedCategories.add(cat);
                                     }
                                   });
+                                  _saveCollapsedState();
                                 },
                                 child: Container(
                                   color:
@@ -577,7 +593,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     
     try {
       final query = widget.controller.text.trim().toLowerCase();
-      print('Query changed: "$query"');
       
       if (query.isEmpty) {
         setState(() => _suggestions = []);
@@ -596,14 +611,11 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       scored.sort((a, b) => b.score.compareTo(a.score));
       final newSuggestions = scored.take(5).map((item) => item.text).toList();
       
-      print('Found ${newSuggestions.length} suggestions');
-      
       if (mounted) {
         setState(() => _suggestions = newSuggestions);
       }
     } catch (e, stack) {
       // If there's an error, just clear suggestions
-      print('Error in fuzzy search: $e\n$stack');
       if (mounted) {
         setState(() => _suggestions = []);
       }
@@ -667,7 +679,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   
   @override
   Widget build(BuildContext context) {
-    print('Building dialog, suggestions count: ${_suggestions.length}');
     return AlertDialog(
       title: const Text('Add item'),
       content: SizedBox(
@@ -707,8 +718,8 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                       title: Text(_formatItemText(suggestion)),
                       trailing: const Icon(Icons.arrow_forward, size: 16),
                       onTap: () {
+                        // Fill the text field but don't submit - let user edit quantity
                         widget.controller.text = suggestion;
-                        _submitText();
                       },
                     );
                   },
