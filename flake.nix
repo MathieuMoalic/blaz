@@ -357,5 +357,16 @@
   in {
     devShells.${system}.default = shell;
     nixosModules.blaz-service = service;
+    packages.${system} = {
+      default = package;
+      backend = package;
+      web = pkgs.flutter.buildFlutterApplication {
+        pname = "blaz-web";
+        version = "0.1.0";
+        src = pkgs.lib.cleanSource ./flutter;
+        autoPubspecLock = ./flutter/pubspec.lock;
+        targetFlutterPlatform = "web";
+      };
+    };
   };
 }
