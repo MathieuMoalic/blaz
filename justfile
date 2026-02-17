@@ -35,17 +35,17 @@ bump TYPE:
     # Update backend/Cargo.toml
     sed -i "s/^version = \"$current\"/version = \"$new_version\"/" backend/Cargo.toml
     
-    # Update flutter/pubspec.yaml (preserves build number)
-    sed -i "s/^version: $current+/version: $new_version+/" flutter/pubspec.yaml
+    # Update flutter/pubspec.yaml
+    sed -i "s/^version: $current$/version: $new_version/" flutter/pubspec.yaml
     
     # Update Cargo.lock
     (cd backend && cargo check --quiet)
     
     # Commit and tag
-    git add backend/Cargo.toml flutter/pubspec.yaml
+    git add backend/Cargo.toml backend/Cargo.lock flutter/pubspec.yaml
     git commit -m "Bump version to $new_version"
     git tag -a "v$new_version" -m "Release v$new_version"
-    
+
     echo "✓ Version bumped to $new_version"
     echo "✓ Committed and tagged as v$new_version"
     echo ""
