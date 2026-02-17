@@ -676,6 +676,13 @@ Future<List<ShoppingItem>> fetchShoppingList() async {
       .toList();
 }
 
+Future<List<String>> fetchAllShoppingTexts() async {
+  final r = await http.get(_u('/shopping/all-texts'), headers: _headers());
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data.cast<String>();
+}
+
 Future<List<ShoppingItem>> mergeShoppingIngredients(
   List<Ingredient> items,
 ) async {

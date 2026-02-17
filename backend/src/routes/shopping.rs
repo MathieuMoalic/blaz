@@ -263,6 +263,26 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingI
     Ok(Json(rows))
 }
 
+/// GET /shopping/all-texts
+///
+/// Returns all unique item texts (including done items) for autocomplete.
+///
+/// # Errors
+/// Err if querying the database fails.
+pub async fn list_all_texts(State(state): State<AppState>) -> AppResult<Json<Vec<String>>> {
+    let texts: Vec<String> = sqlx::query_scalar(
+        r"
+        SELECT DISTINCT text
+          FROM shopping_items_view
+         ORDER BY text
+        ",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(texts))
+}
+
 /// POST /shopping
 ///
 /// # Errors
@@ -305,8 +325,10 @@ pub async fn create(
             INSERT INTO shopping_items (name, unit, quantity, done, key, category)
             VALUES (?, ?, ?, 0, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
-              quantity = COALESCE(shopping_items.quantity, 0)
-                       + COALESCE(excluded.quantity, 0),
+              quantity = CASE 
+                WHEN shopping_items.done = 1 THEN excluded.quantity
+                ELSE COALESCE(shopping_items.quantity, 0) + COALESCE(excluded.quantity, 0)
+              END,
               category = COALESCE(shopping_items.category, excluded.category),
               name = excluded.name,
               unit = excluded.unit,

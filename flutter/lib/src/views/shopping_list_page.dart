@@ -361,8 +361,8 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   Future<void> _showAddItemDialog() async {
     _ctrl.clear();
     
-    // Get all unique item texts from cache for suggestions
-    final allItemTexts = _cache.map((item) => item.text).toSet().toList();
+    // Get all unique item texts including done items for suggestions
+    final allItemTexts = await fetchAllShoppingTexts();
     
     await showDialog(
       context: context,
