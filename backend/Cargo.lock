@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "blaz"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "anyhow",
  "argon2",
