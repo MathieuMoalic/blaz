@@ -190,15 +190,43 @@ Never _throw(http.Response r) =>
  * Models
  * ========================= */
 
+class IngredientMacros {
+  final String name;
+  final double protein; // grams
+  final double fat; // grams
+  final double carbs; // grams
+  final bool skipped;
+
+  const IngredientMacros({
+    required this.name,
+    required this.protein,
+    required this.fat,
+    required this.carbs,
+    required this.skipped,
+  });
+
+  factory IngredientMacros.fromJson(Map<String, dynamic> j) {
+    return IngredientMacros(
+      name: j['name'] as String,
+      protein: (j['protein_g'] as num).toDouble(),
+      fat: (j['fat_g'] as num).toDouble(),
+      carbs: (j['carbs_g'] as num).toDouble(),
+      skipped: j['skipped'] as bool? ?? false,
+    );
+  }
+}
+
 class RecipeMacros {
   final double protein; // grams
   final double fat; // grams (total)
   final double carbs; // grams (excluding fiber)
+  final List<IngredientMacros> ingredients;
 
   const RecipeMacros({
     required this.protein,
     required this.fat,
     required this.carbs,
+    this.ingredients = const [],
   });
 
   static double _num(dynamic v) => (v as num).toDouble();
@@ -219,10 +247,18 @@ class RecipeMacros {
       throw Exception('missing $a/$b');
     }
 
+    final ingredientsList = m['ingredients'] as List?;
+    final ingredients = ingredientsList != null
+        ? ingredientsList
+            .map((e) => IngredientMacros.fromJson(e as Map<String, dynamic>))
+            .toList()
+        : <IngredientMacros>[];
+
     return RecipeMacros(
       protein: read('protein', 'protein_g'),
       fat: read('fat', 'fat_g'),
       carbs: read('carbs', 'carbs_g'),
+      ingredients: ingredients,
     );
   }
 

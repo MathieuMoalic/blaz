@@ -141,18 +141,33 @@ Answer only with the final JSON."#;
 
 const DEFAULT_SYSTEM_PROMPT_MACROS: &str = r#"You are a precise nutrition estimator.
 
-Return STRICT JSON with the following keys, all numeric grams with up to 1 decimal:
+Return STRICT JSON with per-ingredient macros estimates:
 {
-  "protein_g": number,
-  "fat_g": number,     // saturated + unsaturated combined
-  "carbs_g": number    // carbohydrates EXCLUDING fiber
+  "ingredients": [
+    {
+      "name": "ingredient name",
+      "protein_g": number,
+      "fat_g": number,
+      "carbs_g": number,
+      "skip": boolean  // true if ingredient is negligible (< 5 calories)
+    }
+  ]
 }
 
 Rules:
+- Estimate macros for EACH ingredient separately based on the quantity given.
 - Use common nutrition databases and reasonable approximations.
-- Always include ALL three keys.
-- Carbs exclude fiber (i.e., net carbs).
+- fat_g includes saturated + unsaturated combined.
+- carbs_g excludes fiber (i.e., net carbs).
+- Set "skip": true for ingredients with negligible calories (< 5 kcal):
+  * Water, broth (unless cream-based)
+  * Salt, pepper, spices in small amounts (< 1 tsp)
+  * Herbs, garlic, onion in small amounts (< 1 clove/piece)
+  * Lemon juice, vinegar, soy sauce in small amounts
+  * Baking powder, baking soda, yeast
+- Set "skip": false for all other ingredients.
 - If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
+- Always include all ingredients in the array, even if skipped.
 - Never add extra fields or commentary."#;
 
 impl Config {

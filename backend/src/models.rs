@@ -23,12 +23,23 @@ pub struct Ingredient {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IngredientMacros {
+    pub name: String,
+    pub protein_g: f64,
+    pub fat_g: f64,
+    pub carbs_g: f64,
+    pub skipped: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RecipeMacros {
     /// `per_serving` if yield could be parsed as N servings, otherwise `per_recipe`.
     pub basis: String,
     pub protein_g: f64,
     pub fat_g: f64,   // saturated + unsaturated combined
     pub carbs_g: f64, // excluding fiber
+    #[serde(default)]
+    pub ingredients: Vec<IngredientMacros>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

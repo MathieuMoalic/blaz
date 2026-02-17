@@ -495,11 +495,19 @@ async fn call_and_parse_macros_llm(
 ) -> AppResult<RecipeMacros> {
     #[allow(clippy::struct_field_names)]
     #[derive(Deserialize)]
-    struct LlmOutGrams {
+    struct LlmIngredient {
+        name: String,
         protein_g: f64,
         fat_g: f64,
         carbs_g: f64,
+        skip: bool,
     }
+    
+    #[derive(Deserialize)]
+    struct LlmOut {
+        ingredients: Vec<LlmIngredient>,
+    }
+    
     let base = &config.llm_api_url;
     let token = config.llm_api_key.clone().unwrap_or_default();
     let model = &config.llm_model;
@@ -513,7 +521,7 @@ async fn call_and_parse_macros_llm(
             user,
             0.1,
             std::time::Duration::from_secs(25),
-            Some(500),
+            Some(1500), // Increased token limit for per-ingredient response
         )
         .await
         .map_err(|e| {
@@ -521,16 +529,37 @@ async fn call_and_parse_macros_llm(
             StatusCode::BAD_GATEWAY
         })?;
 
-    let parsed: LlmOutGrams = serde_json::from_value(val).map_err(|e| {
+    let parsed: LlmOut = serde_json::from_value(val).map_err(|e| {
         error!(?e, "LLM JSON parse failed");
         StatusCode::BAD_GATEWAY
     })?;
 
+    // Convert to API model and calculate totals
+    let ingredients: Vec<crate::models::IngredientMacros> = parsed.ingredients
+        .into_iter()
+        .map(|ing| crate::models::IngredientMacros {
+            name: ing.name,
+            protein_g: round1(ing.protein_g),
+            fat_g: round1(ing.fat_g),
+            carbs_g: round1(ing.carbs_g),
+            skipped: ing.skip,
+        })
+        .collect();
+
+    // Sum up non-skipped ingredients for totals
+    let (protein, fat, carbs) = ingredients
+        .iter()
+        .filter(|ing| !ing.skipped)
+        .fold((0.0, 0.0, 0.0), |(p, f, c), ing| {
+            (p + ing.protein_g, f + ing.fat_g, c + ing.carbs_g)
+        });
+
     Ok(RecipeMacros {
         basis: basis.to_string(),
-        protein_g: round1(parsed.protein_g),
-        fat_g: round1(parsed.fat_g),
-        carbs_g: round1(parsed.carbs_g),
+        protein_g: round1(protein),
+        fat_g: round1(fat),
+        carbs_g: round1(carbs),
+        ingredients,
     })
 }
 

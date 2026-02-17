@@ -1,3 +1,4 @@
+import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../api.dart' as api;
@@ -732,6 +733,10 @@ class _MacrosSection extends StatelessWidget {
     final m = macros!;
     final kcal = calcCalories(m).clamp(0, double.infinity);
 
+    double calcIngredientCalories(api.IngredientMacros ing) {
+      return (ing.protein * 4.27 + ing.fat * 8.79 + ing.carbs * 3.87).clamp(0, double.infinity);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -740,14 +745,156 @@ class _MacrosSection extends StatelessWidget {
         Card(
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 8,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _pill(context, 'Protein', '${m.protein.toStringAsFixed(1)} g'),
-                _pill(context, 'Fat', '${m.fat.toStringAsFixed(1)} g'),
-                _pill(context, 'Carbs', '${m.carbs.toStringAsFixed(1)} g'),
-                _pill(context, 'Calories', '${kcal.toStringAsFixed(0)} kcal'),
+                Table(
+                  columnWidths: const {
+                    0: FlexColumnWidth(3),
+                    1: FixedColumnWidth(55),
+                    2: FixedColumnWidth(55),
+                    3: FixedColumnWidth(55),
+                    4: FixedColumnWidth(60),
+                  },
+                  defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                  children: [
+                    TableRow(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('Ingredient', style: t.labelSmall),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('P (g)', style: t.labelSmall, textAlign: TextAlign.right),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('F (g)', style: t.labelSmall, textAlign: TextAlign.right),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('C (g)', style: t.labelSmall, textAlign: TextAlign.right),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text('kcal', style: t.labelSmall, textAlign: TextAlign.right),
+                        ),
+                      ],
+                    ),
+                    TableRow(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Theme.of(context).dividerColor,
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text('Total', style: t.titleSmall),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            m.protein.round().toString(),
+                            style: t.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              fontFeatures: [const FontFeature.tabularFigures()],
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            m.fat.round().toString(),
+                            style: t.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              fontFeatures: [const FontFeature.tabularFigures()],
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            m.carbs.round().toString(),
+                            style: t.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              fontFeatures: [const FontFeature.tabularFigures()],
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            kcal.toStringAsFixed(0),
+                            style: t.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              fontFeatures: [const FontFeature.tabularFigures()],
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
+                      ],
+                    ),
+                    ...m.ingredients.where((ing) => !ing.skipped).map((ing) {
+                      final ingKcal = calcIngredientCalories(ing);
+                      return TableRow(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(ing.name, style: t.bodyMedium),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              ing.protein.round().toString(),
+                              style: t.bodySmall?.copyWith(
+                                fontFeatures: [const FontFeature.tabularFigures()],
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              ing.fat.round().toString(),
+                              style: t.bodySmall?.copyWith(
+                                fontFeatures: [const FontFeature.tabularFigures()],
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              ing.carbs.round().toString(),
+                              style: t.bodySmall?.copyWith(
+                                fontFeatures: [const FontFeature.tabularFigures()],
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              ingKcal.toStringAsFixed(0),
+                              style: t.bodySmall?.copyWith(
+                                fontFeatures: [const FontFeature.tabularFigures()],
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        ],
+                      );
+                    }),
+                  ],
+                ),
               ],
             ),
           ),
