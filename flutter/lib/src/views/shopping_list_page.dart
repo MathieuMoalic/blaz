@@ -298,14 +298,15 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                 ),
                               ),
                               if (!isCollapsed)
-                                for (final it in rows)
+                                for (var i = 0; i < rows.length; i++)
                                   _RowTile(
-                                    item: it,
+                                    item: rows[i],
+                                    isLastInCategory: i == rows.length - 1,
                                     onChanged: (v) async {
-                                      setState(() => _hidden.add(it.id));
+                                      setState(() => _hidden.add(rows[i].id));
                                       try {
                                         final updated = await toggleShoppingItem(
-                                          id: it.id,
+                                          id: rows[i].id,
                                           done: v ?? false,
                                         );
                                         _applyLocalUpdate(
@@ -318,7 +319,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                         await refresh();
                                       }
                                     },
-                                    onEdit: () => _editItem(context, it),
+                                    onEdit: () => _editItem(context, rows[i]),
                                   ),
                             ],
                           ),
@@ -513,11 +514,13 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 /// A compact, translucent row that exposes edit on tap only.
 class _RowTile extends StatelessWidget {
   final ShoppingItem item;
+  final bool isLastInCategory;
   final ValueChanged<bool?> onChanged;
   final VoidCallback onEdit;
 
   const _RowTile({
     required this.item,
+    required this.isLastInCategory,
     required this.onChanged,
     required this.onEdit,
   });
@@ -551,7 +554,7 @@ class _RowTile extends StatelessWidget {
             ),
           ),
         ),
-        const Divider(height: 1),
+        if (!isLastInCategory) const Divider(height: 1),
       ],
     );
   }
