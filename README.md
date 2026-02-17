@@ -1,143 +1,85 @@
-# **Blaz**
+# Blaz
 
-Blaz is a cross-platform **recipe + shopping-list application** featuring:
+> Breton for "flavour" 🧂
+>
+> _Vibe coded with Claude Sonnet 4.5_
 
-- A **Rust backend** with a powerful ingredient parser
-- A **Flutter frontend** for a clean, modern UI
-- **SQLite** persistence
-- **JWT authentication**
-- Automatic unit handling, ingredient normalization, and structured shopping
-  list management
+A self-hosted recipe and shopping list manager with a Rust backend and Flutter
+frontend.
 
-Blaz aims to make recipes easier to manage, ingredients easier to understand,
-and shopping lists easier to generate.
+## Features
 
----
+- 🧾 **Smart ingredient parsing** - Handles quantities, units, and ranges
+  (`2-3 tbsp`, `1.5 L`, etc.)
+- 🛒 **Shopping lists** - Auto-categorized items with merge suggestions
+- 📘 **Recipe management** - Import from URLs, images, or manual entry
+- 🔐 **JWT authentication** - Simple password-based auth
+- 📱 **Cross-platform** - Android app + Web interface (embedded in backend)
+- 🤖 **LLM integration** - Optional recipe parsing and macro estimation
 
-## 🚀 Features
+## Tech Stack
 
-### **🧾 Ingredient Parsing**
-
-- Parses free-form recipe lines such as:
-
-  - `120 g flour`
-  - `2–3 tbsp sugar`
-  - `1.5 L water`
-  - `2 carrots, diced`
-- Extracts:
-
-  - Quantity (range or singular)
-  - Unit (with normalization + synonyms)
-  - Clean ingredient name
-- Falls back gracefully when parsing is ambiguous.
-
-### **🛒 Shopping Lists**
-
-- Structured shopping-list items
-- Categories for items (optional)
-- “Done” state for crossing out items
-- Stored in SQLite and exposed via REST API
-
-### **📘 Recipes**
-
-- Support for:
-
-  - Recipe introduction
-  - Ingredients list
-  - Steps
-  - Tags
-  - Nutrition and yield info
-- Recipes saved in embedded SQLite using JSON fields
-
-### **🔐 Authentication**
-
-- JWT-based user system
-- Configurable secret keys
-- Secure login and token validation
-
-### **⚙️ Tech Stack**
-
-- **Backend:** Rust, Axum, SQLx, tokio
+- **Backend:** Rust (Axum, SQLx, SQLite)
 - **Frontend:** Flutter (Dart)
-- **Database:** SQLite
-- **Build:** Nix flake support, Justfile for common tasks
+- **Deployment:** NixOS module with prebuilt binaries
 
 ---
 
-## 🚢 NixOS Deployment
-
-Blaz includes a NixOS module for easy deployment. The backend binary includes the embedded Flutter web frontend.
-
-### Option 1: Prebuilt Binary (Recommended - Fast!)
-
-Use prebuilt binaries from GitHub releases (no compilation needed):
-
-> **Note:** The prebuilt package references the latest *published* release. During active development, source builds may be one version ahead. See [RELEASE.md](RELEASE.md) for details.
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
-    blaz.url = "github:MathieuMoalic/blaz";
-  };
-
-  outputs = { nixpkgs, blaz, ... }: {
-    nixosConfigurations.yourhost = nixpkgs.lib.nixosSystem {
-      modules = [
-        blaz.nixosModules.blaz-service
-        {
-          services.blaz = {
-            enable = true;
-            package = blaz.packages.x86_64-linux.prebuilt;  # Use prebuilt binary!
-            bindAddr = "127.0.0.1:8080";
-            passwordHashFile = "/run/secrets/blaz-password-hash";
-          };
-        }
-      ];
-    };
-  };
-}
-```
-
-### Option 2: Build from Source
-
-Build from source (takes longer but always up-to-date):
-
-```nix
-services.blaz = {
-  enable = true;
-  # package = blaz.packages.x86_64-linux.backend;  # Optional: explicit source build
-  bindAddr = "127.0.0.1:8080";
-  passwordHashFile = "/run/secrets/blaz-password-hash";
-};
-```
-
-### Generate Password Hash
+## Local Development
 
 ```bash
-# Build and run the binary to generate a password hash
-nix run github:MathieuMoalic/blaz#prebuilt hash-password
-# Or if building from source:
-nix run github:MathieuMoalic/blaz hash-password
+nix develop
+cd backend
+just build-web  # Build Flutter web
+cargo run       # Run backend (web embedded)
 ```
 
-### Complete Example with Caddy
+## Android App
 
-```nix
-services.blaz = {
-  enable = true;
-  package = blaz.packages.x86_64-linux.prebuilt;
-  bindAddr = "127.0.0.1:8080";
-  passwordHashFile = "/run/secrets/blaz-password-hash";
-  llmApiKeyFile = "/run/secrets/openrouter-api-key";  # Optional
-};
-
-services.caddy = {
-  enable = true;
-  virtualHosts."blaz.yourdomain.com".extraConfig = ''
-    reverse_proxy localhost:8080
-  '';
-};
+```bash
+nix develop
+cd flutter
+flutter build apk
 ```
 
 ---
+
+## Configuration
+
+The NixOS module supports:
+
+**Required:**
+
+- `enable` - Enable the service
+- `passwordHashFile` - Path to password hash file
+
+**Common:**
+
+- `package` - Use `prebuilt` for fast deployment or `backend` for source build
+- `bindAddr` - Server address (default: `127.0.0.1:8080`)
+- `corsOrigin` - CORS origin for web access
+- `verbosity` - Log level (-2 to 3, default: 0)
+
+**LLM Features (Optional):**
+
+- `llmApiKeyFile` - API key for recipe parsing
+- `llmModel` - Model name (default: `deepseek/deepseek-chat`)
+- `llmApiUrl` - API endpoint (default: OpenRouter)
+
+See [flake.nix](flake.nix) for all options.
+
+---
+
+## Release Process
+
+```bash
+just bump patch         # Bump version and push
+# Wait for GitHub Actions...
+just update-prebuilt 1.0.12  # Update prebuilt hash
+```
+
+---
+
+## License
+
+GPLv3 - See [LICENSE](LICENSE)
