@@ -10,6 +10,7 @@ import 'src/platform_io.dart'
 import 'src/views/login_page.dart';
 import 'src/auth.dart';
 import 'src/home_shell.dart';
+import 'src/widgets/version_checker.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,7 +88,9 @@ class BlazApp extends StatelessWidget {
           ],
         );
       },
-      home: Auth.token == null ? const LoginPage() : const HomeShell(),
+      home: Auth.token == null
+          ? const LoginPage()
+          : const VersionChecker(child: HomeShell()),
       debugShowCheckedModeBanner: false,
     );
   }

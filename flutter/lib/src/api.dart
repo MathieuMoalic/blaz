@@ -27,6 +27,16 @@ Future<void> initApi() async {
   }
 }
 
+/// Fetch backend version
+Future<String> fetchBackendVersion() async {
+  final res = await http.get(_u('/version'));
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final data = jsonDecode(res.body) as Map<String, dynamic>;
+  return data['version'] as String;
+}
+
 class CategoryOption {
   final String value;
   final String label;

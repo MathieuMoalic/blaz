@@ -11,6 +11,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
+use serde::Serialize;
 
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
@@ -19,6 +20,17 @@ use tower_http::services::ServeDir;
 
 async fn healthz() -> Json<&'static str> {
     Json("ok")
+}
+
+#[derive(Serialize)]
+struct VersionInfo {
+    version: &'static str,
+}
+
+async fn version() -> Json<VersionInfo> {
+    Json(VersionInfo {
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 fn cors_layer(config: &Config) -> CorsLayer {
@@ -51,6 +63,7 @@ pub fn build_app(state: AppState) -> Router {
     // Public routes (no authentication required)
     let public_routes = Router::new()
         .route("/healthz", get(healthz))
+        .route("/version", get(version))
         .route("/auth/login", post(auth::login));
 
     // Protected routes (authentication required)
