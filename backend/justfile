@@ -1,5 +1,16 @@
 default: hot-reload
 
+# Build Flutter web and copy to web_build/
+build-web:
+    cd ../flutter && flutter build web --release
+    rm -rf web_build
+    mkdir -p web_build
+    cp -r ../flutter/build/web/* web_build/
+
+# Build backend with embedded web
+build: build-web
+    cargo build --release
+
 hot-reload:
         cargo watch -q -c -w src -w Cargo.toml -x 'run -- -vv'
 

@@ -54,6 +54,14 @@
       JAVA_HOME = "${pkgs.jdk17}/lib/openjdk";
     };
 
+    webBuild = pkgs.flutter.buildFlutterApplication {
+      pname = "blaz-web";
+      version = "0.1.0";
+      src = pkgs.lib.cleanSource ./flutter;
+      autoPubspecLock = ./flutter/pubspec.lock;
+      targetFlutterPlatform = "web";
+    };
+
     package = pkgs.rustPlatform.buildRustPackage {
       pname = "blaz";
       version = "0.1.0";
@@ -71,6 +79,12 @@
         sqlite
         openssl
       ];
+
+      # Copy web build before building rust
+      preBuild = ''
+        mkdir -p web_build
+        cp -r ${webBuild}/* web_build/
+      '';
 
       doCheck = false;
 
@@ -360,13 +374,7 @@
     packages.${system} = {
       default = package;
       backend = package;
-      web = pkgs.flutter.buildFlutterApplication {
-        pname = "blaz-web";
-        version = "0.1.0";
-        src = pkgs.lib.cleanSource ./flutter;
-        autoPubspecLock = ./flutter/pubspec.lock;
-        targetFlutterPlatform = "web";
-      };
+      web = webBuild;
     };
   };
 }

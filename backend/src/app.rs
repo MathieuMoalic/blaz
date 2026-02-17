@@ -2,6 +2,7 @@ use crate::routes::auth;
 use crate::{
     auth_middleware::require_auth,
     config::Config,
+    embedded_web::serve_embedded_web,
     logging::{access_log, log_payloads},
     models::AppState,
     routes::{import_recipesage, meal_plan, parse_recipe, recipes, shopping},
@@ -99,6 +100,7 @@ pub fn build_app(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .nest_service("/media", media_service)
+        .fallback(serve_embedded_web)
         .with_state(state.clone())
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for large imports
         .layer(request_id_layer)

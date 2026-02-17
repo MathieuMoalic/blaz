@@ -12,6 +12,7 @@ mod auth_middleware;
 mod categories;
 mod config;
 mod db;
+mod embedded_web;
 mod error;
 mod html;
 mod image_io;
