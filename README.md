@@ -72,6 +72,8 @@ Blaz includes a NixOS module for easy deployment. The backend binary includes th
 
 Use prebuilt binaries from GitHub releases (no compilation needed):
 
+> **Note:** The prebuilt package references the latest *published* release. During active development, source builds may be one version ahead. See [RELEASE.md](RELEASE.md) for details.
+
 ```nix
 {
   inputs = {

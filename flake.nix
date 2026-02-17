@@ -97,13 +97,16 @@
     };
 
     # Prebuilt binary from GitHub releases (faster, no compilation needed)
+    # NOTE: This always points to a previous stable release since we can't
+    # know the hash until after the release is built. This is intentional
+    # and keeps deployment fast while source builds always give you latest.
     prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {
       pname = "blaz";
-      version = "1.0.10";
+      version = "1.0.11";
 
       src = pkgs.fetchurl {
         url = "https://github.com/MathieuMoalic/blaz/releases/download/v${version}/blaz-v${version}-x86_64-linux";
-        sha256 = "sha256-nP/yjqkzp7AiiTpNsSqr5OMY3n6DpDw/2smNaxx8gUo=";
+        sha256 = "sha256-VaEgp+NVuTjkcFD1HhojglVO9y++1Z92Lr8yaC+Lp60=";
       };
 
       dontUnpack = true;
@@ -117,7 +120,7 @@
       '';
 
       meta = with lib; {
-        description = "Recipe manager backend (prebuilt binary)";
+        description = "Recipe manager backend (prebuilt binary from latest release)";
         homepage = "https://github.com/MathieuMoalic/blaz";
         license = licenses.gpl3;
         platforms = ["x86_64-linux"];
