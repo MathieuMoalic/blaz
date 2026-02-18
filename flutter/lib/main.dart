@@ -8,6 +8,7 @@ import 'src/platform_io.dart'
     as plat;
 
 import 'src/views/login_page.dart';
+import 'src/views/shared_recipe_page.dart';
 import 'src/auth.dart';
 import 'src/home_shell.dart';
 import 'src/widgets/version_checker.dart';
@@ -40,6 +41,18 @@ const kBgFallback = 'assets/images/background.png';
 
 class BlazApp extends StatelessWidget {
   const BlazApp({super.key});
+
+  Widget _initialHome() {
+    if (kIsWeb) {
+      final match = RegExp(r'^/share/(.+)$').firstMatch(Uri.base.path);
+      if (match != null) {
+        return SharedRecipePage(token: match.group(1)!);
+      }
+    }
+    return Auth.token == null
+        ? const LoginPage()
+        : const VersionChecker(child: HomeShell());
+  }
 
   ThemeData _theme(Brightness b) => ThemeData(
     useMaterial3: true,
@@ -88,9 +101,7 @@ class BlazApp extends StatelessWidget {
           ],
         );
       },
-      home: Auth.token == null
-          ? const LoginPage()
-          : const VersionChecker(child: HomeShell()),
+      home: _initialHome(),
       debugShowCheckedModeBanner: false,
     );
   }

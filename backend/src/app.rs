@@ -5,7 +5,7 @@ use crate::{
     embedded_web::serve_embedded_web,
     logging::{access_log, log_payloads},
     models::AppState,
-    routes::{import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, shopping},
+    routes::{import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, share_recipe, shopping},
 };
 
 use axum::extract::DefaultBodyLimit;
@@ -65,7 +65,8 @@ pub fn build_app(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/healthz", get(healthz))
         .route("/version", get(version))
-        .route("/auth/login", post(auth::login));
+        .route("/auth/login", post(auth::login))
+        .route("/api/share/{token}", get(share_recipe::get_shared_recipe));
 
     // Protected routes (authentication required)
     let protected_routes = Router::new()
@@ -77,6 +78,7 @@ pub fn build_app(state: AppState) -> Router {
                 .patch(recipes::update),
         )
         .route("/recipes/{id}/image", post(recipes::upload_image))
+        .route("/recipes/{id}/share", post(share_recipe::create_share_token).delete(share_recipe::revoke_share_token))
         .route(
             "/recipes/{id}/macros/estimate",
             post(recipes::estimate_macros),

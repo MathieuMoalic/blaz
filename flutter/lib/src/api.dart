@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
@@ -24,6 +25,11 @@ Future<void> initApi() async {
   final saved = await kv.getString(_kApiBaseUrlKey);
   if (saved != null && saved.trim().isNotEmpty) {
     _baseUrl = _normalizeBase(saved);
+  } else if (kIsWeb && _baseUrl == _defaultBaseUrl) {
+    // On web with no saved URL, use the page origin so share links work on
+    // any self-hosted server without needing a build-time API_BASE_URL.
+    final origin = Uri.base.origin;
+    if (origin.isNotEmpty) _baseUrl = origin;
   }
 }
 
@@ -432,6 +438,7 @@ class Recipe {
 
   // NEW:
   final RecipeMacros? macros;
+  final String? shareToken;
 
   Recipe({
     required this.id,
@@ -445,7 +452,8 @@ class Recipe {
     required this.instructions,
     this.imagePathSmall,
     this.imagePathFull,
-    this.macros, // NEW
+    this.macros,
+    this.shareToken,
   });
 
   factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
@@ -462,6 +470,7 @@ class Recipe {
     instructions: (j['instructions'] as List<dynamic>).cast<String>(),
     imagePathSmall: j['image_path_small'] as String?,
     imagePathFull: j['image_path_full'] as String?,
+    shareToken: j['share_token'] as String?,
     macros: (() {
       try {
         if (j['macros'] is Map ||
@@ -690,6 +699,28 @@ Future<void> deleteRecipe(int id) async {
   if (res.statusCode != 200 && res.statusCode != 204) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
+}
+
+/// Fetches a shared recipe by token (no auth required).
+Future<Recipe> fetchSharedRecipe(String token) async {
+  final res = await http.get(_u('/api/share/$token'));
+  if (res.statusCode == 404) throw Exception('Share link not found or expired');
+  if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+}
+
+/// Returns the share token (creates one if not yet set).
+Future<String> shareRecipe(int id) async {
+  final res = await http.post(_u('/recipes/$id/share'), headers: _headers());
+  if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  final data = jsonDecode(res.body) as Map<String, dynamic>;
+  return data['share_token'] as String;
+}
+
+/// Revokes the share token.
+Future<void> revokeRecipeShare(int id) async {
+  final res = await http.delete(_u('/recipes/$id/share'), headers: _headers());
+  if (res.statusCode != 204) throw Exception('HTTP ${res.statusCode}: ${res.body}');
 }
 
 /* =========================

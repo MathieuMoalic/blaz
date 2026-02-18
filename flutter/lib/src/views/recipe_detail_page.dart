@@ -1,5 +1,6 @@
 import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../api.dart' as api;
 import 'edit_recipe_page.dart';
@@ -161,6 +162,63 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           _estimatingMacros = false;
         });
       }
+    }
+  }
+
+  Future<void> _shareRecipe(api.Recipe r) async {
+    try {
+      final token = await api.shareRecipe(r.id);
+      // Build share URL from the current base URL
+      final base = (api.baseUrl ?? '').replaceAll(RegExp(r'/$'), '');
+      final link = '$base/share/$token';
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Share link'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText(link, style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 12),
+              if (r.shareToken != null)
+                TextButton.icon(
+                  icon: const Icon(Icons.link_off),
+                  label: const Text('Revoke link'),
+                  onPressed: () async {
+                    await api.revokeRecipeShare(r.id);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    _refresh();
+                  },
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.copy),
+              label: const Text('Copy'),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: link));
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Link copied')),
+                );
+              },
+            ),
+          ],
+        ),
+      );
+      _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create share link: $e')),
+      );
     }
   }
 
@@ -361,6 +419,15 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          IconButton(
+            tooltip: 'Share',
+            icon: const Icon(Icons.share_outlined),
+            onPressed: () async {
+              final r = await _future;
+              if (!mounted) return;
+              _shareRecipe(r);
+            },
+          ),
           IconButton(
             tooltip: 'Add to meal plan',
             icon: const Icon(Icons.event_outlined),

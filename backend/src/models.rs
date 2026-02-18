@@ -57,6 +57,7 @@ pub struct Recipe {
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
     pub macros: Option<RecipeMacros>,
+    pub share_token: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -103,6 +104,7 @@ pub struct RecipeRow {
     pub image_path_small: Option<String>,
     pub image_path_full: Option<String>,
     pub macros: Option<Json<RecipeMacros>>,
+    pub share_token: Option<String>,
 }
 
 impl From<RecipeRow> for Recipe {
@@ -120,6 +122,7 @@ impl From<RecipeRow> for Recipe {
             image_path_full: r.image_path_full,
             image_path_small: r.image_path_small,
             macros: r.macros.map(|j| j.0),
+            share_token: r.share_token,
         }
     }
 }

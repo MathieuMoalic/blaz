@@ -43,12 +43,12 @@ async fn store_recipe_image_bytes(
 }
 
 /// Keep SELECT/RETURNING columns in one place to avoid drift with structs.
-const RECIPE_COLS: &str = r#"
+pub const RECIPE_COLS: &str = r#"
     id, title, source, "yield", notes,
     created_at, updated_at,
     ingredients, instructions,
     image_path_small, image_path_full,
-    macros
+    macros, share_token
 "#;
 
 /// # Errors
