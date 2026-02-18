@@ -12,6 +12,8 @@ class AddRecipePage extends StatefulWidget {
   State<AddRecipePage> createState() => _AddRecipePageState();
 }
 
+enum AddRecipeMode { choice, importUrl, importImage, manual }
+
 class _AddRecipePageState extends State<AddRecipePage> {
   final _form = GlobalKey<FormState>();
 
@@ -28,6 +30,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
   XFile? _picked; // selected file
   Uint8List? _preview; // preview bytes (web or when Android only returns URI)
   bool _busy = false;
+
+  AddRecipeMode _mode = AddRecipeMode.choice;
 
   @override
   void dispose() {
@@ -142,8 +146,142 @@ class _AddRecipePageState extends State<AddRecipePage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildChoiceScreen() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Add a Recipe',
+              style: Theme.of(context).textTheme.headlineMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: () => setState(() => _mode = AddRecipeMode.importUrl),
+              icon: const Icon(Icons.link),
+              label: const Text('Import from URL'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.all(20),
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () =>
+                  setState(() => _mode = AddRecipeMode.importImage),
+              icon: const Icon(Icons.photo_camera),
+              label: const Text('Import from Image'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.all(20),
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => setState(() => _mode = AddRecipeMode.manual),
+              icon: const Icon(Icons.edit),
+              label: const Text('Enter Manually'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.all(20),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImportUrlScreen() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Import from URL',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _importUrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Recipe URL',
+                    hintText: 'https://example.com/some-recipe',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.link),
+                  ),
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const <String>[],
+                  enabled: !_importing,
+                  onSubmitted: (_) => _importFromUrl(),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _importing ? null : _importFromUrl,
+                  icon: _importing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.download),
+                  label: const Text('Import'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImportImageScreen() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.construction,
+                  size: 64,
+                  color: Theme.of(context).colorScheme.secondary,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Coming Soon',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Import from image is not yet implemented',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildManualScreen() {
     final gap = const SizedBox(height: 12);
 
     final selectedName = _picked == null
@@ -158,178 +296,154 @@ class _AddRecipePageState extends State<AddRecipePage> {
     final hasFilePreview =
         !kIsWeb && _picked != null && _picked!.path.isNotEmpty;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Add recipe')),
-      body: SafeArea(
-        child: Form(
-          key: _form,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
+    return Form(
+      key: _form,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // Title
+          TextFormField(
+            controller: _title,
+            decoration: const InputDecoration(
+              labelText: 'Title *',
+              border: OutlineInputBorder(),
+            ),
+            textInputAction: TextInputAction.next,
+            autofillHints: const <String>[],
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Title required' : null,
+          ),
+          gap,
+
+          // Image
+          Row(
             children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Import from URL',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _importUrl,
-                              decoration: const InputDecoration(
-                                labelText: 'Recipe URL',
-                                hintText: 'https://example.com/some-recipe',
-                                border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.link),
-                              ),
-                              keyboardType: TextInputType.url,
-                              textInputAction: TextInputAction.done,
-                              autofillHints: const <String>[],
-                              enabled: !_importing && !_busy,
-                              onSubmitted: (_) => _importFromUrl(),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          FilledButton.icon(
-                            onPressed: (_importing || _busy)
-                                ? null
-                                : _importFromUrl,
-                            icon: _importing
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.download),
-                            label: const Text('Import'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              TextFormField(
-                controller: _title,
-                decoration: const InputDecoration(
-                  labelText: 'Title *',
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.next,
-                autofillHints: const <String>[], // silence Autofill logs
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Title required' : null,
-              ),
-              gap,
-              Row(
-                children: [
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _pickImage,
-                    icon: const Icon(Icons.photo),
-                    label: const Text('Choose image'),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(selectedName, overflow: TextOverflow.ellipsis),
-                  ),
-                ],
-              ),
-
-              if (hasBytesPreview || hasFilePreview) ...[
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 120,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: hasBytesPreview
-                        ? Image.memory(_preview!, fit: BoxFit.cover)
-                        : Image.file(File(_picked!.path), fit: BoxFit.cover),
-                  ),
-                ),
-              ],
-
-              gap,
-              TextField(
-                controller: _source,
-                decoration: const InputDecoration(
-                  labelText: 'Source (URL, book, person…)',
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.next,
-                autofillHints: const <String>[],
-              ),
-              gap,
-              TextField(
-                controller: _yieldText,
-                decoration: const InputDecoration(
-                  labelText: 'Yield (e.g. “4 servings”)',
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.next,
-                autofillHints: const <String>[],
-              ),
-              gap,
-              TextField(
-                controller: _notes,
-                decoration: const InputDecoration(
-                  labelText: 'Notes',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-                maxLines: 4,
-                autofillHints: const <String>[],
-              ),
-              gap,
-              TextField(
-                controller: _ingredientsRaw,
-                decoration: const InputDecoration(
-                  labelText: 'Ingredients (one per line)',
-                  hintText: 'e.g.\n2 cloves garlic\n150 g flour\nPinch of salt',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-                maxLines: 6,
-                autofillHints: const <String>[],
-              ),
-              gap,
-              TextField(
-                controller: _instructionsRaw,
-                decoration: const InputDecoration(
-                  labelText: 'Instructions (one step per line)',
-                  hintText:
-                      'e.g.\nMince the garlic.\nFold in flour.\nBake 20 min.',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-                maxLines: 8,
-                autofillHints: const <String>[],
-              ),
-              const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _busy ? null : _submit,
-                icon: _busy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.check),
-                label: const Text('Create'),
+                onPressed: _busy ? null : _pickImage,
+                icon: const Icon(Icons.photo),
+                label: const Text('Choose image'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(selectedName, overflow: TextOverflow.ellipsis),
               ),
             ],
           ),
-        ),
+          if (hasBytesPreview || hasFilePreview) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 120,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: hasBytesPreview
+                    ? Image.memory(_preview!, fit: BoxFit.cover)
+                    : Image.file(File(_picked!.path), fit: BoxFit.cover),
+              ),
+            ),
+          ],
+          gap,
+
+          // Ingredients
+          TextField(
+            controller: _ingredientsRaw,
+            decoration: const InputDecoration(
+              labelText: 'Ingredients (one per line)',
+              hintText: 'e.g.\n2 cloves garlic\n150 g flour\nPinch of salt',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
+            maxLines: 6,
+            autofillHints: const <String>[],
+          ),
+          gap,
+
+          // Instructions
+          TextField(
+            controller: _instructionsRaw,
+            decoration: const InputDecoration(
+              labelText: 'Instructions (one step per line)',
+              hintText:
+                  'e.g.\nMince the garlic.\nFold in flour.\nBake 20 min.',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
+            maxLines: 8,
+            autofillHints: const <String>[],
+          ),
+          gap,
+
+          // Notes
+          TextField(
+            controller: _notes,
+            decoration: const InputDecoration(
+              labelText: 'Notes',
+              border: OutlineInputBorder(),
+              alignLabelWithHint: true,
+            ),
+            maxLines: 4,
+            autofillHints: const <String>[],
+          ),
+          gap,
+
+          // Source
+          TextField(
+            controller: _source,
+            decoration: const InputDecoration(
+              labelText: 'Source (URL, book, person…)',
+              border: OutlineInputBorder(),
+            ),
+            textInputAction: TextInputAction.next,
+            autofillHints: const <String>[],
+          ),
+          gap,
+
+          // Yield
+          TextField(
+            controller: _yieldText,
+            decoration: const InputDecoration(
+              labelText: 'Yield (e.g. "4 servings")',
+              border: OutlineInputBorder(),
+            ),
+            textInputAction: TextInputAction.next,
+            autofillHints: const <String>[],
+          ),
+
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _busy ? null : _submit,
+            icon: _busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.check),
+            label: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Add recipe'),
+        leading: _mode != AddRecipeMode.choice
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => setState(() => _mode = AddRecipeMode.choice),
+              )
+            : null,
+      ),
+      body: SafeArea(
+        child: switch (_mode) {
+          AddRecipeMode.choice => _buildChoiceScreen(),
+          AddRecipeMode.importUrl => _buildImportUrlScreen(),
+          AddRecipeMode.importImage => _buildImportImageScreen(),
+          AddRecipeMode.manual => _buildManualScreen(),
+        },
       ),
     );
   }

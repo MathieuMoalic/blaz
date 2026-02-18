@@ -114,14 +114,6 @@ class _EditRecipePageState extends State<EditRecipePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Edit recipe'),
-        actions: [
-          TextButton.icon(
-            onPressed: _busy ? null : _changeImage,
-            icon: const Icon(Icons.photo_outlined),
-            label: const Text('Change image'),
-          ),
-          const SizedBox(width: 8),
-        ],
       ),
       body: SafeArea(
         child: Form(
@@ -129,6 +121,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Title
               TextFormField(
                 controller: _title,
                 decoration: const InputDecoration(
@@ -140,34 +133,28 @@ class _EditRecipePageState extends State<EditRecipePage> {
                     (v == null || v.trim().isEmpty) ? 'Title required' : null,
               ),
               gap,
-              TextField(
-                controller: _source,
-                decoration: const InputDecoration(
-                  labelText: 'Source',
-                  border: OutlineInputBorder(),
+
+              // Image
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.photo),
+                      const SizedBox(width: 12),
+                      const Expanded(child: Text('Recipe Image')),
+                      FilledButton.icon(
+                        onPressed: _busy ? null : _changeImage,
+                        icon: const Icon(Icons.photo_outlined),
+                        label: const Text('Change image'),
+                      ),
+                    ],
+                  ),
                 ),
-                textInputAction: TextInputAction.next,
               ),
               gap,
-              TextField(
-                controller: _yieldText,
-                decoration: const InputDecoration(
-                  labelText: 'Yield',
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.next,
-              ),
-              gap,
-              TextField(
-                controller: _notes,
-                decoration: const InputDecoration(
-                  labelText: 'Notes',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-                maxLines: 4,
-              ),
-              gap,
+
+              // Ingredients
               TextField(
                 controller: _ingredientsRaw,
                 decoration: const InputDecoration(
@@ -179,6 +166,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
                 maxLines: 8,
               ),
               gap,
+
+              // Instructions
               TextField(
                 controller: _instructionsRaw,
                 decoration: const InputDecoration(
@@ -188,6 +177,40 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   alignLabelWithHint: true,
                 ),
                 maxLines: 10,
+              ),
+              gap,
+
+              // Notes
+              TextField(
+                controller: _notes,
+                decoration: const InputDecoration(
+                  labelText: 'Notes',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: 4,
+              ),
+              gap,
+
+              // Source
+              TextField(
+                controller: _source,
+                decoration: const InputDecoration(
+                  labelText: 'Source',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.next,
+              ),
+              gap,
+
+              // Yield
+              TextField(
+                controller: _yieldText,
+                decoration: const InputDecoration(
+                  labelText: 'Yield',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.next,
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
