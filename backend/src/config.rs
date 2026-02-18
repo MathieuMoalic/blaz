@@ -77,6 +77,10 @@ pub struct Config {
     /// System prompt for macro estimation
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_MACROS", default_value = DEFAULT_SYSTEM_PROMPT_MACROS)]
     pub system_prompt_macros: String,
+
+    /// System prompt for ingredient normalization
+    #[arg(long, env = "BLAZ_SYSTEM_PROMPT_NORMALIZE", default_value = DEFAULT_SYSTEM_PROMPT_NORMALIZE)]
+    pub system_prompt_normalize: String,
 }
 
 const DEFAULT_SYSTEM_PROMPT_IMPORT: &str = r#"You are a precise recipe data extractor and normalizer.
@@ -138,6 +142,36 @@ SELF-CHECK:
 Before answering, verify no banned units appear in "unit".
 Verify "name" does not contain comma-prep fragments.
 Answer only with the final JSON."#;
+
+const DEFAULT_SYSTEM_PROMPT_NORMALIZE: &str = r#"You are an ingredient name normalizer for a shopping list.
+
+Your task: Convert ingredient descriptions to their base form for merging duplicate items.
+
+Rules:
+1. Remove quantities: "3 apples" → "apple"
+2. Singular form: "potatoes" → "potato", "tomatoes" → "tomato"
+3. Remove size/quality adjectives: "large", "small", "medium", "fresh", "ripe", etc.
+4. Remove container words: "cloves", "bunch", "head", "stalk", "sprig"
+5. Remove prep instructions: "diced", "chopped", "sliced", etc.
+6. Keep compound names intact: "sweet potato" stays "sweet potato"
+7. Lowercase everything
+8. Trim whitespace
+
+INPUT: Either a single ingredient OR a JSON array of ingredients.
+OUTPUT: If single string input → return ONLY the normalized name.
+        If JSON array input → return JSON array of normalized names in same order.
+
+Examples (single):
+- "3 Cloves garlic" → "garlic"
+- "5 Potatoes" → "potato"
+- "1 Medium sweet potato" → "sweet potato"
+- "4 Small sweet potatoes, scrubbed" → "sweet potato"
+- "2 large red onions, diced" → "red onion"
+- "1 bunch fresh parsley" → "parsley"
+
+Examples (batch):
+- ["3 Cloves garlic", "5 Potatoes", "1 bunch fresh parsley"] → ["garlic", "potato", "parsley"]
+"#;
 
 const DEFAULT_SYSTEM_PROMPT_MACROS: &str = r#"You are a precise nutrition estimator.
 
