@@ -762,3 +762,30 @@ Future<void> deleteShoppingItem(int id) async {
   final r = await http.delete(_u('/shopping/$id'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
 }
+
+// ── LLM Credits ───────────────────────────────────────────────────────────────
+
+class LlmCredits {
+  final double usage;
+  final double? limit;
+  final bool isFreeTier;
+
+  const LlmCredits({
+    required this.usage,
+    this.limit,
+    required this.isFreeTier,
+  });
+
+  factory LlmCredits.fromJson(Map<String, dynamic> j) => LlmCredits(
+    usage: (j['usage'] as num?)?.toDouble() ?? 0.0,
+    limit: (j['limit'] as num?)?.toDouble(),
+    isFreeTier: j['is_free_tier'] as bool? ?? false,
+  );
+}
+
+Future<LlmCredits> fetchLlmCredits() async {
+  final r = await http.get(_u('/llm/credits'), headers: _headers());
+  if (r.statusCode != 200) _throw(r);
+  return LlmCredits.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+

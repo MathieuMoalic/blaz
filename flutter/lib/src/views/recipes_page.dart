@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
-import '../widgets/app_title.dart';
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -14,7 +13,9 @@ class RecipesPage extends StatefulWidget {
 class RecipesPageState extends State<RecipesPage> {
   late Future<List<Recipe>> _future;
   final _filterCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
   String _query = '';
+  bool _searchVisible = false;
   Timer? _debounce;
 
   // cache + soft loading flag
@@ -38,8 +39,21 @@ class RecipesPageState extends State<RecipesPage> {
   void dispose() {
     _filterCtrl.removeListener(_onFilterChanged);
     _filterCtrl.dispose();
+    _searchFocus.dispose();
     _debounce?.cancel();
     super.dispose();
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _searchVisible = !_searchVisible;
+      if (_searchVisible) {
+        _searchFocus.requestFocus();
+      } else {
+        _filterCtrl.clear();
+        _searchFocus.unfocus();
+      }
+    });
   }
 
   void _onFilterChanged() {
@@ -192,33 +206,28 @@ class RecipesPageState extends State<RecipesPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const AppTitle('Recipes'),
-
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: TextField(
-            controller: _filterCtrl,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Search recipes...',
-              prefixIcon: const Icon(Icons.search),
-              isDense: true,
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear',
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _filterCtrl.clear();
-                        FocusScope.of(context).unfocus();
-                      },
-                    ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+        if (_searchVisible)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: TextField(
+              controller: _filterCtrl,
+              focusNode: _searchFocus,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Search recipes...',
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                suffixIcon: IconButton(
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close),
+                  onPressed: _toggleSearch,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
-        ),
 
         Expanded(
           child: Stack(
@@ -320,11 +329,24 @@ class RecipesPageState extends State<RecipesPage> {
                   child: LinearProgressIndicator(minHeight: 2),
                 ),
 
-              // Floating "Add recipe" button in lower right
+              // FABs: search (above) + add recipe (below)
+              Positioned(
+                right: 16,
+                bottom: 88,
+                child: FloatingActionButton(
+                  heroTag: 'search',
+                  onPressed: _toggleSearch,
+                  tooltip: 'Search',
+                  child: Icon(
+                    _searchVisible ? Icons.search_off : Icons.search,
+                  ),
+                ),
+              ),
               Positioned(
                 right: 16,
                 bottom: 16,
                 child: FloatingActionButton(
+                  heroTag: 'add',
                   onPressed: _onAddRecipe,
                   tooltip: 'Add recipe',
                   child: const Icon(Icons.add),

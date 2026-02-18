@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'views/recipes_page.dart';
 import 'views/meal_plan/meal_plan_page.dart';
 import 'views/shopping_list_page.dart';
+import 'views/app_state_page.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -35,13 +36,13 @@ class _HomeShellState extends State<HomeShell> {
   final _shoppingKey =
       GlobalKey<ShoppingListPageState>(); // if you added earlier
 
-  final _navKeys = List.generate(3, (_) => GlobalKey<NavigatorState>());
+  final _navKeys = List.generate(4, (_) => GlobalKey<NavigatorState>());
   late final List<_TabNavObserver> _observers;
 
   @override
   void initState() {
     super.initState();
-    _observers = List.generate(3, (_) => _TabNavObserver(_markDirty));
+    _observers = List.generate(4, (_) => _TabNavObserver(_markDirty));
   }
 
   void _markDirty() {
@@ -108,8 +109,11 @@ class _HomeShellState extends State<HomeShell> {
             case 1:
               page = MealPlanPage(key: _mealPlanKey); // UPDATED (not const)
               break;
-            default:
+            case 2:
               page = ShoppingListPage(key: _shoppingKey);
+              break;
+            default:
+              page = const AppStatePage();
           }
           return MaterialPageRoute(builder: (_) => page, settings: settings);
         },
@@ -131,7 +135,7 @@ class _HomeShellState extends State<HomeShell> {
       },
       child: Scaffold(
         body: SafeArea(
-          child: Stack(children: List.generate(3, _buildTabNavigator)),
+          child: Stack(children: List.generate(4, _buildTabNavigator)),
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _index,
@@ -148,6 +152,10 @@ class _HomeShellState extends State<HomeShell> {
             NavigationDestination(
               icon: Icon(Icons.shopping_cart),
               label: 'Shopping',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              label: 'Settings',
             ),
           ],
         ),
