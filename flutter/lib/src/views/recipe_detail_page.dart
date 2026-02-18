@@ -212,7 +212,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         final media = MediaQuery.of(ctx);
         final height = media.size.height * 0.7;
 
-        final selections = List<bool>.filled(items.length, true);
+        final selections = List<bool>.filled(items.length, false);
         bool allSelected() => selections.every((v) => v);
         bool anySelected() => selections.any((v) => v);
 
