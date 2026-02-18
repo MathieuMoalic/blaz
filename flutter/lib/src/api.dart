@@ -503,12 +503,22 @@ Future<Recipe> updateRecipe({
   List<String>? ingredients,
   List<String>? instructions,
 }) async {
+  // Convert string ingredients to structured format if provided
+  final structuredIngredients = ingredients?.map((text) {
+    return {
+      'name': text,
+      'quantity': null,
+      'unit': null,
+      'prep': null,
+    };
+  }).toList();
+
   final body = <String, dynamic>{
     if (title != null) 'title': title,
     if (source != null) 'source': source,
     if (yieldText != null) 'yield': yieldText,
     if (notes != null) 'notes': notes,
-    if (ingredients != null) 'ingredients': ingredients,
+    if (ingredients != null) 'ingredients': structuredIngredients,
     if (instructions != null) 'instructions': instructions,
   };
   final r = await http.patch(
@@ -593,12 +603,22 @@ Future<Recipe> createRecipeFull({
 }) async {
   final uri = Uri.parse('$baseUrl/recipes');
 
+  // Convert string ingredients to structured format
+  final structuredIngredients = ingredients.map((text) {
+    return {
+      'name': text,
+      'quantity': null,
+      'unit': null,
+      'prep': null,
+    };
+  }).toList();
+
   final body = <String, dynamic>{
     'title': title,
     'source': source,
     'yield': yieldText,
     'notes': notes,
-    'ingredients': ingredients,
+    'ingredients': structuredIngredients,
     'instructions': instructions,
   };
 
