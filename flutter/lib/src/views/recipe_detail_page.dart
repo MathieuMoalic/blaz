@@ -90,7 +90,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     if (selected == null || selected.isEmpty) return;
 
     try {
-      await api.addShoppingItems(selected);
+      await api.mergeShoppingIngredients(selected, recipeId: r.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added ${selected.length} item(s)')),
@@ -200,11 +200,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
   }
 
-  Future<List<String>?> _pickIngredientsBottomSheet({
+  Future<List<api.Ingredient>?> _pickIngredientsBottomSheet({
     required String title,
     required List<api.Ingredient> items,
   }) async {
-    return showModalBottomSheet<List<String>>(
+    return showModalBottomSheet<List<api.Ingredient>>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -300,13 +300,19 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                             child: FilledButton.icon(
                               onPressed: anySelected()
                                   ? () {
-                                      final picked = <String>[];
+                                      final picked = <api.Ingredient>[];
                                       for (var i = 0; i < items.length; i++) {
                                         if (selections[i]) {
+                                          final ing = items[i];
+                                          // Scale the ingredient
                                           picked.add(
-                                            items[i].toLine(
-                                              factor: _scale,
-                                              includePrep: false,
+                                            api.Ingredient(
+                                              quantity: ing.quantity != null
+                                                  ? ing.quantity! * _scale
+                                                  : null,
+                                              unit: ing.unit,
+                                              name: ing.name,
+                                              prep: null, // Don't include prep in shopping list
                                             ),
                                           );
                                         }

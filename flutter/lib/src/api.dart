@@ -293,12 +293,16 @@ class ShoppingItem {
   final String text;
   final bool done; // derived from 0/1
   final String? category;
+  final List<int> recipeIds;
+  final String? recipeTitles; // Comma-separated
 
   ShoppingItem({
     required this.id,
     required this.text,
     required this.done,
     this.category,
+    this.recipeIds = const [],
+    this.recipeTitles,
   });
 
   factory ShoppingItem.fromJson(Map<String, dynamic> j) {
@@ -310,11 +314,26 @@ class ShoppingItem {
       _ => false,
     };
 
+    // Parse recipe_ids JSON array
+    List<int> recipeIds = [];
+    if (j['recipe_ids'] != null && j['recipe_ids'] is String) {
+      try {
+        final decoded = jsonDecode(j['recipe_ids'] as String);
+        if (decoded is List) {
+          recipeIds = decoded.map((e) => (e as num).toInt()).toList();
+        }
+      } catch (_) {
+        // Ignore parse errors
+      }
+    }
+
     return ShoppingItem(
       id: (j['id'] as num).toInt(),
       text: j['text'] as String,
       done: doneBool,
       category: j['category'] as String?,
+      recipeIds: recipeIds,
+      recipeTitles: j['recipe_titles'] as String?,
     );
   }
 }
@@ -704,13 +723,18 @@ Future<List<String>> fetchAllShoppingTexts() async {
 }
 
 Future<List<ShoppingItem>> mergeShoppingIngredients(
-  List<Ingredient> items,
-) async {
+  List<Ingredient> items, {
+  int? recipeId,
+}) async {
   final uri = _u('/shopping/merge');
+  final body = {
+    'items': items.map((e) => e.toJson()).toList(),
+    if (recipeId != null) 'recipe_id': recipeId,
+  };
   final r = await http.post(
     uri,
     headers: _headers({'content-type': 'application/json'}),
-    body: jsonEncode({'items': items.map((e) => e.toJson()).toList()}),
+    body: jsonEncode(body),
   );
   if (r.statusCode != 200) _throw(r);
   final List data = jsonDecode(r.body) as List;

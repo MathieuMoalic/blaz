@@ -452,6 +452,49 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                             ),
                           ],
                         ),
+                        if (it.recipeTitles != null && it.recipeTitles!.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.restaurant_menu, size: 16),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'From recipes:',
+                                      style: TextStyle(fontWeight: FontWeight.w500),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                ...it.recipeTitles!.split(', ').map((title) => Padding(
+                                  padding: const EdgeInsets.only(left: 22, bottom: 4),
+                                  child: Row(
+                                    children: [
+                                      const Text('• ', style: TextStyle(fontSize: 16)),
+                                      Expanded(
+                                        child: Text(
+                                          title,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[700],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

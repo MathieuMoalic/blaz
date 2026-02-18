@@ -57,6 +57,7 @@ pub struct InIngredient {
 #[derive(Deserialize)]
 pub struct MergeReq {
     pub items: Vec<InIngredient>,
+    pub recipe_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -221,7 +222,7 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemView>(
         r"
-        SELECT id, text, done, category
+        SELECT id, text, done, category, recipe_ids, recipe_titles
           FROM shopping_items_view
          WHERE id = ?
         ",
@@ -507,7 +508,7 @@ async fn call_llm_normalize_batch(state: &AppState, raw_names: &[String]) -> Opt
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
     let mut rows = sqlx::query_as::<_, ShoppingItemView>(
         r"
-        SELECT id, text, done, category
+        SELECT id, text, done, category, recipe_ids, recipe_titles
           FROM shopping_items_view
          WHERE done = 0
          ORDER BY id
@@ -975,10 +976,13 @@ pub async fn merge_items(
             })
         };
 
+        // Prepare recipe_ids JSON array
+        let recipe_ids_json = req.recipe_id.map_or_else(|| "[]".to_string(), |rid| format!("[{rid}]"));
+
         sqlx::query(
             r"
-            INSERT INTO shopping_items (name, unit, quantity, done, key, category)
-            VALUES (?, ?, ?, 0, ?, ?)
+            INSERT INTO shopping_items (name, unit, quantity, done, key, category, recipe_ids)
+            VALUES (?, ?, ?, 0, ?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
               quantity = CASE
                 WHEN excluded.quantity IS NULL THEN shopping_items.quantity
@@ -988,6 +992,15 @@ pub async fn merge_items(
               name = excluded.name,
               unit = excluded.unit,
               category = COALESCE(shopping_items.category, excluded.category),
+              recipe_ids = (
+                SELECT json_group_array(DISTINCT value)
+                FROM (
+                  SELECT value FROM json_each(shopping_items.recipe_ids)
+                  UNION
+                  SELECT value FROM json_each(excluded.recipe_ids)
+                )
+                WHERE value IS NOT NULL
+              ),
               done = 0
             ",
         )
@@ -996,6 +1009,7 @@ pub async fn merge_items(
         .bind(qty_norm)
         .bind(&key)
         .bind(chosen_cat)
+        .bind(&recipe_ids_json)
         .execute(&state.pool)
         .await?;
     }
