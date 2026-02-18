@@ -5,7 +5,7 @@ use crate::{
     embedded_web::serve_embedded_web,
     logging::{access_log, log_payloads},
     models::AppState,
-    routes::{import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, shopping},
+    routes::{import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, shopping},
 };
 
 use axum::extract::DefaultBodyLimit;
@@ -82,6 +82,7 @@ pub fn build_app(state: AppState) -> Router {
             post(recipes::estimate_macros),
         )
         .route("/recipes/import", post(parse_recipe::import_from_url))
+        .route("/recipes/import/images", post(import_recipe_images::import_from_images))
         .route("/recipes/import/recipesage", post(import_recipesage::import_recipesage))
         .route(
             "/meal-plan",

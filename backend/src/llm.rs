@@ -112,6 +112,93 @@ impl LlmClient {
         )
     }
 }
+
+pub struct ImageChatRequest<'a> {
+    pub http: &'a reqwest::Client,
+    pub system: &'a str,
+    pub text_prompt: &'a str,
+    pub images: &'a [(String, String)],
+    pub temperature: f32,
+    pub timeout: Duration,
+    pub max_tokens: Option<u32>,
+}
+
+impl LlmClient {
+    /// Like `chat_json` but attaches base64-encoded images to the user message.
+    /// Images must be provided as `(mime_type, base64_data)` pairs, e.g.
+    /// `("image/jpeg", "<base64>")`.
+    ///
+    /// # Errors
+    ///
+    /// Will return err if the request fails or if the response can't be parsed as JSON.
+    pub async fn chat_json_images(
+        &self,
+        req: ImageChatRequest<'_>,
+    ) -> anyhow::Result<JsonValue> {
+        let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
+
+        let mut content: Vec<JsonValue> = req.images
+            .iter()
+            .map(|(mime, b64)| {
+                json!({
+                    "type": "image_url",
+                    "image_url": { "url": format!("data:{mime};base64,{b64}") }
+                })
+            })
+            .collect();
+        content.push(json!({ "type": "text", "text": req.text_prompt }));
+
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": req.system },
+                { "role": "user",   "content": content }
+            ],
+            "temperature": req.temperature,
+            "max_tokens": req.max_tokens,
+            "response_format": { "type": "json_object" }
+        });
+
+        let mut http_req = req.http
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .timeout(req.timeout)
+            .json(&body);
+
+        if !self.token.trim().is_empty() {
+            http_req = http_req.bearer_auth(&self.token);
+        }
+
+        let resp = http_req.send().await?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            anyhow::bail!("LLM HTTP {status}: {text}");
+        }
+
+        let envelope: JsonValue = serde_json::from_str(&text)?;
+        let content_str = envelope
+            .pointer("/choices/0/message/content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("LLM response missing content"))?;
+
+        if let Ok(js) = serde_json::from_str::<JsonValue>(content_str) {
+            return Ok(js);
+        }
+        if let Some(js) = extract_fenced_json(content_str) {
+            return Ok(serde_json::from_str(&js)?);
+        }
+        if let Some(js) = extract_largest_json_object(content_str) {
+            return Ok(serde_json::from_str(&js)?);
+        }
+
+        anyhow::bail!(
+            "Vision LLM did not return valid JSON. Preview: {}",
+            &content_str.chars().take(500).collect::<String>()
+        )
+    }
+}
 /// Extract JSON object from a ```json ... ``` fenced block.
 /// Accepts ```json``` or plain ``` ``` fences (case-insensitive).
 pub fn extract_fenced_json(s: &str) -> Option<String> {

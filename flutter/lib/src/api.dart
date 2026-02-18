@@ -513,6 +513,29 @@ Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
   return Recipe.fromJson(json);
 }
 
+/// Import a recipe from 1–3 images. Each entry is `(filename, bytes)`.
+Future<Recipe> importRecipeFromImages(List<(String, List<int>)> images) async {
+  final uri = Uri.parse('$baseUrl/recipes/import/images');
+  final req = http.MultipartRequest('POST', uri);
+  if (_authToken != null && _authToken!.isNotEmpty) {
+    req.headers['Authorization'] = 'Bearer $_authToken';
+  }
+  for (final (name, bytes) in images) {
+    final ct = lookupMimeType(name) ?? 'image/jpeg';
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'image',
+        bytes,
+        filename: name,
+        contentType: MediaType.parse(ct),
+      ),
+    );
+  }
+  final resp = await http.Response.fromStream(await req.send());
+  if (resp.statusCode != 200) _throw(resp);
+  return Recipe.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+}
+
 Future<Recipe> updateRecipe({
   required int id,
   String? title,

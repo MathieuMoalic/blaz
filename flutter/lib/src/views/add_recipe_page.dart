@@ -27,7 +27,11 @@ class _AddRecipePageState extends State<AddRecipePage> {
   final _importUrl = TextEditingController();
   bool _importing = false;
 
-  XFile? _picked; // selected file
+  // image import state (up to 3 photos)
+  final List<(String, Uint8List)> _importImages = []; // (filename, bytes)
+  bool _importingImages = false;
+
+  XFile? _picked; // selected file (manual entry cover image)
   Uint8List? _preview; // preview bytes (web or when Android only returns URI)
   bool _busy = false;
 
@@ -247,37 +251,144 @@ class _AddRecipePageState extends State<AddRecipePage> {
     );
   }
 
+  Future<void> _addImportImage() async {
+    if (_importImages.length >= 3) return;
+    final group = const XTypeGroup(
+      label: 'images',
+      extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic'],
+    );
+    final file = await openFile(acceptedTypeGroups: [group]);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    setState(() => _importImages.add((file.name, bytes)));
+  }
+
+  Future<void> _submitImportImages() async {
+    if (_importImages.isEmpty) return;
+    setState(() => _importingImages = true);
+    try {
+      final created = await importRecipeFromImages(
+        _importImages
+            .map((e) => (e.$1, e.$2.toList()))
+            .toList(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported: ${created.title}')),
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+    } finally {
+      if (mounted) setState(() => _importingImages = false);
+    }
+  }
+
   Widget _buildImportImageScreen() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Card(
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(16),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.construction,
-                  size: 64,
-                  color: Theme.of(context).colorScheme.secondary,
+                Text(
+                  'Import from Photos',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Add up to 3 photos — useful when the recipe spans multiple pages.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 16),
-                Text(
-                  'Coming Soon',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Import from image is not yet implemented',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
+
+                // Thumbnails
+                if (_importImages.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (var i = 0; i < _importImages.length; i++)
+                        Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(
+                                _importImages[i].$2,
+                                width: 96,
+                                height: 96,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            Positioned(
+                              top: 2,
+                              right: 2,
+                              child: GestureDetector(
+                                onTap: () =>
+                                    setState(() => _importImages.removeAt(i)),
+                                child: Container(
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black54,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  padding: const EdgeInsets.all(2),
+                                  child: const Icon(
+                                    Icons.close,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
+                Row(
+                  children: [
+                    if (_importImages.length < 3)
+                      OutlinedButton.icon(
+                        onPressed:
+                            _importingImages ? null : _addImportImage,
+                        icon: const Icon(Icons.add_photo_alternate_outlined),
+                        label: Text(
+                          _importImages.isEmpty
+                              ? 'Add photo'
+                              : 'Add another',
+                        ),
+                      ),
+                    const Spacer(),
+                    FilledButton.icon(
+                      onPressed: (_importImages.isEmpty || _importingImages)
+                          ? null
+                          : _submitImportImages,
+                      icon: _importingImages
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Icon(Icons.download),
+                      label: const Text('Import'),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ),
-      ),
+      ],
     );
   }
 

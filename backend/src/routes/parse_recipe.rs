@@ -188,14 +188,14 @@ async fn try_fetch_and_attach_image(
  * ========================= */
 
 #[derive(Default, Clone)]
-struct ExtractRaw {
-    title: Option<String>,
-    ingredients: JsonValue,
-    instructions: JsonValue,
+pub struct ExtractRaw {
+    pub title: Option<String>,
+    pub ingredients: JsonValue,
+    pub instructions: JsonValue,
 }
 
 impl ExtractRaw {
-    fn from_json(v: &JsonValue) -> Self {
+    pub fn from_json(v: &JsonValue) -> Self {
         let title = v
             .get("title")
             .and_then(|x| x.as_str().map(|s| s.trim().to_string()))
@@ -208,7 +208,7 @@ impl ExtractRaw {
         }
     }
 
-    fn normalize(self) -> ExtractOut {
+    pub fn normalize(self) -> ExtractOut {
         ExtractOut {
             ingredients: normalize_ingredients(self.ingredients),
             instructions: normalize_instructions(self.instructions),
@@ -216,12 +216,12 @@ impl ExtractRaw {
     }
 }
 
-struct ExtractOut {
-    ingredients: Vec<Ingredient>,
-    instructions: Vec<String>,
+pub struct ExtractOut {
+    pub ingredients: Vec<Ingredient>,
+    pub instructions: Vec<String>,
 }
 
-fn normalize_instructions(v: JsonValue) -> Vec<String> {
+pub fn normalize_instructions(v: JsonValue) -> Vec<String> {
     match v {
         JsonValue::Array(items) => items
             .into_iter()
@@ -245,7 +245,7 @@ fn normalize_instructions(v: JsonValue) -> Vec<String> {
     }
 }
 
-fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
+pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
     match v {
         JsonValue::Array(items) => items
             .into_iter()

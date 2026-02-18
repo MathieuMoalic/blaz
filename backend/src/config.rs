@@ -66,6 +66,10 @@ pub struct Config {
     #[arg(long, env = "BLAZ_LLM_MODEL", default_value = "deepseek/deepseek-chat")]
     pub llm_model: String,
 
+    /// LLM vision model to use for image-based recipe import
+    #[arg(long, env = "BLAZ_LLM_VISION_MODEL", default_value = "google/gemini-2.0-flash-001")]
+    pub llm_vision_model: String,
+
     /// LLM API URL
     #[arg(long, env = "BLAZ_LLM_API_URL", default_value = "https://openrouter.ai/api/v1")]
     pub llm_api_url: String,
