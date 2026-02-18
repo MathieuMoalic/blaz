@@ -677,6 +677,12 @@ fn apply_done_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, done: Opti
         push_sep(qb, wrote);
         qb.push("done = ");
         qb.push_bind(i64::from(d));
+        
+        // Clear recipe_ids when marking as done so list resets
+        if d {
+            push_sep(qb, wrote);
+            qb.push("recipe_ids = '[]'");
+        }
     }
 }
 

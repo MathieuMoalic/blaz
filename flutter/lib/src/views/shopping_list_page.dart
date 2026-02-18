@@ -44,6 +44,46 @@ String _formatItemText(String text) {
   return formatted;
 }
 
+/// Format date from "Recipe Title (2026-02-20)" format
+/// Returns formatted like "Recipe Title (Today)", "Recipe Title (in 2 days)", "Recipe Title (Feb 20)"
+String _formatRecipeWithDate(String recipeWithDate) {
+  final match = RegExp(r'^(.+?)\s*\((\d{4}-\d{2}-\d{2})\)$').firstMatch(recipeWithDate);
+  if (match == null) return recipeWithDate; // No date, return as-is
+  
+  final title = match.group(1)!;
+  final dateStr = match.group(2)!; // e.g., "2026-02-20"
+  
+  try {
+    final date = DateTime.parse(dateStr);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final targetDay = DateTime(date.year, date.month, date.day);
+    final diff = targetDay.difference(today).inDays;
+    
+    String dateLabel;
+    if (diff == 0) {
+      dateLabel = 'Today';
+    } else if (diff == 1) {
+      dateLabel = 'Tomorrow';
+    } else if (diff == -1) {
+      dateLabel = '1 day ago';
+    } else if (diff > 1 && diff <= 7) {
+      dateLabel = 'in $diff days';
+    } else if (diff < -1 && diff >= -7) {
+      dateLabel = '${diff.abs()} days ago';
+    } else {
+      // Show month + day for dates further out
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      dateLabel = '${months[date.month - 1]} ${date.day}';
+    }
+    
+    return '$title ($dateLabel)';
+  } catch (_) {
+    return recipeWithDate; // Parse error, return original
+  }
+}
+
 class ShoppingListPage extends StatefulWidget {
   const ShoppingListPage({super.key});
   @override
@@ -474,23 +514,25 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                ...it.recipeTitles!.split(', ').map((title) => Padding(
-                                  padding: const EdgeInsets.only(left: 22, bottom: 4),
-                                  child: Row(
-                                    children: [
-                                      const Text('• ', style: TextStyle(fontSize: 16)),
-                                      Expanded(
-                                        child: Text(
-                                          title,
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.grey[700],
+                                ...it.recipeTitles!.split(', ').map((recipeWithDate) {
+                                  final formatted = _formatRecipeWithDate(recipeWithDate);
+                                  return Padding(
+                                    padding: const EdgeInsets.only(left: 22, bottom: 4),
+                                    child: Row(
+                                      children: [
+                                        const Text('• ', style: TextStyle(fontSize: 16)),
+                                        Expanded(
+                                          child: Text(
+                                            formatted,
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                )),
+                                      ],
+                                    ),
+                                  );
+                                }),
                               ],
                             ),
                           ),
