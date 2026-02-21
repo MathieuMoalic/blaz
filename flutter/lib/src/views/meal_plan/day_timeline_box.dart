@@ -141,7 +141,7 @@ class DayTimelineBox extends StatelessWidget {
                             final m = items[i];
                             final recipe = recipeIndex[m.recipeId];
                             final title = recipe?.title ?? m.title;
-                            final imageUrl = mediaUrl(recipe?.imagePathSmall);
+                            final imageUrl = mediaUrl(recipe?.imagePathSmall, cacheBuster: recipe?.updatedAt);
                             return RecipeThumbTile(
                               width: tileWidth,
                               height: tileHeight,

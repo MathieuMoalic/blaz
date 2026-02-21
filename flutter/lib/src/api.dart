@@ -182,11 +182,15 @@ Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
   '$baseUrl$path',
 ).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
 
-String? mediaUrl(String? rel) {
+String? mediaUrl(String? rel, {String? cacheBuster}) {
   if (rel == null || rel.isEmpty) return null;
   final base = baseUrl.replaceAll(RegExp(r'/+$'), '');
   final path = rel.startsWith('/') ? rel.substring(1) : rel;
-  return '$base/media/$path';
+  final url = '$base/media/$path';
+  if (cacheBuster != null && cacheBuster.isNotEmpty) {
+    return '$url?t=${Uri.encodeComponent(cacheBuster)}';
+  }
+  return url;
 }
 
 Never _throw(http.Response r) =>

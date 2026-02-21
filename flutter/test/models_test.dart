@@ -595,5 +595,21 @@ void main() {
       expect(url, isNotNull);
       expect(url, isNot(contains('/media//')));
     });
+
+    test('cache buster is appended as ?t= query param', () {
+      final url = mediaUrl('recipes/1/small.webp', cacheBuster: '2024-01-01T00:00:00');
+      expect(url, contains('?t='));
+      expect(url, contains('2024-01-01'));
+    });
+
+    test('no cache buster → clean URL without query string', () {
+      final url = mediaUrl('recipes/1/small.webp');
+      expect(url, isNot(contains('?')));
+    });
+
+    test('empty cache buster → clean URL without query string', () {
+      final url = mediaUrl('recipes/1/small.webp', cacheBuster: '');
+      expect(url, isNot(contains('?')));
+    });
   });
 }

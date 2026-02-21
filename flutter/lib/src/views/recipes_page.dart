@@ -296,7 +296,7 @@ class RecipesPageState extends State<RecipesPage> {
                           itemCount: filtered.length,
                           itemBuilder: (_, i) {
                             final r = filtered[i];
-                            final thumb = mediaUrl(r.imagePathSmall);
+                            final thumb = mediaUrl(r.imagePathSmall, cacheBuster: r.updatedAt);
 
                             return _RecipeCard(
                               title: r.title,

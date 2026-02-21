@@ -93,9 +93,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
         bytes: bytes,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Image updated')));
+      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

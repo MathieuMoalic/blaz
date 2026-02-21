@@ -83,8 +83,8 @@ class _SharedRecipePageState extends State<SharedRecipePage> {
             );
           }
           final r = snap.data!;
-          final small = api.mediaUrl(r.imagePathSmall);
-          final full = api.mediaUrl(r.imagePathFull);
+          final small = api.mediaUrl(r.imagePathSmall, cacheBuster: r.updatedAt);
+          final full = api.mediaUrl(r.imagePathFull, cacheBuster: r.updatedAt);
           final heroTag = 'shared-recipe-image';
 
           return ListView(
