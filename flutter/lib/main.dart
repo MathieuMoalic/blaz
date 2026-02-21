@@ -97,7 +97,13 @@ class BlazApp extends StatelessWidget {
             Positioned.fill(
               child: IgnorePointer(child: ColoredBox(color: tint)),
             ),
-            if (child != null) child,
+            if (child != null)
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: child,
+                ),
+              ),
           ],
         );
       },
