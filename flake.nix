@@ -46,6 +46,7 @@
         cargo-watch
         sqlite
         sqlx-cli
+        watchexec
       ];
 
       RUSTFLAGS = "-C link-arg=-fuse-ld=mold";

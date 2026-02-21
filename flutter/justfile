@@ -8,5 +8,8 @@ android:
   adb reverse tcp:8080 tcp:8080
   flutter run -d CPH2465
 
+test-watch:
+  watchexec -e dart -c -w lib -w test -- flutter test --reporter compact
+
 gen-icons:
   flutter pub run flutter_launcher_icons

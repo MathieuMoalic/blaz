@@ -149,6 +149,94 @@ void main() {
   });
 
   // ──────────────────────────────────────────────────────────────────
+  // parseIngredientLine
+  // ──────────────────────────────────────────────────────────────────
+  group('parseIngredientLine', () {
+    test('parses quantity + canonical unit + name', () {
+      final ing = parseIngredientLine('200 g flour');
+      expect(ing.quantity, 200.0);
+      expect(ing.unit, 'g');
+      expect(ing.name, 'flour');
+    });
+
+    test('parses kg unit', () {
+      final ing = parseIngredientLine('1.5 kg beef');
+      expect(ing.quantity, 1.5);
+      expect(ing.unit, 'kg');
+      expect(ing.name, 'beef');
+    });
+
+    test('parses ml unit', () {
+      final ing = parseIngredientLine('100 ml milk');
+      expect(ing.quantity, 100.0);
+      expect(ing.unit, 'ml');
+      expect(ing.name, 'milk');
+    });
+
+    test('parses L unit', () {
+      final ing = parseIngredientLine('1 L water');
+      expect(ing.quantity, 1.0);
+      expect(ing.unit, 'L');
+      expect(ing.name, 'water');
+    });
+
+    test('parses tsp unit', () {
+      final ing = parseIngredientLine('1 tsp salt');
+      expect(ing.quantity, 1.0);
+      expect(ing.unit, 'tsp');
+      expect(ing.name, 'salt');
+    });
+
+    test('parses tbsp unit', () {
+      final ing = parseIngredientLine('2 tbsp olive oil');
+      expect(ing.quantity, 2.0);
+      expect(ing.unit, 'tbsp');
+      expect(ing.name, 'olive oil');
+    });
+
+    test('quantity without unit', () {
+      final ing = parseIngredientLine('2 eggs');
+      expect(ing.quantity, 2.0);
+      expect(ing.unit, isNull);
+      expect(ing.name, 'eggs');
+    });
+
+    test('unrecognised unit stays in name', () {
+      // "cup" is not a canonical backend unit
+      final ing = parseIngredientLine('1 cup sugar');
+      expect(ing.quantity, 1.0);
+      expect(ing.unit, isNull);
+      expect(ing.name, 'cup sugar');
+    });
+
+    test('plain name only (no leading number)', () {
+      final ing = parseIngredientLine('flour');
+      expect(ing.quantity, isNull);
+      expect(ing.unit, isNull);
+      expect(ing.name, 'flour');
+    });
+
+    test('comma decimal separator is handled', () {
+      final ing = parseIngredientLine('1,5 kg beef');
+      expect(ing.quantity, 1.5);
+      expect(ing.unit, 'kg');
+    });
+
+    test('extra words after name are preserved', () {
+      final ing = parseIngredientLine('200 g flour sifted');
+      expect(ing.quantity, 200.0);
+      expect(ing.name, 'flour sifted');
+    });
+
+    test('scaling a re-parsed ingredient works end-to-end', () {
+      // Simulates a stored plain-text ingredient being re-parsed at display time.
+      final stored = Ingredient(name: '200 g flour');
+      final parsed = parseIngredientLine(stored.name);
+      expect(parsed.toLine(factor: 2.0), '400 g flour');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
   // ShoppingItem.fromJson  (done field coercion)
   // ──────────────────────────────────────────────────────────────────
   group('ShoppingItem.fromJson', () {

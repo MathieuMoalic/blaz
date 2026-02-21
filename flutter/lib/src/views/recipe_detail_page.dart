@@ -563,7 +563,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                         else
                           ...r.ingredients.asMap().entries.map((e) {
                             final idx = e.key;
-                            final ing = e.value;
+                            var ing = e.value;
+                            // If stored as plain text (quantity == null), parse
+                            // it now so the scale factor has an effect even for
+                            // recipes that predate the structured-ingredient fix.
+                            if (ing.quantity == null) {
+                              ing = api.parseIngredientLine(ing.name);
+                            }
                             final line = ing.toLine(factor: _scale);
                             final checked = _checkedIngredients.contains(idx);
                             return _Bullet(

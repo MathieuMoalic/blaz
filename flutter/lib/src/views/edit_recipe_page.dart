@@ -62,7 +62,6 @@ class _EditRecipePageState extends State<EditRecipePage> {
         source: _source.text.trim(),
         yieldText: _yieldText.text.trim(),
         notes: _notes.text.trim(),
-        // Send raw lines; backend parses to structured
         ingredients: _lines(_ingredientsRaw.text),
         instructions: _lines(_instructionsRaw.text),
       );

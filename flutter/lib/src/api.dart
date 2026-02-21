@@ -545,6 +545,49 @@ Future<Recipe> importRecipeFromImages(List<(String, List<int>)> images) async {
   return Recipe.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
 }
 
+/// Parses a single ingredient text line (e.g. "200 g flour") into a
+/// structured [Ingredient]. Recognises the canonical units stored by the
+/// backend (g, kg, ml, L, tsp, tbsp); everything else is treated as part of
+/// the name so the text round-trips correctly after an edit.
+///
+/// Used both at save-time (to avoid storing null quantities) and at
+/// display-time (to scale ingredients that were stored as plain text).
+Ingredient parseIngredientLine(String text) {
+  final tokens = text.trim().split(RegExp(r'\s+'));
+  if (tokens.isEmpty) {
+    return Ingredient(name: text, quantity: null, unit: null, prep: null);
+  }
+
+  final qty = double.tryParse(tokens[0].replaceAll(',', '.'));
+  if (qty == null || tokens.length < 2) {
+    return Ingredient(name: text, quantity: null, unit: null, prep: null);
+  }
+
+  // Only the units the backend stores as canonical.
+  const knownUnits = {'g', 'kg', 'ml', 'L', 'tsp', 'tbsp'};
+
+  int nameIdx = 1;
+  String? unit;
+  if (knownUnits.contains(tokens[1])) {
+    unit = tokens[1];
+    nameIdx = 2;
+    if (nameIdx < tokens.length && tokens[nameIdx].toLowerCase() == 'of') {
+      nameIdx++;
+    }
+  }
+
+  if (nameIdx >= tokens.length) {
+    return Ingredient(name: text, quantity: null, unit: null, prep: null);
+  }
+
+  return Ingredient(
+    name: tokens.sublist(nameIdx).join(' '),
+    quantity: qty,
+    unit: unit,
+    prep: null,
+  );
+}
+
 Future<Recipe> updateRecipe({
   required int id,
   String? title,
@@ -554,15 +597,8 @@ Future<Recipe> updateRecipe({
   List<String>? ingredients,
   List<String>? instructions,
 }) async {
-  // Convert string ingredients to structured format if provided
-  final structuredIngredients = ingredients?.map((text) {
-    return {
-      'name': text,
-      'quantity': null,
-      'unit': null,
-      'prep': null,
-    };
-  }).toList();
+  final structuredIngredients =
+      ingredients?.map((t) => parseIngredientLine(t).toJson()).toList();
 
   final body = <String, dynamic>{
     if (title != null) 'title': title,
@@ -654,15 +690,8 @@ Future<Recipe> createRecipeFull({
 }) async {
   final uri = Uri.parse('$baseUrl/recipes');
 
-  // Convert string ingredients to structured format
-  final structuredIngredients = ingredients.map((text) {
-    return {
-      'name': text,
-      'quantity': null,
-      'unit': null,
-      'prep': null,
-    };
-  }).toList();
+  final structuredIngredients =
+      ingredients.map((t) => parseIngredientLine(t).toJson()).toList();
 
   final body = <String, dynamic>{
     'title': title,
