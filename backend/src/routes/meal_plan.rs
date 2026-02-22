@@ -2,12 +2,13 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use chrono::NaiveDate;
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     error::AppResult,
-    models::{AppState, AssignRecipe, MealPlanEntry},
+    models::{AppState, AssignRecipe, MealPlanEntry, PrepReminder},
 };
 
 #[derive(Deserialize)]
@@ -107,4 +108,83 @@ pub async fn unassign(
     Ok(Json(serde_json::json!({
         "deleted": res.rows_affected()
     })))
+}
+
+#[derive(Deserialize)]
+pub struct ReminderRangeQuery {
+    pub from: String, // "YYYY-MM-DD"
+    pub to: String,   // "YYYY-MM-DD"
+}
+
+#[derive(Serialize)]
+pub struct PrepReminderDto {
+    pub recipe_id: i64,
+    pub recipe_title: String,
+    pub step: String,
+    pub hours_before: i32,
+    pub due_date: String,  // "YYYY-MM-DD" when the prep should start
+    pub meal_date: String, // "YYYY-MM-DD" the scheduled meal
+}
+
+/// GET /meal-plan/reminders?from=YYYY-MM-DD&to=YYYY-MM-DD
+///
+/// Returns prep reminders for all meals in the given date range, with the
+/// computed `due_date` (meal date minus `hours_before`).
+///
+/// # Errors
+/// Returns an error if querying the database fails.
+pub async fn list_reminders(
+    State(state): State<AppState>,
+    Query(q): Query<ReminderRangeQuery>,
+) -> AppResult<Json<Vec<PrepReminderDto>>> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        recipe_id: i64,
+        title: String,
+        day: String,
+        prep_reminders: Option<String>,
+    }
+
+    let rows: Vec<Row> = sqlx::query_as(
+        r"
+        SELECT mp.recipe_id, r.title, mp.day, r.prep_reminders
+          FROM meal_plan mp
+          JOIN recipes r ON r.id = mp.recipe_id
+         WHERE mp.day >= ? AND mp.day <= ?
+         ORDER BY mp.day
+        ",
+    )
+    .bind(&q.from)
+    .bind(&q.to)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut result: Vec<PrepReminderDto> = Vec::new();
+
+    for row in rows {
+        let Some(json) = row.prep_reminders else { continue };
+        let Ok(reminders) = serde_json::from_str::<Vec<PrepReminder>>(&json) else {
+            continue;
+        };
+        let Ok(meal_date) = NaiveDate::parse_from_str(&row.day, "%Y-%m-%d") else {
+            continue;
+        };
+
+        for reminder in reminders {
+            #[allow(clippy::cast_possible_truncation)]
+            let days_before = (f64::from(reminder.hours_before) / 24.0).ceil() as i64;
+            let due = meal_date - chrono::Duration::days(days_before);
+            result.push(PrepReminderDto {
+                recipe_id: row.recipe_id,
+                recipe_title: row.title.clone(),
+                step: reminder.step,
+                hours_before: reminder.hours_before,
+                due_date: due.format("%Y-%m-%d").to_string(),
+                meal_date: row.day.clone(),
+            });
+        }
+    }
+
+    result.sort_by(|a, b| a.due_date.cmp(&b.due_date));
+    Ok(Json(result))
 }

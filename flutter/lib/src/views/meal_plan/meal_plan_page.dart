@@ -28,6 +28,9 @@ class MealPlanPageState extends State<MealPlanPage> {
   final Map<String, List<MealPlanEntry>> _cache = {};
   final Map<int, Recipe> _recipeIndex = {};
 
+  List<PrepReminderDto> _reminders = [];
+  bool _remindersLoaded = false;
+
   final _itemScrollController = ItemScrollController();
   final _itemPositionsListener = ItemPositionsListener.create();
 
@@ -55,6 +58,7 @@ class MealPlanPageState extends State<MealPlanPage> {
     }
 
     _warmRecipeIndex();
+    _loadReminders();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_itemScrollController.isAttached) {
@@ -94,6 +98,19 @@ class MealPlanPageState extends State<MealPlanPage> {
     } catch (_) {}
   }
 
+  Future<void> _loadReminders() async {
+    try {
+      final reminders = await fetchUpcomingReminders();
+      if (!mounted) return;
+      setState(() {
+        _reminders = reminders;
+        _remindersLoaded = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _remindersLoaded = true);
+    }
+  }
+
   List<String> _visibleDayIsos() {
     final positions = _itemPositionsListener.itemPositions.value;
     if (positions.isEmpty) {
@@ -130,9 +147,11 @@ class MealPlanPageState extends State<MealPlanPage> {
 
       // In parallel, refresh recipe thumbnails/titles.
       final recipeFuture = _warmRecipeIndex();
+      final reminderFuture = _loadReminders();
 
       final results = await Future.wait(days.map((d) => _futures[d]!));
       await recipeFuture;
+      await reminderFuture;
 
       if (!mounted) return;
       setState(() {
@@ -149,8 +168,16 @@ class MealPlanPageState extends State<MealPlanPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    // Reminders due today or tomorrow
+    final today = _fmt.format(_today);
+    final tomorrow = _fmt.format(_today.add(const Duration(days: 1)));
+    final urgentReminders = _reminders
+        .where((r) => r.dueDate == today || r.dueDate == tomorrow)
+        .toList();
+
     return Column(
       children: [
+        if (urgentReminders.isNotEmpty) _PrepReminderCard(reminders: urgentReminders),
         Expanded(
           child: Stack(
             children: [
@@ -265,5 +292,58 @@ class MealPlanPageState extends State<MealPlanPage> {
         ? 'Assigned $ok recipe(s) to $dayIso'
         : 'Assigned $ok, failed ${failures.length} (IDs: ${failures.join(', ')})';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+}
+
+class _PrepReminderCard extends StatelessWidget {
+  final List<PrepReminderDto> reminders;
+  const _PrepReminderCard({required this.reminders});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      color: theme.colorScheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.alarm, size: 16),
+                const SizedBox(width: 6),
+                Text('Prep reminders', style: theme.textTheme.labelLarge),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final r in reminders) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    r.dueDate == today ? 'Today' : 'Tomorrow',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${r.step} — for ${r.recipeTitle} (${DateFormat('EEE d').format(DateTime.parse(r.mealDate))})',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+              if (r != reminders.last) const SizedBox(height: 4),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

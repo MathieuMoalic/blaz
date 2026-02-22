@@ -43,6 +43,12 @@ pub struct RecipeMacros {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrepReminder {
+    pub step: String,
+    pub hours_before: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Recipe {
     pub id: i64,
     pub title: String,
@@ -58,6 +64,7 @@ pub struct Recipe {
     pub image_path_full: Option<String>,
     pub macros: Option<RecipeMacros>,
     pub share_token: Option<String>,
+    pub prep_reminders: Option<Vec<PrepReminder>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -84,6 +91,7 @@ pub struct UpdateRecipe {
     pub notes: Option<String>,
     pub ingredients: Option<Vec<Ingredient>>,
     pub instructions: Option<Vec<String>>,
+    pub prep_reminders: Option<Vec<PrepReminder>>,
 }
 
 /* ---------- DB row model ---------- */
@@ -105,6 +113,7 @@ pub struct RecipeRow {
     pub image_path_full: Option<String>,
     pub macros: Option<Json<RecipeMacros>>,
     pub share_token: Option<String>,
+    pub prep_reminders: Option<Json<Vec<PrepReminder>>>,
 }
 
 impl From<RecipeRow> for Recipe {
@@ -123,6 +132,7 @@ impl From<RecipeRow> for Recipe {
             image_path_small: r.image_path_small,
             macros: r.macros.map(|j| j.0),
             share_token: r.share_token,
+            prep_reminders: r.prep_reminders.map(|j| j.0),
         }
     }
 }

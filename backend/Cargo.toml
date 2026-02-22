@@ -45,6 +45,7 @@ clap = { version = "4.5.53", features = ["derive", "env"] }
 tracing-appender = "0.2.4"
 base64 = "0.22"
 rust-embed = "8.5"
+chrono = "0.4"
 mime_guess = "2.0"
 
 [dev-dependencies]

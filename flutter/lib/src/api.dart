@@ -298,6 +298,46 @@ class MealPlanEntry {
   );
 }
 
+class PrepReminder {
+  final String step;
+  final int hoursBefore;
+
+  const PrepReminder({required this.step, required this.hoursBefore});
+
+  factory PrepReminder.fromJson(Map<String, dynamic> j) => PrepReminder(
+    step: j['step'] as String,
+    hoursBefore: (j['hours_before'] as num).toInt(),
+  );
+
+  Map<String, dynamic> toJson() => {'step': step, 'hours_before': hoursBefore};
+}
+
+class PrepReminderDto {  final int recipeId;
+  final String recipeTitle;
+  final String step;
+  final int hoursBefore;
+  final String dueDate;  // yyyy-MM-dd
+  final String mealDate; // yyyy-MM-dd
+
+  const PrepReminderDto({
+    required this.recipeId,
+    required this.recipeTitle,
+    required this.step,
+    required this.hoursBefore,
+    required this.dueDate,
+    required this.mealDate,
+  });
+
+  factory PrepReminderDto.fromJson(Map<String, dynamic> j) => PrepReminderDto(
+    recipeId: (j['recipe_id'] as num).toInt(),
+    recipeTitle: j['recipe_title'] as String,
+    step: j['step'] as String,
+    hoursBefore: (j['hours_before'] as num).toInt(),
+    dueDate: j['due_date'] as String,
+    mealDate: j['meal_date'] as String,
+  );
+}
+
 class ShoppingItem {
   final int id;
   final String text;
@@ -443,6 +483,7 @@ class Recipe {
   // NEW:
   final RecipeMacros? macros;
   final String? shareToken;
+  final List<PrepReminder> prepReminders;
 
   Recipe({
     required this.id,
@@ -458,6 +499,7 @@ class Recipe {
     this.imagePathFull,
     this.macros,
     this.shareToken,
+    this.prepReminders = const [],
   });
 
   factory Recipe.fromJson(Map<String, dynamic> j) => Recipe(
@@ -475,6 +517,15 @@ class Recipe {
     imagePathSmall: j['image_path_small'] as String?,
     imagePathFull: j['image_path_full'] as String?,
     shareToken: j['share_token'] as String?,
+    prepReminders: (() {
+      final raw = j['prep_reminders'];
+      if (raw is List) {
+        return raw
+            .map((e) => PrepReminder.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return <PrepReminder>[];
+    })(),
     macros: (() {
       try {
         if (j['macros'] is Map ||
@@ -616,6 +667,19 @@ Future<Recipe> updateRecipe({
     _u('/recipes/$id'),
     headers: _headers({'content-type': 'application/json'}),
     body: jsonEncode(body),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+
+Future<Recipe> updateRecipePrepReminders({
+  required int id,
+  required List<PrepReminder> prepReminders,
+}) async {
+  final r = await http.patch(
+    _u('/recipes/$id'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'prep_reminders': prepReminders.map((r) => r.toJson()).toList()}),
   );
   if (r.statusCode != 200) _throw(r);
   return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
@@ -791,6 +855,26 @@ Future<void> unassignRecipeFromDay({
     headers: _headers(),
   );
   if (r.statusCode != 200) _throw(r);
+}
+
+Future<List<PrepReminderDto>> fetchUpcomingReminders() async {
+  final now = DateTime.now();
+  final from = '${now.year.toString().padLeft(4, '0')}-'
+      '${now.month.toString().padLeft(2, '0')}-'
+      '${now.day.toString().padLeft(2, '0')}';
+  final to30 = now.add(const Duration(days: 30));
+  final to = '${to30.year.toString().padLeft(4, '0')}-'
+      '${to30.month.toString().padLeft(2, '0')}-'
+      '${to30.day.toString().padLeft(2, '0')}';
+  final r = await http.get(
+    _u('/meal-plan/reminders', {'from': from, 'to': to}),
+    headers: _headers(),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .map((e) => PrepReminderDto.fromJson(e as Map<String, dynamic>))
+      .toList();
 }
 
 Future<List<ShoppingItem>> fetchShoppingList() async {

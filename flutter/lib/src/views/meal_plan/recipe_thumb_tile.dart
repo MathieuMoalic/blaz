@@ -45,6 +45,12 @@ class RecipeThumbTile extends StatelessWidget {
                         ? Image.network(imageUrl!, fit: BoxFit.cover)
                         : Container(
                             color: theme.colorScheme.surfaceContainerHighest,
+                            alignment: Alignment.center,
+                            child: Icon(
+                              Icons.restaurant_menu,
+                              size: 48,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
                   ),
                   // Title area (constrained)

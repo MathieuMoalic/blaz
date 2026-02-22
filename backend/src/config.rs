@@ -85,6 +85,10 @@ pub struct Config {
     /// System prompt for ingredient normalization
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_NORMALIZE", default_value = DEFAULT_SYSTEM_PROMPT_NORMALIZE)]
     pub system_prompt_normalize: String,
+
+    /// System prompt for prep reminder detection
+    #[arg(long, env = "BLAZ_SYSTEM_PROMPT_PREP_REMINDERS", default_value = DEFAULT_SYSTEM_PROMPT_PREP_REMINDERS)]
+    pub system_prompt_prep_reminders: String,
 }
 
 const DEFAULT_SYSTEM_PROMPT_IMPORT: &str = r#"You are a precise recipe data extractor and normalizer.
@@ -207,6 +211,29 @@ Rules:
 - If servings are provided, compute PER SERVING. Otherwise, compute for the ENTIRE RECIPE.
 - Always include all ingredients in the array, even if skipped.
 - Never add extra fields or commentary."#;
+
+const DEFAULT_SYSTEM_PROMPT_PREP_REMINDERS: &str = r#"You are a recipe prep planner.
+
+Given a list of recipe instructions, identify any steps that must be done significantly in advance (at least 2 hours before cooking).
+
+Common examples: soaking beans/legumes overnight, marinating meat, making dough that needs to rise, chilling, freezing, fermenting, brining, or any step that explicitly says "overnight", "the day before", "X hours ahead", etc.
+
+Return STRICT JSON — an array of objects. If no advance prep is needed, return an empty array.
+
+OUTPUT FORMAT:
+[
+  {"step": "short description of what to do", "hours_before": N}
+]
+
+Rules:
+- "step" must be a short, actionable phrase (max ~10 words), e.g. "Soak beans overnight" or "Marinate chicken for 4 hours"
+- "hours_before" is an integer: the minimum number of hours before the meal this step should be started
+- Only include steps requiring AT LEAST 2 hours lead time
+- Do not include regular cooking steps
+- Do not include commentary or extra fields
+- Return [] if nothing qualifies
+
+Answer only with the JSON array."#;
 
 impl Config {
     #[must_use]

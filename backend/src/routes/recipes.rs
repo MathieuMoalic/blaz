@@ -48,7 +48,7 @@ pub const RECIPE_COLS: &str = r#"
     created_at, updated_at,
     ingredients, instructions,
     image_path_small, image_path_full,
-    macros, share_token
+    macros, share_token, prep_reminders
 "#;
 
 /// # Errors
@@ -215,7 +215,13 @@ pub async fn create(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(row.into()))
+    let recipe: Recipe = row.into();
+    let state_clone = state.clone();
+    let recipe_id = recipe.id;
+    tokio::spawn(async move {
+        extract_and_save_prep_reminders(state_clone, recipe_id).await;
+    });
+    Ok(Json(recipe))
 }
 
 /// # Errors
@@ -240,6 +246,57 @@ pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppRe
 /// # Errors
 ///
 /// Err if querying the db fails
+fn build_update_args(
+    up: &UpdateRecipe,
+    id: i64,
+) -> AppResult<(String, SqliteArguments<'static>)> {
+    let mut sets: Vec<&'static str> = Vec::new();
+    let mut args = SqliteArguments::default();
+
+    if let Some(title) = up.title.clone() {
+        sets.push("title = ?");
+        args.add(title).map_err(|e| { error!(?e, "arg add (title) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    if let Some(source) = up.source.clone() {
+        sets.push("source = ?");
+        args.add(source).map_err(|e| { error!(?e, "arg add (source) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    if let Some(y) = up.r#yield.clone() {
+        sets.push(r#""yield" = ?"#);
+        args.add(y).map_err(|e| { error!(?e, "arg add (yield) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    if let Some(notes) = up.notes.clone() {
+        sets.push("notes = ?");
+        args.add(notes).map_err(|e| { error!(?e, "arg add (notes) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    if let Some(ref ings) = up.ingredients {
+        for ing in ings {
+            if ing.name.trim().is_empty() {
+                return Err(StatusCode::BAD_REQUEST.into());
+            }
+        }
+        let s = serde_json::to_string(ings).unwrap_or_else(|_| "[]".into());
+        sets.push("ingredients = json(?)");
+        args.add(s).map_err(|e| { error!(?e, "arg add (ingredients) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    if let Some(ref instr) = up.instructions {
+        let s = serde_json::to_string(instr).unwrap_or_else(|_| "[]".into());
+        sets.push("instructions = json(?)");
+        args.add(s).map_err(|e| { error!(?e, "arg add (instructions) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    if let Some(ref reminders) = up.prep_reminders {
+        let s = serde_json::to_string(reminders).unwrap_or_else(|_| "[]".into());
+        sets.push("prep_reminders = json(?)");
+        args.add(s).map_err(|e| { error!(?e, "arg add (prep_reminders) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    }
+    sets.push("updated_at = CURRENT_TIMESTAMP");
+
+    let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
+    args.add(id).map_err(|e| { error!(?e, "arg add (id) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+
+    Ok((sql, args))
+}
+
 pub async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -250,73 +307,12 @@ pub async fn update(
         tracing::error!("JSON deserialization failed in recipes::update: {}", msg);
         (StatusCode::UNPROCESSABLE_ENTITY, msg)
     })?;
-    
-    let mut sets: Vec<&'static str> = Vec::new();
-    let mut args = SqliteArguments::default();
 
-    if let Some(title) = up.title {
-        sets.push("title = ?");
-        args.add(title).map_err(|e| {
-            error!(?e, "arg add (title) failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    }
+    // Re-run LLM prep detection only when instructions changed and the caller
+    // didn't explicitly supply new prep_reminders (which would be overwritten).
+    let should_reextract = up.instructions.is_some() && up.prep_reminders.is_none();
 
-    if let Some(source) = up.source {
-        sets.push("source = ?");
-        args.add(source).map_err(|e| {
-            error!(?e, "arg add (source) failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    }
-
-    if let Some(y) = up.r#yield {
-        sets.push(r#""yield" = ?"#);
-        args.add(y).map_err(|e| {
-            error!(?e, "arg add (yield) failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    }
-
-    if let Some(notes) = up.notes {
-        sets.push("notes = ?");
-        args.add(notes).map_err(|e| {
-            error!(?e, "arg add (notes) failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    }
-
-    if let Some(ings) = up.ingredients {
-        for ing in &ings {
-            if ing.name.trim().is_empty() {
-                return Err(StatusCode::BAD_REQUEST.into());
-            }
-        }
-
-        let s = serde_json::to_string(&ings).unwrap_or_else(|_| "[]".into());
-        sets.push("ingredients = json(?)");
-        args.add(s).map_err(|e| {
-            error!(?e, "arg add (ingredients) failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    }
-
-    if let Some(instr) = up.instructions {
-        let s = serde_json::to_string(&instr).unwrap_or_else(|_| "[]".to_string());
-        sets.push("instructions = json(?)");
-        args.add(s).map_err(|e| {
-            error!(?e, "arg add (instructions) failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    }
-
-    sets.push("updated_at = CURRENT_TIMESTAMP");
-
-    let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
-    args.add(id).map_err(|e| {
-        error!(?e, "arg add (id) failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let (sql, args) = build_update_args(&up, id)?;
 
     let res = sqlx::query_with(&sql, args)
         .execute(&state.pool)
@@ -330,8 +326,8 @@ pub async fn update(
         return Err(StatusCode::NOT_FOUND.into());
     }
 
-    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
-    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+    let fetch_sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&fetch_sql)
         .bind(id)
         .fetch_one(&state.pool)
         .await
@@ -340,7 +336,15 @@ pub async fn update(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(row.into()))
+    let recipe: Recipe = row.into();
+    if should_reextract {
+        let state_clone = state.clone();
+        let recipe_id = recipe.id;
+        tokio::spawn(async move {
+            extract_and_save_prep_reminders(state_clone, recipe_id).await;
+        });
+    }
+    Ok(Json(recipe))
 }
 
 /* ---------- Estimate & store macros ---------- */
@@ -586,4 +590,93 @@ async fn save_macros(state: &AppState, id: i64, macros: &RecipeMacros) -> AppRes
     })?;
 
     Ok(())
+}
+
+/// Fire-and-forget: call LLM to detect advance prep steps and save to `prep_reminders`.
+/// Spawned as a background task after recipe create/update; errors are logged and ignored.
+async fn extract_and_save_prep_reminders(state: AppState, recipe_id: i64) {
+    if state.config.llm_api_key.is_none() {
+        return;
+    }
+
+    let instructions_json: Option<String> =
+        match sqlx::query_scalar("SELECT instructions FROM recipes WHERE id = ?")
+            .bind(recipe_id)
+            .fetch_optional(&state.pool)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(?e, "prep_reminders: failed to load instructions");
+                return;
+            }
+        };
+
+    let Some(instructions_json) = instructions_json else { return };
+    let instructions: Vec<String> =
+        match serde_json::from_str(&instructions_json) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+    if instructions.is_empty() {
+        return;
+    }
+
+    let user = instructions
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{}. {s}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build() else { return };
+
+    let llm = LlmClient::new(
+        state.config.llm_api_url.clone(),
+        state.config.llm_api_key.clone().unwrap_or_default(),
+        state.config.llm_model.clone(),
+    );
+
+    let val = match llm
+        .chat_json(
+            &client,
+            &state.config.system_prompt_prep_reminders,
+            &user,
+            0.1,
+            std::time::Duration::from_secs(20),
+            Some(300),
+        )
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(?e, "prep_reminders: LLM call failed");
+            return;
+        }
+    };
+
+    let reminders: Vec<crate::models::PrepReminder> =
+        match serde_json::from_value(val) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(?e, "prep_reminders: failed to parse LLM response");
+                return;
+            }
+        };
+
+    let Ok(json) = serde_json::to_string(&reminders) else { return };
+
+    if let Err(e) = sqlx::query("UPDATE recipes SET prep_reminders = json(?) WHERE id = ?")
+        .bind(json)
+        .bind(recipe_id)
+        .execute(&state.pool)
+        .await
+    {
+        tracing::warn!(?e, "prep_reminders: failed to save");
+    } else {
+        tracing::info!(recipe_id, found = reminders.len(), "saved prep reminders");
+    }
 }

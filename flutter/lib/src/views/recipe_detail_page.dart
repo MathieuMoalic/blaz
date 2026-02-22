@@ -611,6 +611,12 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   ),
                 ),
 
+                // Prep Reminders
+                _PrepRemindersSection(
+                  recipe: r,
+                  onChanged: _refresh,
+                ),
+
                 // Notes
                 if (r.notes.isNotEmpty)
                   Card(
@@ -665,6 +671,206 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 }
 
 // ---- Small UI helpers -------------------------------------------------------
+
+class _PrepRemindersSection extends StatefulWidget {
+  final api.Recipe recipe;
+  final VoidCallback onChanged;
+  const _PrepRemindersSection({required this.recipe, required this.onChanged});
+
+  @override
+  State<_PrepRemindersSection> createState() => _PrepRemindersSectionState();
+}
+
+class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
+  bool _saving = false;
+  late List<api.PrepReminder> _reminders;
+
+  @override
+  void initState() {
+    super.initState();
+    _reminders = List<api.PrepReminder>.from(widget.recipe.prepReminders);
+  }
+
+  @override
+  void didUpdateWidget(_PrepRemindersSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.recipe != widget.recipe) {
+      _reminders = List<api.PrepReminder>.from(widget.recipe.prepReminders);
+    }
+  }
+
+  Future<void> _save(List<api.PrepReminder> reminders) async {
+    setState(() {
+      _saving = true;
+      _reminders = reminders;
+    });
+    try {
+      await api.updateRecipePrepReminders(
+        id: widget.recipe.id,
+        prepReminders: reminders,
+      );
+      widget.onChanged();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _reminders =
+            List<api.PrepReminder>.from(widget.recipe.prepReminders));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Failed to save: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _showEditDialog({api.PrepReminder? existing, int? index}) async {
+    final stepCtrl = TextEditingController(text: existing?.step ?? '');
+    int hoursBefore = existing?.hoursBefore ?? 12;
+    bool deleted = false;
+
+    final result = await showDialog<api.PrepReminder?>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text(existing == null ? 'Add prep reminder' : 'Edit reminder'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: stepCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'What to do',
+                  hintText: 'e.g. Soak beans overnight',
+                  border: OutlineInputBorder(),
+                ),
+                textCapitalization: TextCapitalization.sentences,
+              ),
+              const SizedBox(height: 16),
+              Text('How far in advance',
+                  style: Theme.of(ctx).textTheme.labelMedium),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [2, 4, 8, 12, 24, 48].map((h) {
+                  final label = h < 24 ? '${h}h' : '${h ~/ 24}d';
+                  return ChoiceChip(
+                    label: Text(label),
+                    selected: hoursBefore == h,
+                    onSelected: (_) => setDialog(() => hoursBefore = h),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            if (existing != null)
+              TextButton(
+                onPressed: () {
+                  deleted = true;
+                  Navigator.pop(ctx);
+                },
+                style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(ctx).colorScheme.error),
+                child: const Text('Delete'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final step = stepCtrl.text.trim();
+                if (step.isEmpty) return;
+                Navigator.pop(
+                    ctx, api.PrepReminder(step: step, hoursBefore: hoursBefore));
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    final current = List<api.PrepReminder>.from(_reminders);
+
+    if (deleted && existing != null && index != null) {
+      current.removeAt(index);
+      await _save(current);
+    } else if (result != null) {
+      if (index != null) {
+        current[index] = result;
+      } else {
+        current.add(result);
+      }
+      await _save(current);
+    }
+  }
+
+  String _hoursLabel(int h) =>
+      h < 24 ? '${h}h before' : '${h ~/ 24}d before';
+
+  @override
+  Widget build(BuildContext context) {
+    final reminders = _reminders;
+    final theme = Theme.of(context);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('Prep Reminders', style: theme.textTheme.titleMedium),
+                const Spacer(),
+                if (_saving)
+                  const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                else
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add reminder',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _showEditDialog(),
+                  ),
+              ],
+            ),
+            if (reminders.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'No advance prep needed',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              )
+            else
+              for (int i = 0; i < reminders.length; i++)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.alarm_outlined, size: 20),
+                  title: Text(reminders[i].step),
+                  trailing: Text(
+                    _hoursLabel(reminders[i].hoursBefore),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  onTap: () => _showEditDialog(existing: reminders[i], index: i),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _MetaRow extends StatelessWidget {
   final String label;
