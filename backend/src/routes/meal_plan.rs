@@ -78,11 +78,10 @@ pub async fn assign(
     let row = match resp {
         Ok(row) => row,
         Err(e) => {
-            if let sqlx::Error::Database(db) = &e {
-                if db.is_unique_violation() {
+            if let sqlx::Error::Database(db) = &e
+                && db.is_unique_violation() {
                     return Err(StatusCode::CONFLICT.into());
                 }
-            }
             return Err(e.into());
         }
     };

@@ -1,5 +1,5 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = {nixpkgs, ...}: let
     system = "x86_64-linux";
@@ -47,6 +47,7 @@
         sqlite
         sqlx-cli
         watchexec
+        github-copilot-cli
       ];
 
       RUSTFLAGS = "-C link-arg=-fuse-ld=mold";

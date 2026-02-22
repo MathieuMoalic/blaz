@@ -18,10 +18,8 @@ pub async fn serve_embedded_web(uri: Uri) -> impl IntoResponse {
     }
     
     // For SPA routing, serve index.html for routes that don't match files
-    if !path.contains('.') {
-        if let Some(content) = WebAssets::get("index.html") {
-            return serve_asset("index.html", content.data.into_owned());
-        }
+    if !path.contains('.') && let Some(content) = WebAssets::get("index.html") {
+        return serve_asset("index.html", content.data.into_owned());
     }
     
     // Fallback to index.html

@@ -25,7 +25,7 @@ async fn store_recipe_image_bytes(
     let (full_webp, thumb_webp) =
         tokio::task::spawn_blocking(move || -> io::Result<(Vec<u8>, Vec<u8>)> {
             let img = image::load_from_memory(&bytes)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("decode error: {e}")))?;
+                .map_err(|e| io::Error::other(format!("decode error: {e}")))?;
             crate::image_io::to_full_and_thumb_webp(&img)
         })
         .await??;
@@ -179,16 +179,14 @@ pub async fn create(
         if ing.name.trim().is_empty() {
             return Err(StatusCode::BAD_REQUEST.into());
         }
-        if let Some(u) = ing.unit.as_deref() {
-            if u.trim().is_empty() {
+        if let Some(u) = ing.unit.as_deref()
+            && u.trim().is_empty() {
                 return Err(StatusCode::BAD_REQUEST.into());
             }
-        }
-        if let Some(p) = ing.prep.as_deref() {
-            if p.trim().is_empty() {
+        if let Some(p) = ing.prep.as_deref()
+            && p.trim().is_empty() {
                 return Err(StatusCode::BAD_REQUEST.into());
             }
-        }
     }
 
     let ingredients_json = serde_json::to_string(&new.ingredients).unwrap_or_else(|_| "[]".into());
@@ -377,7 +375,7 @@ fn servings_from_yield(y: &str) -> Option<f64> {
         let a: f64 = cap.get(1)?.as_str().parse().ok()?;
         if let Some(bm) = cap.get(2) {
             let b: f64 = bm.as_str().parse().ok()?;
-            return Some((a + b) / 2.0);
+            return Some(f64::midpoint(a, b));
         }
         return Some(a);
     }
@@ -512,7 +510,7 @@ async fn call_and_parse_macros_llm(
     let token = config.llm_api_key.clone().unwrap_or_default();
     let model = &config.llm_model;
 
-    let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
+    let llm = LlmClient::new(base.clone(), token.clone(), model.clone());
 
     let val = llm
         .chat_json(

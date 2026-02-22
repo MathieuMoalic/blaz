@@ -17,15 +17,14 @@ fn internal_err<E: std::error::Error>(err: E) -> AppError {
 }
 
 fn patch_update_err(err: sqlx::Error) -> AppError {
-    if let sqlx::Error::Database(db) = &err {
-        if db.is_unique_violation() {
+    if let sqlx::Error::Database(db) = &err
+        && db.is_unique_violation() {
             return (
                 StatusCode::CONFLICT,
                 "shopping item with the same name/unit already exists".into(),
             )
                 .into();
         }
-    }
     internal_err(err)
 }
 
@@ -108,7 +107,7 @@ fn parse_qty_token(t: &str) -> Option<f64> {
     if let Some((a, b)) = t.split_once('-').or_else(|| t.split_once('–')) {
         let x = a.trim().parse::<f64>().ok()?;
         let y = b.trim().parse::<f64>().ok()?;
-        return Some((x + y) / 2.0);
+        return Some(f64::midpoint(x, y));
     }
 
     t.parse::<f64>().ok()
@@ -177,12 +176,11 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     let mut idx = 1usize;
     let mut unit: Option<String> = None;
 
-    if let Some(t1) = tokens.get(1) {
-        if let Some(un) = normalize_unit_token(t1) {
+    if let Some(t1) = tokens.get(1)
+        && let Some(un) = normalize_unit_token(t1) {
             unit = Some(un);
             idx = 2;
         }
-    }
 
     // Optional "of"
     if tokens.get(idx).copied() == Some("of") {
@@ -678,10 +676,12 @@ fn apply_done_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, done: Opti
         qb.push("done = ");
         qb.push_bind(i64::from(d));
         
-        // Clear recipe_ids when marking as done so list resets
+        // Clear recipe_ids and quantity when marking as done so list resets cleanly
         if d {
             push_sep(qb, wrote);
             qb.push("recipe_ids = '[]'");
+            push_sep(qb, wrote);
+            qb.push("quantity = NULL");
         }
     }
 }
@@ -928,22 +928,26 @@ pub async fn merge_items(
     State(state): State<AppState>,
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    // BATCH NORMALIZATION: Collect all ingredient names first
-    let raw_names: Vec<String> = req.items.iter().map(|it| it.name.clone()).collect();
-    let normalized_names = normalize_ingredient_names_batch(&state, &raw_names).await;
-
-    for (idx, it) in req.items.iter().enumerate() {
-        // Parse embedded qty/unit from name, if any
-        let parsed_name = parse_item_line(&it.name).unwrap_or_else(|| ParsedItem {
+    // Parse all item lines first so we normalize the clean name (without any embedded qty/unit prefix)
+    let parsed_items: Vec<ParsedItem> = req.items.iter().map(|it| {
+        parse_item_line(&it.name).unwrap_or_else(|| ParsedItem {
             qty: None,
             unit: None,
             name_raw: it.name.clone(),
             name_norm: normalize_name(&it.name),
-        });
+        })
+    }).collect();
+
+    // BATCH NORMALIZATION: use the parsed name_raw (qty/unit stripped) not the raw input
+    let raw_names: Vec<String> = parsed_items.iter().map(|p| p.name_raw.clone()).collect();
+    let normalized_names = normalize_ingredient_names_batch(&state, &raw_names).await;
+
+    for (idx, it) in req.items.iter().enumerate() {
+        let parsed_name = &parsed_items[idx];
 
         // Prefer explicit fields; fall back to parsed-from-name
         let qty = it.quantity.or(parsed_name.qty);
-        let unit = it.unit.as_ref().map(|u| u.trim().to_string()).or(parsed_name.unit);
+        let unit = it.unit.as_ref().map(|u| u.trim().to_string()).or_else(|| parsed_name.unit.clone());
 
         // Canonicalize units & quantities
         let (mut unit_norm, qty_norm) = to_canonical_qty_unit(unit.as_deref(), qty);

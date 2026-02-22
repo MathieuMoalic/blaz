@@ -34,5 +34,5 @@ pub fn to_full_and_thumb_webp(img: &DynamicImage) -> std::io::Result<(Vec<u8>, V
 }
 
 fn err_other<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    std::io::Error::other(e.to_string())
 }

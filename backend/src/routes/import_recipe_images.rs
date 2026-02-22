@@ -73,7 +73,7 @@ pub async fn import_from_images(
                   Return the combined recipe as JSON.";
 
     let http = reqwest::Client::new();
-    let llm = LlmClient::new(base.to_string(), token, model.to_string());
+    let llm = LlmClient::new(base.to_string(), token, model.clone());
 
     let llm_json = llm
         .chat_json_images(ImageChatRequest {

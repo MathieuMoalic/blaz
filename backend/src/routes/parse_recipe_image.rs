@@ -72,15 +72,12 @@ pub fn extract_main_image_url(html: &str, page_url: &str) -> Option<String> {
 fn page_base_url(doc: &Html, page_url: &str) -> Url {
     let mut base =
         Url::parse(page_url).unwrap_or_else(|_| Url::parse("https://example.com/").unwrap());
-    if let Ok(sel) = Selector::parse(r"base[href]") {
-        if let Some(el) = doc.select(&sel).next() {
-            if let Some(h) = el.value().attr("href") {
-                if let Ok(abs) = base.join(h) {
-                    base = abs;
-                }
-            }
+    if let Ok(sel) = Selector::parse(r"base[href]")
+        && let Some(el) = doc.select(&sel).next()
+        && let Some(h) = el.value().attr("href")
+        && let Ok(abs) = base.join(h) {
+            base = abs;
         }
-    }
     base
 }
 
@@ -100,11 +97,10 @@ fn json_ld_recipe_images(doc: &Html) -> Image {
     let mut out = vec![];
     for node in doc.select(&sel) {
         let raw = node.text().collect::<String>();
-        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
-            if let Some(imgs) = find_recipe_images_in_ld(&val) {
+        if let Ok(val) = serde_json::from_str::<Value>(&raw)
+            && let Some(imgs) = find_recipe_images_in_ld(&val) {
                 out.extend(imgs);
             }
-        }
     }
     if out.is_empty() { None } else { Some(out) }
 }
@@ -173,11 +169,10 @@ fn find_recipe_images_in_ld(v: &serde_json::Value) -> Image {
 
     match v {
         Value::Object(o) => {
-            if let Some(g) = o.get("@graph") {
-                if let Some(list) = find_recipe_images_in_ld(g) {
+            if let Some(g) = o.get("@graph")
+                && let Some(list) = find_recipe_images_in_ld(g) {
                     return Some(list);
                 }
-            }
             grab(o)
         }
         Value::Array(a) => {
@@ -246,8 +241,8 @@ fn twitter_images(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
     let mut out = vec![];
     let sel = Selector::parse(r#"meta[name^="twitter:image"]"#).unwrap();
     for el in doc.select(&sel) {
-        if let Some(c) = el.value().attr("content") {
-            if let Some(abs) = absolutize(base, c) {
+        if let Some(c) = el.value().attr("content")
+            && let Some(abs) = absolutize(base, c) {
                 out.push(ImgCandidate {
                     url: abs,
                     signal: 80,
@@ -256,7 +251,6 @@ fn twitter_images(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
                     dom_bonus: 0,
                 });
             }
-        }
     }
     out
 }
@@ -265,8 +259,8 @@ fn misc_meta_images(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
     let mut out = vec![];
     if let Ok(sel) = Selector::parse(r#"link[rel="image_src"]"#) {
         for el in doc.select(&sel) {
-            if let Some(h) = el.value().attr("href") {
-                if let Some(abs) = absolutize(base, h) {
+            if let Some(h) = el.value().attr("href")
+                && let Some(abs) = absolutize(base, h) {
                     out.push(ImgCandidate {
                         url: abs,
                         signal: 70,
@@ -275,13 +269,12 @@ fn misc_meta_images(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
                         dom_bonus: 0,
                     });
                 }
-            }
         }
     }
     if let Ok(sel) = Selector::parse(r#"meta[itemprop="image"]"#) {
         for el in doc.select(&sel) {
-            if let Some(c) = el.value().attr("content") {
-                if let Some(abs) = absolutize(base, c) {
+            if let Some(c) = el.value().attr("content")
+                && let Some(abs) = absolutize(base, c) {
                     out.push(ImgCandidate {
                         url: abs,
                         signal: 70,
@@ -290,7 +283,6 @@ fn misc_meta_images(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
                         dom_bonus: 0,
                     });
                 }
-            }
         }
     }
     out
@@ -319,8 +311,8 @@ fn dom_img_candidates(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
             }
         }
         // plain src / data-src
-        if let Some(s) = attr_chain(&el, &["src", "data-src", "data-original", "data-lazy"]) {
-            if let Some(abs) = absolutize(base, s) {
+        if let Some(s) = attr_chain(&el, &["src", "data-src", "data-original", "data-lazy"])
+            && let Some(abs) = absolutize(base, s) {
                 out.push(ImgCandidate {
                     url: abs,
                     signal: 55,
@@ -329,32 +321,28 @@ fn dom_img_candidates(doc: &Html, base: &Url) -> Vec<ImgCandidate> {
                     dom_bonus: if near_title(&el, &title_text) { 10 } else { 0 },
                 });
             }
-        }
         // inline background-image
-        if let Some(style) = el.value().attr("style") {
-            if let Some(bg) = extract_bg_url(style) {
-                if let Some(abs) = absolutize(base, &bg) {
-                    out.push(ImgCandidate {
-                        url: abs,
-                        signal: 50,
-                        declared_w: None,
-                        declared_h: None,
-                        dom_bonus: 0,
-                    });
-                }
+        if let Some(style) = el.value().attr("style")
+            && let Some(bg) = extract_bg_url(style)
+            && let Some(abs) = absolutize(base, &bg) {
+                out.push(ImgCandidate {
+                    url: abs,
+                    signal: 50,
+                    declared_w: None,
+                    declared_h: None,
+                    dom_bonus: 0,
+                });
             }
-        }
     }
     out
 }
 
 fn attr_chain<'a>(el: &'a ElementRef<'a>, names: &[&str]) -> Option<&'a str> {
     for n in names {
-        if let Some(v) = el.value().attr(n) {
-            if !v.trim().is_empty() {
+        if let Some(v) = el.value().attr(n)
+            && !v.trim().is_empty() {
                 return Some(v);
             }
-        }
     }
     None
 }
@@ -396,29 +384,25 @@ fn parse_srcset(s: &str) -> Vec<(String, Option<i32>)> {
 
 fn extract_title_like(doc: &Html) -> String {
     // og:title > <title> > first h1
-    if let Ok(sel) = Selector::parse(r#"meta[property="og:title"]"#) {
-        if let Some(el) = doc.select(&sel).next() {
-            if let Some(c) = el.value().attr("content") {
-                return c.trim().to_string();
-            }
+    if let Ok(sel) = Selector::parse(r#"meta[property="og:title"]"#)
+        && let Some(el) = doc.select(&sel).next()
+        && let Some(c) = el.value().attr("content") {
+            return c.trim().to_string();
         }
-    }
-    if let Ok(sel) = Selector::parse("title") {
-        if let Some(el) = doc.select(&sel).next() {
+    if let Ok(sel) = Selector::parse("title")
+        && let Some(el) = doc.select(&sel).next() {
             let t = el.text().collect::<String>().trim().to_string();
             if !t.is_empty() {
                 return t;
             }
         }
-    }
-    if let Ok(sel) = Selector::parse("h1") {
-        if let Some(el) = doc.select(&sel).next() {
+    if let Ok(sel) = Selector::parse("h1")
+        && let Some(el) = doc.select(&sel).next() {
             let t = el.text().collect::<String>().trim().to_string();
             if !t.is_empty() {
                 return t;
             }
         }
-    }
     String::new()
 }
 

@@ -314,7 +314,7 @@ async fn store_recipe_image_bytes(
     let (full_webp, thumb_webp) =
         tokio::task::spawn_blocking(move || -> std::io::Result<(Vec<u8>, Vec<u8>)> {
             let img = image::load_from_memory(&bytes)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("decode error: {e}")))?;
+                .map_err(|e| std::io::Error::other(format!("decode error: {e}")))?;
             crate::image_io::to_full_and_thumb_webp(&img)
         })
         .await??;
