@@ -1,6 +1,7 @@
 use std::{
     net::TcpListener as StdTcpListener,
     process::{Child, Command, Stdio},
+    sync::Arc,
     time::Duration,
 };
 
@@ -9,6 +10,7 @@ use password_hash::{PasswordHasher, SaltString};
 use rand::rngs::OsRng;
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::sync::Mutex;
 
 fn generate_password_hash(password: &str) -> String {
     let salt = SaltString::generate(&mut OsRng);
@@ -35,6 +37,14 @@ const TEST_PASSWORD: &str = "testpassword123";
 
 impl TestServer {
     fn start() -> Self {
+        Self::start_inner(None)
+    }
+
+    fn start_with_ntfy(ntfy_url: &str) -> Self {
+        Self::start_inner(Some(ntfy_url))
+    }
+
+    fn start_inner(ntfy_url: Option<&str>) -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
         let port = pick_free_port();
 
@@ -61,6 +71,10 @@ impl TestServer {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
 
+        if let Some(url) = ntfy_url {
+            cmd.env("BLAZ_NTFY_URL", url);
+        }
+
         let child = cmd.spawn().expect("spawn blaz");
 
         Self {
@@ -80,6 +94,56 @@ impl Drop for TestServer {
         // Best effort cleanup
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// Minimal HTTP server that captures POST bodies, used to mock an ntfy endpoint.
+struct MockNtfy {
+    port: u16,
+    received: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockNtfy {
+    async fn start() -> Self {
+        use axum::{Router, routing::post};
+
+        let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let store = received.clone();
+
+        let app = Router::new().route(
+            "/{*path}",
+            post(move |body: String| {
+                let store = store.clone();
+                async move {
+                    store.lock().await.push(body);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock ntfy");
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(axum::serve(listener, app).into_future());
+
+        Self { port, received }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/test-topic", self.port)
+    }
+
+    /// Poll until `count` messages arrive or `timeout_ms` elapses.
+    async fn wait_for_messages(&self, count: usize, timeout_ms: u64) -> Vec<String> {
+        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let msgs = self.received.lock().await.clone();
+            if msgs.len() >= count || std::time::Instant::now() >= deadline {
+                return msgs;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }
 
@@ -1798,4 +1862,65 @@ async fn meal_plan_response_includes_recipe_title() {
     assert_eq!(assigned["title"], "Title Check");
     assert_eq!(assigned["recipe_id"], recipe_id);
     assert_eq!(assigned["day"], "2026-04-01");
+}
+
+#[tokio::test]
+async fn ntfy_notified_on_client_error() {
+    let mock = MockNtfy::start().await;
+    let srv = TestServer::start_with_ntfy(&mock.url());
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    // PATCH a shopping item with an invalid category value.
+    // Category validation runs before any DB access, so no real item is needed.
+    // This returns AppError::Msg(400, "invalid category") → should trigger ntfy.
+    let resp = client
+        .patch(format!("{base}/shopping/1"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"category": "not_a_real_category"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let msgs = mock.wait_for_messages(1, 2000).await;
+    assert!(
+        !msgs.is_empty(),
+        "expected ntfy notification for 400 error, got none"
+    );
+    assert!(
+        msgs[0].contains("400"),
+        "expected message to mention 400, got: {}",
+        msgs[0]
+    );
+}
+
+#[tokio::test]
+async fn ntfy_not_notified_on_unauthorized() {
+    let mock = MockNtfy::start().await;
+    let srv = TestServer::start_with_ntfy(&mock.url());
+    let base = srv.base_url();
+    wait_ready(&base).await;
+
+    let client = reqwest::Client::new();
+
+    // Hit a protected route without a token → 401
+    let resp = client
+        .get(format!("{base}/recipes"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    // Give a generous window for any spurious notification to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let msgs = mock.received.lock().await.clone();
+    assert!(
+        msgs.is_empty(),
+        "expected no ntfy notification for 401, got: {msgs:?}"
+    );
 }

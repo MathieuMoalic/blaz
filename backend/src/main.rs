@@ -19,6 +19,7 @@ mod image_io;
 mod llm;
 mod logging;
 mod models;
+mod ntfy;
 mod routes;
 mod units;
 
@@ -46,6 +47,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Keep guard alive so file logger flushes correctly
     let _log_guards = init_logging(&config);
+
+    crate::ntfy::init(config.ntfy_url.clone());
 
     // Generate JWT secret if not provided
     if config.jwt_secret.is_none() {
@@ -104,6 +107,10 @@ async fn main() -> anyhow::Result<()> {
         } else {
             "<not set>"
         }
+    );
+    tracing::info!(
+        "Ntfy URL: {}",
+        config.ntfy_url.as_deref().unwrap_or("<not set>")
     );
     tracing::info!("====================");
 

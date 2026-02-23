@@ -76,13 +76,18 @@ impl IntoResponse for AppError {
                 // Log client errors (4xx) at debug level, server errors (5xx) at error level
                 if code.is_client_error() {
                     tracing::debug!("Client error {}: {}", code, msg);
+                    if code != StatusCode::UNAUTHORIZED {
+                        crate::ntfy::notify(&format!("blaz client error {code}: {msg}"));
+                    }
                 } else {
                     tracing::error!("Server error {}: {}", code, msg);
+                    crate::ntfy::notify(&format!("blaz server error {code}: {msg}"));
                 }
                 (code, msg).into_response()
             }
             Self::Anyhow(err) => {
                 tracing::error!("{:#}", err);
+                crate::ntfy::notify(&format!("blaz error: {err:#}"));
                 let body = Json(ErrBody {
                     error: err.to_string(),
                 });

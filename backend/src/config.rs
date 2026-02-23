@@ -89,6 +89,10 @@ pub struct Config {
     /// System prompt for prep reminder detection
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_PREP_REMINDERS", default_value = DEFAULT_SYSTEM_PROMPT_PREP_REMINDERS)]
     pub system_prompt_prep_reminders: String,
+
+    /// ntfy URL to send error notifications to (e.g. `<https://ntfy.sh/my-topic>`)
+    #[arg(long, env = "BLAZ_NTFY_URL")]
+    pub ntfy_url: Option<String>,
 }
 
 const DEFAULT_SYSTEM_PROMPT_IMPORT: &str = r#"You are a precise recipe data extractor and normalizer.
