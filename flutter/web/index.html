@@ -31,6 +31,12 @@
 
   <title>blaz</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* Suppress the browser's native selection highlight so only Flutter's
+       selection overlay is visible (avoids the double-highlight on text fields). */
+    ::selection { background: transparent; }
+    ::-moz-selection { background: transparent; }
+  </style>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>
