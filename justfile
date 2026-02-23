@@ -103,7 +103,7 @@ update-prebuilt VERSION:
     
     # Update flake.nix
     sed -i "s/version = \"[0-9.]*\";  # Update AFTER/version = \"{{VERSION}}\";  # Update AFTER/" flake.nix
-    sed -i "s/sha256 = \"sha256-[^\"]*\";  # Update with/sha256 = \"${SRI_HASH}\";  # Update with/" flake.nix
+    sed -i "s|sha256 = \"sha256-[^\"]*\";  # Update with|sha256 = \"${SRI_HASH}\";  # Update with|" flake.nix
     
     echo "✓ Updated flake.nix"
     echo ""
@@ -137,3 +137,12 @@ update-prebuilt VERSION:
         echo "⚠ Changes staged but not committed. Commit with:"
         echo "  git add flake.nix && git commit -m 'Update prebuilt to v{{VERSION}}' && git push"
     fi
+
+start-copilot:
+    #!/usr/bin/env bash
+    mkdir -p ~/.local/copilot-shims
+    ln -sf /run/current-system/sw/bin/bash ~/.local/copilot-shims/bash
+    export PATH="$HOME/.local/copilot-shims:$PATH"
+    export SHELL=/run/current-system/sw/bin/bash
+    export CONFIG_SHELL=/run/current-system/sw/bin/bash
+    exec copilot
