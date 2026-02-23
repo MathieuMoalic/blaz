@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../api.dart';
+import '../widgets/recipe_card.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
+import 'meal_plan/day_picker_sheet.dart';
 
 class RecipesPage extends StatefulWidget {
   const RecipesPage({super.key});
@@ -90,21 +92,13 @@ class RecipesPageState extends State<RecipesPage> {
     }
   }
 
-  String _ymd(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
   Future<void> _assignRecipe(Recipe r) async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
+    final day = await showDayPickerSheet(
       context: context,
-      initialDate: now,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 2),
-      locale: const Locale('en', 'GB'), // UK locale starts weeks on Monday
+      recipeTitle: r.title,
     );
-    if (picked == null) return;
+    if (day == null || !mounted) return;
 
-    final day = _ymd(picked);
     try {
       final entry = await assignRecipeToDay(day: day, recipeId: r.id);
       if (!mounted) return;
@@ -304,7 +298,7 @@ class RecipesPageState extends State<RecipesPage> {
                             final r = filtered[i];
                             final thumb = mediaUrl(r.imagePathSmall, cacheBuster: r.updatedAt);
 
-                            return _RecipeCard(
+                            return RecipeCard(
                               title: r.title,
                               imageUrl: thumb,
                               onOpen: () async {
@@ -362,95 +356,6 @@ class RecipesPageState extends State<RecipesPage> {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _RecipeCard extends StatelessWidget {
-  final String title;
-  final String? imageUrl;
-  final VoidCallback? onOpen;
-  final VoidCallback? onAssign;
-
-  const _RecipeCard({
-    required this.title,
-    required this.imageUrl,
-    this.onOpen,
-    this.onAssign,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onOpen,
-      borderRadius: BorderRadius.circular(16),
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Image with a tucked-away action in the corner
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  imageUrl == null
-                      ? _placeholder()
-                      : Image.network(
-                          imageUrl!,
-                          fit: BoxFit.cover,
-                          frameBuilder: (context, child, frame, wasSync) {
-                            if (wasSync || frame != null) return child;
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
-                          },
-                          errorBuilder: (_, __, ___) => _placeholder(),
-                        ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Material(
-                      color: Colors.black54,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        tooltip: 'Assign to day',
-                        icon: const Icon(
-                          Icons.event,
-                          size: 20,
-                          color: Colors.white,
-                        ),
-                        onPressed: onAssign,
-                        splashRadius: 22,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleMedium,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _placeholder() {
-    return Container(
-      alignment: Alignment.center,
-      child: const Icon(Icons.restaurant_menu, size: 48),
     );
   }
 }
