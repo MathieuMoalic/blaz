@@ -10,7 +10,7 @@ import './platform/kv_store.dart' as kv;
 /// Default (build-time) base URL. Can be overridden at runtime & persisted.
 const String _defaultBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8080',
+  defaultValue: 'https://blaz.matmoa.eu',
 );
 
 const _kApiBaseUrlKey = 'api_base_url';
