@@ -14,6 +14,7 @@ class RecipesPageState extends State<RecipesPage> {
   late Future<List<Recipe>> _future;
   final _filterCtrl = TextEditingController();
   final _searchFocus = FocusNode();
+  final _scrollCtrl = ScrollController();
   String _query = '';
   bool _searchVisible = false;
   Timer? _debounce;
@@ -40,6 +41,7 @@ class RecipesPageState extends State<RecipesPage> {
     _filterCtrl.removeListener(_onFilterChanged);
     _filterCtrl.dispose();
     _searchFocus.dispose();
+    _scrollCtrl.dispose();
     _debounce?.cancel();
     super.dispose();
   }
@@ -61,6 +63,9 @@ class RecipesPageState extends State<RecipesPage> {
     _debounce = Timer(const Duration(milliseconds: 200), () {
       if (!mounted) return;
       setState(() => _query = _filterCtrl.text.trim().toLowerCase());
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.jumpTo(0);
+      }
     });
   }
 
@@ -285,6 +290,7 @@ class RecipesPageState extends State<RecipesPage> {
                         }
 
                         return GridView.builder(
+                          controller: _scrollCtrl,
                           padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
