@@ -160,7 +160,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
-                maxLines: 8,
+                minLines: 4,
+                maxLines: null,
               ),
               gap,
 
@@ -173,7 +174,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
-                maxLines: 10,
+                minLines: 5,
+                maxLines: null,
               ),
               gap,
 
@@ -185,7 +187,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
-                maxLines: 4,
+                minLines: 2,
+                maxLines: null,
               ),
               gap,
 
