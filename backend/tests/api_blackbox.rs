@@ -2384,3 +2384,93 @@ async fn meal_plan_reminders_returned_with_due_dates() {
     // 24 hours before → 1 day before → due 2026-05-14
     assert_eq!(arr[0]["due_date"].as_str(), Some("2026-05-14"));
 }
+
+// ─────────────── meal plan for recipe (delete warning) ──────────────
+
+#[tokio::test]
+async fn meal_plan_for_recipe_returns_upcoming_entries() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let recipe = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"title": "Scheduled", "source": "test", "ingredients": [], "instructions": []}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let recipe_id = recipe["id"].as_i64().expect("id");
+
+    // Schedule for two future dates
+    for day in &["2099-06-01", "2099-06-08"] {
+        client
+            .post(format!("{base}/meal-plan"))
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&json!({"day": day, "recipe_id": recipe_id}))
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let resp = client
+        .get(format!("{base}/meal-plan/recipe/{recipe_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let entries = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn meal_plan_for_recipe_excludes_past_entries() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let recipe = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"title": "Past Recipe", "source": "test", "ingredients": [], "instructions": []}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let recipe_id = recipe["id"].as_i64().expect("id");
+
+    // Schedule in the distant past
+    client
+        .post(format!("{base}/meal-plan"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"day": "2000-01-01", "recipe_id": recipe_id}))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!("{base}/meal-plan/recipe/{recipe_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let body = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(
+        body.as_array().unwrap().len(),
+        0,
+        "past entries should not appear"
+    );
+}

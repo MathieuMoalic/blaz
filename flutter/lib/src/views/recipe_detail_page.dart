@@ -217,11 +217,30 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _confirmDelete(api.Recipe r) async {
+    // Check for upcoming meal plan entries before showing the dialog.
+    List<api.MealPlanEntry> upcoming = [];
+    try {
+      upcoming = await api.fetchMealPlanForRecipe(r.id);
+    } catch (_) {
+      // If the check fails, proceed with the generic confirmation.
+    }
+
+    if (!mounted) return;
+
+    final String dialogContent;
+    if (upcoming.isEmpty) {
+      dialogContent = 'Are you sure you want to delete "${r.title}"?';
+    } else {
+      final dates = upcoming.map((e) => e.day).join(', ');
+      dialogContent = '"${r.title}" is scheduled on your meal plan ($dates). '
+          'Deleting it will also remove those entries.';
+    }
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete recipe?'),
-        content: Text('Are you sure you want to delete “${r.title}”?'),
+        content: Text(dialogContent),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -242,7 +261,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Deleted “${r.title}”')));
+        ).showSnackBar(SnackBar(content: Text('Deleted "${r.title}"')));
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(

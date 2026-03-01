@@ -126,6 +126,36 @@ pub struct PrepReminderDto {
     pub meal_date: String, // "YYYY-MM-DD" the scheduled meal
 }
 
+/// GET /meal-plan/recipe/{recipe_id}
+///
+/// Returns all upcoming (today and future) meal plan entries for a given recipe.
+/// Used by the client to warn before deleting a recipe that is still scheduled.
+///
+/// # Errors
+/// Returns an error if querying the database fails.
+pub async fn get_for_recipe(
+    State(state): State<AppState>,
+    Path(recipe_id): Path<i64>,
+) -> AppResult<Json<Vec<MealPlanEntry>>> {
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let rows: Vec<MealPlanEntry> = sqlx::query_as::<_, MealPlanEntry>(
+        r"
+        SELECT mp.id, mp.day, mp.recipe_id, r.title AS title
+          FROM meal_plan mp
+          JOIN recipes r ON r.id = mp.recipe_id
+         WHERE mp.recipe_id = ? AND mp.day >= ?
+         ORDER BY mp.day
+        ",
+    )
+    .bind(recipe_id)
+    .bind(&today)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(rows))
+}
+
+
 /// GET /meal-plan/reminders?from=YYYY-MM-DD&to=YYYY-MM-DD
 ///
 /// Returns prep reminders for all meals in the given date range, with the

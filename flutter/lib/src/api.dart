@@ -836,6 +836,18 @@ Future<List<MealPlanEntry>> fetchMealPlanForDay(String day) async {
       .toList();
 }
 
+Future<List<MealPlanEntry>> fetchMealPlanForRecipe(int recipeId) async {
+  final r = await http.get(
+    _u('/meal-plan/recipe/$recipeId'),
+    headers: _headers(),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .map((e) => MealPlanEntry.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
 Future<MealPlanEntry> assignRecipeToDay({
   required String day,
   required int recipeId,
