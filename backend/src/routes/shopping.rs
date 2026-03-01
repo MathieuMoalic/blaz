@@ -70,6 +70,15 @@ pub struct ParsedItem {
 
 /* ---------- LLM normalization types ---------- */
 
+/// Returns true if `s` looks like a clean normalized ingredient name
+/// (short, no newlines, no LLM chatter).
+fn is_valid_normalized_name(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('\n')
+        && s.len() <= 60
+        && s.split_whitespace().count() <= 5
+}
+
 #[derive(Serialize)]
 struct NormalizeLlmRequest {
     model: String,
@@ -280,6 +289,7 @@ async fn normalize_ingredient_name(state: &AppState, raw_name: &str) -> String {
     // 2. Call LLM if configured
     let normalized = if state.config.llm_api_key.is_some() {
         call_llm_normalize_single(state, &raw_lower).await
+            .filter(|s| is_valid_normalized_name(s))
             .unwrap_or_else(|| normalize_name(&raw_lower))
     } else {
         normalize_name(&raw_lower)
@@ -338,9 +348,17 @@ async fn normalize_ingredient_names_batch(state: &AppState, raw_names: &[String]
     );
 
     // 3. Batch call LLM for uncached names
-    let normalized_uncached = if state.config.llm_api_key.is_some() {
+    let normalized_uncached: Vec<String> = if state.config.llm_api_key.is_some() {
         call_llm_normalize_batch(state, &uncached_names).await
-            .unwrap_or_else(|| uncached_names.iter().map(|n| normalize_name(n)).collect())
+            .map_or_else(
+                || uncached_names.iter().map(|n| normalize_name(n)).collect(),
+                |vec| {
+                    // Validate each result; fall back per-element if LLM gave chatter
+                    vec.into_iter().enumerate().map(|(i, s)| {
+                        if is_valid_normalized_name(&s) { s } else { normalize_name(&uncached_names[i]) }
+                    }).collect()
+                },
+            )
     } else {
         uncached_names.iter().map(|n| normalize_name(n)).collect()
     };
