@@ -394,7 +394,14 @@ fn strip_quotes(s: &str) -> String {
 }
 
 /// Call LLM to normalize a single ingredient name.
-async fn call_llm_normalize_single(state: &AppState, raw_name: &str) -> Option<String> {
+/// Shared HTTP call for both single and batch normalize requests.
+/// Returns the raw content string from the LLM's first choice.
+async fn call_llm_normalize_text(
+    state: &AppState,
+    user_content: String,
+    max_tokens: usize,
+) -> Option<String> {
+    let api_key = state.config.llm_api_key.as_ref()?;
     let request = NormalizeLlmRequest {
         model: state.config.llm_model.clone(),
         messages: vec![
@@ -404,10 +411,10 @@ async fn call_llm_normalize_single(state: &AppState, raw_name: &str) -> Option<S
             },
             NormalizeLlmMessage {
                 role: "user".to_string(),
-                content: raw_name.to_string(),
+                content: user_content,
             },
         ],
-        max_tokens: 50,
+        max_tokens,
         temperature: 0.0,
     };
 
@@ -417,100 +424,43 @@ async fn call_llm_normalize_single(state: &AppState, raw_name: &str) -> Option<S
     match client
         .post(&url)
         .header("Content-Type", "application/json")
-        .header(
-            "Authorization",
-            format!("Bearer {}", state.config.llm_api_key.as_ref()?),
-        )
+        .header("Authorization", format!("Bearer {api_key}"))
         .json(&request)
         .send()
         .await
     {
-        Ok(resp) if resp.status().is_success() => {
-            match resp.json::<NormalizeLlmResponse>().await {
-                Ok(llm_resp) => llm_resp
-                    .choices
-                    .first()
-                    .map(|c| strip_quotes(&c.message.content).to_lowercase()),
-                Err(e) => {
-                    tracing::warn!("Failed to parse LLM response: {}", e);
-                    None
-                }
+        Ok(resp) if resp.status().is_success() => match resp.json::<NormalizeLlmResponse>().await {
+            Ok(r) => r.choices.first().map(|c| c.message.content.clone()),
+            Err(e) => {
+                tracing::warn!("Failed to parse LLM response: {e}");
+                None
             }
-        }
+        },
         Ok(resp) => {
             tracing::warn!("LLM returned error status: {}", resp.status());
             None
         }
         Err(e) => {
-            tracing::warn!("Failed to call LLM: {}", e);
+            tracing::warn!("Failed to call LLM: {e}");
             None
         }
     }
 }
 
+async fn call_llm_normalize_single(state: &AppState, raw_name: &str) -> Option<String> {
+    let content = call_llm_normalize_text(state, raw_name.to_string(), 50).await?;
+    Some(strip_quotes(&content).to_lowercase())
+}
+
 /// Call LLM to normalize multiple ingredient names in one request.
 async fn call_llm_normalize_batch(state: &AppState, raw_names: &[String]) -> Option<Vec<String>> {
     let batch_input = serde_json::to_string(raw_names).ok()?;
-    
-    let request = NormalizeLlmRequest {
-        model: state.config.llm_model.clone(),
-        messages: vec![
-            NormalizeLlmMessage {
-                role: "system".to_string(),
-                content: state.config.system_prompt_normalize.clone(),
-            },
-            NormalizeLlmMessage {
-                role: "user".to_string(),
-                content: batch_input,
-            },
-        ],
-        max_tokens: raw_names.len() * 20, // ~20 tokens per ingredient
-        temperature: 0.0,
-    };
-
-    let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", state.config.llm_api_url);
-
-    match client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header(
-            "Authorization",
-            format!("Bearer {}", state.config.llm_api_key.as_ref()?),
-        )
-        .json(&request)
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            match resp.json::<NormalizeLlmResponse>().await {
-                Ok(llm_resp) => llm_resp
-                    .choices
-                    .first()
-                    .and_then(|choice| {
-                        serde_json::from_str::<Vec<String>>(&choice.message.content)
-                            .ok()
-                            .map(|vec| {
-                                vec.into_iter()
-                                    .map(|s| strip_quotes(&s).to_lowercase())
-                                    .collect()
-                            })
-                    }),
-                Err(e) => {
-                    tracing::warn!("Failed to parse LLM batch response: {}", e);
-                    None
-                }
-            }
-        }
-        Ok(resp) => {
-            tracing::warn!("LLM batch returned error status: {}", resp.status());
-            None
-        }
-        Err(e) => {
-            tracing::warn!("Failed to call LLM batch: {}", e);
-            None
-        }
-    }
+    let content = call_llm_normalize_text(state, batch_input, raw_names.len() * 20).await?;
+    serde_json::from_str::<Vec<String>>(&content).ok().map(|vec| {
+        vec.into_iter()
+            .map(|s| strip_quotes(&s).to_lowercase())
+            .collect()
+    })
 }
 
 /* ---------- Routes ---------- */

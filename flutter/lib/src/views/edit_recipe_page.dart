@@ -62,8 +62,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
         source: _source.text.trim(),
         yieldText: _yieldText.text.trim(),
         notes: _notes.text.trim(),
-        ingredients: _lines(_ingredientsRaw.text),
-        instructions: _lines(_instructionsRaw.text),
+        ingredients: splitLines(_ingredientsRaw.text),
+        instructions: splitLines(_instructionsRaw.text),
       );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {

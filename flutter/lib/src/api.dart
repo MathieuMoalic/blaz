@@ -120,6 +120,10 @@ Map<String, String> _headers([Map<String, String>? extra]) {
   return h;
 }
 
+/// Splits a multi-line text field into a trimmed, non-empty list of strings.
+List<String> splitLines(String s) =>
+    s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
 Future<String> login({required String password}) async {
   final r = await http.post(
     _u('/auth/login'),
@@ -788,12 +792,6 @@ Future<Recipe> createRecipeFull({
     throw Exception('createRecipeFull: ${res.statusCode} ${res.body}');
   }
   return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
-}
-
-Future<Recipe> getRecipe(int id) async {
-  final r = await http.get(_u('/recipes/$id'), headers: _headers());
-  if (r.statusCode != 200) _throw(r);
-  return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
 Future<void> deleteRecipe(int id) async {

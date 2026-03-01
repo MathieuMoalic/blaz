@@ -17,6 +17,10 @@ use crate::error::AppResult;
 
 use std::io;
 
+fn serialize_json_or_empty<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_string(v).unwrap_or_else(|_| "[]".into())
+}
+
 async fn store_recipe_image_bytes(
     state: &AppState,
     recipe_id: i64,
@@ -189,9 +193,9 @@ pub async fn create(
             }
     }
 
-    let ingredients_json = serde_json::to_string(&new.ingredients).unwrap_or_else(|_| "[]".into());
+    let ingredients_json = serialize_json_or_empty(&new.ingredients);
     let instructions_json =
-        serde_json::to_string(&new.instructions).unwrap_or_else(|_| "[]".into());
+        serialize_json_or_empty(&new.instructions);
 
     let sql = format!(
         r#"
@@ -275,17 +279,17 @@ fn build_update_args(
                 return Err(StatusCode::BAD_REQUEST.into());
             }
         }
-        let s = serde_json::to_string(ings).unwrap_or_else(|_| "[]".into());
+        let s = serialize_json_or_empty(ings);
         sets.push("ingredients = json(?)");
         args.add(s).map_err(|e| { error!(?e, "arg add (ingredients) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     }
     if let Some(ref instr) = up.instructions {
-        let s = serde_json::to_string(instr).unwrap_or_else(|_| "[]".into());
+        let s = serialize_json_or_empty(instr);
         sets.push("instructions = json(?)");
         args.add(s).map_err(|e| { error!(?e, "arg add (instructions) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     }
     if let Some(ref reminders) = up.prep_reminders {
-        let s = serde_json::to_string(reminders).unwrap_or_else(|_| "[]".into());
+        let s = serialize_json_or_empty(reminders);
         sets.push("prep_reminders = json(?)");
         args.add(s).map_err(|e| { error!(?e, "arg add (prep_reminders) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     }

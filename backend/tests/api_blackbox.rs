@@ -1924,3 +1924,463 @@ async fn ntfy_not_notified_on_unauthorized() {
         "expected no ntfy notification for 401, got: {msgs:?}"
     );
 }
+
+// ─────────────────────── shopping notes ─────────────────────────────
+
+#[tokio::test]
+async fn shopping_notes_default_empty() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let item = client
+        .post(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"text": "2 apples"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        item["notes"].as_str(),
+        Some(""),
+        "notes should default to empty string"
+    );
+}
+
+#[tokio::test]
+async fn shopping_notes_set_and_persist() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let item = client
+        .post(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"text": "milk"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = item["id"].as_i64().expect("id");
+
+    // Set notes on the item
+    let patched = client
+        .patch(format!("{base}/shopping/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"notes": "whole milk only"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patched.status(), reqwest::StatusCode::OK);
+    let patched_js = patched.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(patched_js["notes"].as_str(), Some("whole milk only"));
+
+    // Notes should appear in the list
+    let list = client
+        .get(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let found = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == id)
+        .expect("item must appear in list");
+    assert_eq!(found["notes"].as_str(), Some("whole milk only"));
+}
+
+#[tokio::test]
+async fn shopping_notes_cleared_on_done() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let item = client
+        .post(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"text": "3 oranges"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = item["id"].as_i64().expect("id");
+
+    // Set notes
+    client
+        .patch(format!("{base}/shopping/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"notes": "seedless if possible"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Mark done — notes should be cleared
+    let patched = client
+        .patch(format!("{base}/shopping/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"done": true}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        patched["notes"].as_str(),
+        Some(""),
+        "notes should be cleared when item is marked done"
+    );
+}
+
+#[tokio::test]
+async fn shopping_notes_not_cleared_on_undone() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let item = client
+        .post(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"text": "butter"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = item["id"].as_i64().expect("id");
+
+    // Mark done (clears notes), then set notes again, then mark undone
+    client
+        .patch(format!("{base}/shopping/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"notes": "unsalted"}))
+        .send()
+        .await
+        .unwrap();
+
+    let unpatched = client
+        .patch(format!("{base}/shopping/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"done": false}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    // Setting done=false should not touch notes
+    assert_eq!(
+        unpatched["notes"].as_str(),
+        Some("unsalted"),
+        "notes should not be cleared when marking undone"
+    );
+}
+
+// ─────────────────── recipe updated_at ──────────────────────────────
+
+#[tokio::test]
+async fn recipe_updated_at_changes_after_patch() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let created = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "title": "Timestamp Test",
+            "source": "test",
+            "ingredients": [],
+            "instructions": []
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = created["id"].as_i64().expect("id");
+    let created_at = created["created_at"].as_str().unwrap().to_string();
+
+    // Wait a tick to ensure a measurable time difference
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    let updated = client
+        .patch(format!("{base}/recipes/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"title": "Timestamp Test Updated"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let updated_at = updated["updated_at"].as_str().unwrap();
+    assert_ne!(
+        created_at, updated_at,
+        "updated_at should change after a PATCH"
+    );
+}
+
+// ─────────────────── recipe prep_reminders ──────────────────────────
+
+#[tokio::test]
+async fn recipes_prep_reminders_round_trip() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let created = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "title": "Reminder Recipe",
+            "source": "test",
+            "ingredients": [],
+            "instructions": ["Cook", "Serve"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = created["id"].as_i64().expect("id");
+
+    // PATCH to set prep_reminders
+    client
+        .patch(format!("{base}/recipes/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "prep_reminders": [{"step": "Marinate chicken", "hours_before": 24}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // GET should return the prep_reminders
+    let got = client
+        .get(format!("{base}/recipes/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let reminders = got["prep_reminders"].as_array().expect("prep_reminders array");
+    assert_eq!(reminders.len(), 1);
+    assert_eq!(reminders[0]["step"].as_str(), Some("Marinate chicken"));
+    assert_eq!(reminders[0]["hours_before"].as_i64(), Some(24));
+}
+
+#[tokio::test]
+async fn recipes_patch_prep_reminders() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let created = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "title": "Patchable Reminder",
+            "source": "test",
+            "ingredients": [],
+            "instructions": []
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let id = created["id"].as_i64().expect("id");
+
+    // Patch to add a reminder
+    let updated = client
+        .patch(format!("{base}/recipes/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "prep_reminders": [
+                {"step": "Soak beans", "hours_before": 12},
+                {"step": "Preheat oven", "hours_before": 1}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), reqwest::StatusCode::OK);
+    let recipe = updated.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(recipe["prep_reminders"].as_array().unwrap().len(), 2);
+
+    // Patch to clear reminders
+    let cleared = client
+        .patch(format!("{base}/recipes/{id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"prep_reminders": []}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(cleared["prep_reminders"].as_array().unwrap().len(), 0);
+}
+
+// ─────────────────── meal plan reminders ────────────────────────────
+
+#[tokio::test]
+async fn meal_plan_reminders_returns_empty_when_no_prep_reminders() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    // Recipe with no prep_reminders on the meal plan
+    let recipe = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "title": "No Reminders",
+            "source": "test",
+            "ingredients": [],
+            "instructions": []
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let recipe_id = recipe["id"].as_i64().expect("id");
+
+    client
+        .post(format!("{base}/meal-plan"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"day": "2026-04-10", "recipe_id": recipe_id}))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!(
+            "{base}/meal-plan/reminders?from=2026-04-01&to=2026-04-30"
+        ))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let reminders = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(
+        reminders.as_array().unwrap().len(),
+        0,
+        "recipe without prep_reminders should produce no reminder entries"
+    );
+}
+
+#[tokio::test]
+async fn meal_plan_reminders_returned_with_due_dates() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let recipe = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "title": "Marinated Chicken",
+            "source": "test",
+            "ingredients": [],
+            "instructions": []
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let recipe_id = recipe["id"].as_i64().expect("id");
+
+    // PATCH in the prep reminder (create doesn't accept prep_reminders in body)
+    client
+        .patch(format!("{base}/recipes/{recipe_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"prep_reminders": [{"step": "Marinate", "hours_before": 24}]}))
+        .send()
+        .await
+        .unwrap();
+
+    client
+        .post(format!("{base}/meal-plan"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"day": "2026-05-15", "recipe_id": recipe_id}))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!(
+            "{base}/meal-plan/reminders?from=2026-05-01&to=2026-05-31"
+        ))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let arr = resp.as_array().expect("expected array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["step"].as_str(), Some("Marinate"));
+    assert_eq!(arr[0]["meal_date"].as_str(), Some("2026-05-15"));
+    // 24 hours before → 1 day before → due 2026-05-14
+    assert_eq!(arr[0]["due_date"].as_str(), Some("2026-05-14"));
+}

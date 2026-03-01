@@ -87,8 +87,10 @@ void main() {
     });
 
     test('g and ml are rounded to integer', () {
-      final ing = Ingredient(quantity: 250.5, unit: 'g', name: 'sugar');
-      expect(ing.toLine(), '251 g sugar');
+      final ingG = Ingredient(quantity: 250.5, unit: 'g', name: 'sugar');
+      expect(ingG.toLine(), '251 g sugar');
+      final ingMl = Ingredient(quantity: 120.7, unit: 'ml', name: 'cream');
+      expect(ingMl.toLine(), '121 ml cream');
     });
 
     test('kg uses two decimal places with trailing zeros trimmed', () {
@@ -234,6 +236,33 @@ void main() {
       final parsed = parseIngredientLine(stored.name);
       expect(parsed.toLine(factor: 2.0), '400 g flour');
     });
+
+    test('"of" after unit is skipped', () {
+      final ing = parseIngredientLine('1 kg of potatoes');
+      expect(ing.quantity, 1.0);
+      expect(ing.unit, 'kg');
+      expect(ing.name, 'potatoes');
+    });
+
+    test('single quantity token with no name returns original text', () {
+      // "2" alone — can't infer name
+      final ing = parseIngredientLine('2');
+      expect(ing.quantity, isNull);
+      expect(ing.name, '2');
+    });
+
+    test('empty string returns empty name', () {
+      final ing = parseIngredientLine('');
+      expect(ing.name, '');
+      expect(ing.quantity, isNull);
+    });
+
+    test('unit-only token is treated as name', () {
+      // "g" alone has no leading number, so it's just a name
+      final ing = parseIngredientLine('g');
+      expect(ing.quantity, isNull);
+      expect(ing.name, 'g');
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -309,6 +338,114 @@ void main() {
         'recipe_titles': 'Pasta, Salad',
       });
       expect(item.recipeTitles, 'Pasta, Salad');
+    });
+
+    test('notes defaults to empty string when absent', () {
+      expect(ShoppingItem.fromJson(base()).notes, '');
+    });
+
+    test('notes field is preserved when present', () {
+      final item = ShoppingItem.fromJson({
+        ...base(),
+        'notes': 'whole milk only',
+      });
+      expect(item.notes, 'whole milk only');
+    });
+
+    test('notes=null falls back to empty string', () {
+      final item = ShoppingItem.fromJson({
+        ...base(),
+        'notes': null,
+      });
+      expect(item.notes, '');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // splitLines
+  // ──────────────────────────────────────────────────────────────────
+  group('splitLines', () {
+    test('splits on newlines', () {
+      expect(splitLines('a\nb\nc'), ['a', 'b', 'c']);
+    });
+
+    test('trims whitespace from each line', () {
+      expect(splitLines('  a  \n  b  '), ['a', 'b']);
+    });
+
+    test('drops empty and blank lines', () {
+      expect(splitLines('a\n\n  \nb'), ['a', 'b']);
+    });
+
+    test('empty string returns empty list', () {
+      expect(splitLines(''), isEmpty);
+    });
+
+    test('single non-empty line returns single-element list', () {
+      expect(splitLines('hello'), ['hello']);
+    });
+
+    test('trailing newline is ignored', () {
+      expect(splitLines('a\nb\n'), ['a', 'b']);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // PrepReminder.fromJson
+  // ──────────────────────────────────────────────────────────────────
+  group('PrepReminder.fromJson', () {
+    test('parses step and hours_before', () {
+      final r = PrepReminder.fromJson({'step': 'Marinate', 'hours_before': 24});
+      expect(r.step, 'Marinate');
+      expect(r.hoursBefore, 24);
+    });
+
+    test('float hours_before is truncated to int', () {
+      final r = PrepReminder.fromJson({'step': 'Rest dough', 'hours_before': 2.0});
+      expect(r.hoursBefore, isA<int>());
+      expect(r.hoursBefore, 2);
+    });
+
+    test('round-trips via toJson', () {
+      const original = PrepReminder(step: 'Soak beans', hoursBefore: 12);
+      final roundTripped = PrepReminder.fromJson(original.toJson());
+      expect(roundTripped.step, original.step);
+      expect(roundTripped.hoursBefore, original.hoursBefore);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // PrepReminderDto.fromJson
+  // ──────────────────────────────────────────────────────────────────
+  group('PrepReminderDto.fromJson', () {
+    test('parses all fields', () {
+      final dto = PrepReminderDto.fromJson({
+        'recipe_id': 7,
+        'recipe_title': 'Pasta',
+        'step': 'Make dough',
+        'hours_before': 2,
+        'due_date': '2026-03-14',
+        'meal_date': '2026-03-15',
+      });
+      expect(dto.recipeId, 7);
+      expect(dto.recipeTitle, 'Pasta');
+      expect(dto.step, 'Make dough');
+      expect(dto.hoursBefore, 2);
+      expect(dto.dueDate, '2026-03-14');
+      expect(dto.mealDate, '2026-03-15');
+    });
+
+    test('float ids are coerced to int', () {
+      final dto = PrepReminderDto.fromJson({
+        'recipe_id': 3.0,
+        'recipe_title': 'Soup',
+        'step': 'Chop',
+        'hours_before': 1.0,
+        'due_date': '2026-01-01',
+        'meal_date': '2026-01-02',
+      });
+      expect(dto.recipeId, isA<int>());
+      expect(dto.hoursBefore, isA<int>());
     });
   });
 

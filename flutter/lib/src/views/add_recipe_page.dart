@@ -48,9 +48,6 @@ class _AddRecipePageState extends State<AddRecipePage> {
     super.dispose();
   }
 
-  List<String> _lines(String s) =>
-      s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-
   Future<void> _pickImage() async {
     final group = const XTypeGroup(
       label: 'images',
@@ -102,8 +99,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
     final source = _source.text.trim();
     final yieldText = _yieldText.text.trim();
     final notes = _notes.text.trim();
-    final ingredients = _lines(_ingredientsRaw.text);
-    final instructions = _lines(_instructionsRaw.text);
+    final ingredients = splitLines(_ingredientsRaw.text);
+    final instructions = splitLines(_instructionsRaw.text);
 
     setState(() => _busy = true);
     try {
