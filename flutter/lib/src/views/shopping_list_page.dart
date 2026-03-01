@@ -104,13 +104,16 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   /// Track collapsed categories
   Set<String> _collapsedCategories = <String>{};
 
+  /// User-defined category display order (persisted).
+  List<String> _categoryOrder = kShoppingCategoryValues;
+
   // NEW: soft loading flag
   bool _refreshing = false;
 
   @override
   void initState() {
     super.initState();
-    _loadCollapsedState();
+    _loadPrefs();
     _future = _loadInitial();
   }
 
@@ -120,17 +123,31 @@ class ShoppingListPageState extends State<ShoppingListPage> {
     super.dispose();
   }
 
-  Future<void> _loadCollapsedState() async {
+  Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     final collapsed = prefs.getStringList('shopping_collapsed_categories') ?? [];
+    final savedOrder = prefs.getStringList('shopping_category_order');
     setState(() {
       _collapsedCategories = collapsed.toSet();
+      if (savedOrder != null && savedOrder.isNotEmpty) {
+        // Merge: keep saved order, append any new categories not yet in it.
+        final known = savedOrder.toSet();
+        _categoryOrder = [
+          ...savedOrder,
+          ...kShoppingCategoryValues.where((c) => !known.contains(c)),
+        ];
+      }
     });
   }
 
   Future<void> _saveCollapsedState() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('shopping_collapsed_categories', _collapsedCategories.toList());
+  }
+
+  Future<void> _saveCategoryOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('shopping_category_order', _categoryOrder);
   }
 
   Future<List<ShoppingItem>> _loadInitial() async {
@@ -281,91 +298,137 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 
                     final grouped = _group(items);
                     final orderedCats = <String>[
-                      ...kShoppingCategoryValues.where(grouped.containsKey),
+                      ..._categoryOrder.where(grouped.containsKey),
                       ...grouped.keys.where(
-                        (c) => !kShoppingCategoryValues.contains(c),
+                        (c) => !_categoryOrder.contains(c),
                       ),
                     ];
 
-                    return ListView.separated(
+                    return ReorderableListView.builder(
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                      buildDefaultDragHandles: false,
+                      onReorder: (oldIndex, newIndex) {
+                        setState(() {
+                          // Reorder within the full _categoryOrder list by
+                          // mapping visible positions back to their values.
+                          final moved = orderedCats[oldIndex];
+                          final target = newIndex > oldIndex
+                              ? orderedCats[newIndex - 1]
+                              : orderedCats[newIndex];
+                          final order = List<String>.from(_categoryOrder);
+                          order.remove(moved);
+                          final insertAt = order.indexOf(target);
+                          order.insert(
+                            newIndex > oldIndex ? insertAt + 1 : insertAt,
+                            moved,
+                          );
+                          _categoryOrder = order;
+                        });
+                        _saveCategoryOrder();
+                      },
                       itemBuilder: (context, section) {
                         final cat = orderedCats[section];
                         final rows = grouped[cat]!;
                         final isCollapsed = _collapsedCategories.contains(cat);
-                        
-                        return Card(
-                          margin: EdgeInsets.zero,
-                          clipBehavior: Clip.antiAlias,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    if (isCollapsed) {
-                                      _collapsedCategories.remove(cat);
-                                    } else {
-                                      _collapsedCategories.add(cat);
-                                    }
-                                  });
-                                  _saveCollapsedState();
-                                },
-                                child: Container(
-                                  color:
-                                      theme.colorScheme.surfaceContainerHighest,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 6,
-                                  ),
+
+                        return Padding(
+                          key: ValueKey(cat),
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Card(
+                            margin: EdgeInsets.zero,
+                            clipBehavior: Clip.antiAlias,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Container(
+                                  color: theme.colorScheme.surfaceContainerHighest,
                                   child: Row(
                                     children: [
-                                      Icon(
-                                        isCollapsed
-                                            ? Icons.chevron_right
-                                            : Icons.expand_more,
-                                        size: 20,
+                                      // Drag handle — only this widget initiates drag.
+                                      ReorderableDragStartListener(
+                                        index: section,
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 6,
+                                          ),
+                                          child: Icon(
+                                            Icons.drag_handle,
+                                            size: 20,
+                                            color: theme.colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
                                       ),
-                                      const SizedBox(width: 8),
+                                      // Tap-to-collapse fills the rest of the header.
                                       Expanded(
-                                        child: Text(
-                                          kShoppingCategoryLabelByValue[cat] ?? cat,
-                                          style: theme.textTheme.titleMedium,
+                                        child: InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              if (isCollapsed) {
+                                                _collapsedCategories.remove(cat);
+                                              } else {
+                                                _collapsedCategories.add(cat);
+                                              }
+                                            });
+                                            _saveCollapsedState();
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 6,
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  isCollapsed
+                                                      ? Icons.chevron_right
+                                                      : Icons.expand_more,
+                                                  size: 20,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Text(
+                                                    kShoppingCategoryLabelByValue[cat] ?? cat,
+                                                    style: theme.textTheme.titleMedium,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ),
-                              if (!isCollapsed)
-                                for (var i = 0; i < rows.length; i++)
-                                  _RowTile(
-                                    item: rows[i],
-                                    isLastInCategory: i == rows.length - 1,
-                                    onChanged: (v) async {
-                                      setState(() => _hidden.add(rows[i].id));
-                                      try {
-                                        final updated = await toggleShoppingItem(
-                                          id: rows[i].id,
-                                          done: v ?? false,
-                                        );
-                                        _applyLocalUpdate(
-                                          (list) => list
-                                              .where((x) => x.id != updated.id)
-                                              .toList(),
-                                        );
-                                      } finally {
-                                        // Keep state consistent; still no flicker.
-                                        await refresh();
-                                      }
-                                    },
-                                    onEdit: () => _editItem(context, rows[i]),
-                                  ),
-                            ],
+                                if (!isCollapsed)
+                                  for (var i = 0; i < rows.length; i++)
+                                    _RowTile(
+                                      item: rows[i],
+                                      isLastInCategory: i == rows.length - 1,
+                                      onChanged: (v) async {
+                                        setState(() => _hidden.add(rows[i].id));
+                                        try {
+                                          final updated = await toggleShoppingItem(
+                                            id: rows[i].id,
+                                            done: v ?? false,
+                                          );
+                                          _applyLocalUpdate(
+                                            (list) => list
+                                                .where((x) => x.id != updated.id)
+                                                .toList(),
+                                          );
+                                        } finally {
+                                          // Keep state consistent; still no flicker.
+                                          await refresh();
+                                        }
+                                      },
+                                      onEdit: () => _editItem(context, rows[i]),
+                                    ),
+                              ],
+                            ),
                           ),
                         );
                       },
-                      separatorBuilder: (_, __) => const SizedBox(height: 4),
                       itemCount: orderedCats.length,
                     );
                   },
