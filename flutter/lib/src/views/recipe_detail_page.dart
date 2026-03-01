@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../api.dart' as api;
 import 'edit_recipe_page.dart';
+import 'meal_plan/day_picker_sheet.dart';
 
 class RecipeDetailPage extends StatefulWidget {
   final int recipeId;
@@ -52,9 +53,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       if (!_checkedSteps.add(i)) _checkedSteps.remove(i);
     });
   }
-
-  String _ymd(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   double _calcCalories(api.RecipeMacros m) {
     return m.protein * kcalPerGProt +
@@ -105,21 +103,17 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _assignToMealPlan(api.Recipe r) async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
+    final day = await showDayPickerSheet(
       context: context,
-      initialDate: now,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 2),
-      locale: const Locale('en', 'GB'), // UK locale starts weeks on Monday
+      recipeTitle: r.title,
     );
 
     if (!mounted) return;
-    if (picked == null) return;
+    if (day == null) return;
 
     try {
       final entry = await api.assignRecipeToDay(
-        day: _ymd(picked),
+        day: day,
         recipeId: r.id,
       );
       if (!mounted) return;

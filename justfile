@@ -145,4 +145,4 @@ start-copilot:
     export PATH="$HOME/.local/copilot-shims:$PATH"
     export SHELL=/run/current-system/sw/bin/bash
     export CONFIG_SHELL=/run/current-system/sw/bin/bash
-    exec copilot
+    exec copilot --allow-all
