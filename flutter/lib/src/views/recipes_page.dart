@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../widgets/recipe_card.dart';
+import '../platform/kv_store.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
 import 'meal_plan/day_picker_sheet.dart';
@@ -12,6 +13,8 @@ class RecipesPage extends StatefulWidget {
   State<RecipesPage> createState() => RecipesPageState();
 }
 
+enum _RecipeSort { nameAsc, nameDesc, recentlyUpdated }
+
 class RecipesPageState extends State<RecipesPage> {
   late Future<List<Recipe>> _future;
   final _filterCtrl = TextEditingController();
@@ -20,6 +23,9 @@ class RecipesPageState extends State<RecipesPage> {
   String _query = '';
   bool _searchVisible = false;
   Timer? _debounce;
+  _RecipeSort _sort = _RecipeSort.nameAsc;
+
+  static const _kvSort = 'recipes_sort';
 
   // cache + soft loading flag
   List<Recipe> _cache = const <Recipe>[];
@@ -30,6 +36,25 @@ class RecipesPageState extends State<RecipesPage> {
     super.initState();
     _future = _loadInitial();
     _filterCtrl.addListener(_onFilterChanged);
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final sortStr = await getString(_kvSort);
+    if (!mounted) return;
+    setState(() {
+      if (sortStr != null) {
+        _sort = _RecipeSort.values.firstWhere(
+          (e) => e.name == sortStr,
+          orElse: () => _RecipeSort.nameAsc,
+        );
+      }
+    });
+  }
+
+  Future<void> _setSort(_RecipeSort sort) async {
+    setState(() => _sort = sort);
+    await setString(_kvSort, sort.name);
   }
 
   Future<List<Recipe>> _loadInitial() async {
@@ -201,6 +226,23 @@ class RecipesPageState extends State<RecipesPage> {
     return (score / pattern.length).clamp(0, 100);
   }
 
+  List<Recipe> _applySort(List<Recipe> recipes) {
+    final list = [...recipes];
+    switch (_sort) {
+      case _RecipeSort.nameAsc:
+        list.sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+      case _RecipeSort.nameDesc:
+        list.sort(
+          (a, b) => b.title.toLowerCase().compareTo(a.title.toLowerCase()),
+        );
+      case _RecipeSort.recentlyUpdated:
+        list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }
+    return list;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -253,18 +295,20 @@ class RecipesPageState extends State<RecipesPage> {
                       return const _EmptyState();
                     }
 
-                    // Filter and sort by relevance score
-                    final filtered = items
+                    // Filter and sort
+                    var filtered = items
                         .where((r) => _matches(r, _query))
                         .toList();
                     
-                    // Sort by fuzzy match score (best matches first)
                     if (_query.isNotEmpty) {
+                      // Sort by relevance when searching
                       filtered.sort((a, b) {
                         final scoreA = _fuzzyScore(a, _query);
                         final scoreB = _fuzzyScore(b, _query);
-                        return scoreB.compareTo(scoreA); // Descending
+                        return scoreB.compareTo(scoreA);
                       });
+                    } else {
+                      filtered = _applySort(filtered);
                     }
 
                     if (filtered.isEmpty) {
@@ -329,7 +373,41 @@ class RecipesPageState extends State<RecipesPage> {
                   child: LinearProgressIndicator(minHeight: 2),
                 ),
 
-              // FABs: search (above) + add recipe (below)
+              // FABs: sort (top) + search (middle) + add recipe (bottom)
+              Positioned(
+                right: 16,
+                bottom: 160,
+                child: MenuAnchor(
+                  builder: (context, controller, _) => Badge(
+                    isLabelVisible: _sort != _RecipeSort.nameAsc,
+                    child: FloatingActionButton(
+                      heroTag: 'sort',
+                      onPressed:
+                          controller.isOpen
+                              ? controller.close
+                              : controller.open,
+                      tooltip: 'Sort',
+                      child: const Icon(Icons.sort),
+                    ),
+                  ),
+                  menuChildren: [
+                    for (final (sort, label) in [
+                      (_RecipeSort.nameAsc, 'Name (A–Z)'),
+                      (_RecipeSort.nameDesc, 'Name (Z–A)'),
+                      (_RecipeSort.recentlyUpdated, 'Recently updated'),
+                    ])
+                      MenuItemButton(
+                        onPressed: () => _setSort(sort),
+                        leadingIcon: Icon(
+                          Icons.check,
+                          color:
+                              _sort == sort ? null : Colors.transparent,
+                        ),
+                        child: Text(label),
+                      ),
+                  ],
+                ),
+              ),
               Positioned(
                 right: 16,
                 bottom: 88,
