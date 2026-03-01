@@ -34,6 +34,7 @@ fn patch_update_err(err: sqlx::Error) -> AppError {
 pub struct UpdateShoppingItem {
     pub done: Option<bool>,
     pub category: Option<String>,
+    pub notes: Option<String>,
 
     /// Backwards-compatible free-form update.
     /// If provided, it takes priority over name/unit/quantity fields.
@@ -220,7 +221,7 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemView>(
         r"
-        SELECT id, text, done, category, recipe_ids, recipe_titles
+        SELECT id, text, done, category, notes, recipe_ids, recipe_titles
           FROM shopping_items_view
          WHERE id = ?
         ",
@@ -506,7 +507,7 @@ async fn call_llm_normalize_batch(state: &AppState, raw_names: &[String]) -> Opt
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
     let mut rows = sqlx::query_as::<_, ShoppingItemView>(
         r"
-        SELECT id, text, done, category, recipe_ids, recipe_titles
+        SELECT id, text, done, category, notes, recipe_ids, recipe_titles
           FROM shopping_items_view
          WHERE done = 0
          ORDER BY id
@@ -676,13 +677,23 @@ fn apply_done_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, done: Opti
         qb.push("done = ");
         qb.push_bind(i64::from(d));
         
-        // Clear recipe_ids and quantity when marking as done so list resets cleanly
+        // Clear recipe_ids, quantity and notes when marking as done so list resets cleanly
         if d {
             push_sep(qb, wrote);
             qb.push("recipe_ids = '[]'");
             push_sep(qb, wrote);
             qb.push("quantity = NULL");
+            push_sep(qb, wrote);
+            qb.push("notes = ''");
         }
+    }
+}
+
+fn apply_notes_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, notes: Option<String>) {
+    if let Some(n) = notes {
+        push_sep(qb, wrote);
+        qb.push("notes = ");
+        qb.push_bind(n);
     }
 }
 
@@ -872,6 +883,7 @@ pub async fn patch_shopping_item(
 
     apply_done_update(&mut qb, &mut wrote, payload.done);
     apply_category_update(&mut qb, &mut wrote, payload.category.clone())?;
+    apply_notes_update(&mut qb, &mut wrote, payload.notes.clone());
 
     // `text` takes priority over structured fields.
     let did_text = apply_text_update(&mut qb, &mut wrote, &state, &payload).await?;

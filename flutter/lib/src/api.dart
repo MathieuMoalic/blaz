@@ -156,6 +156,7 @@ Future<ShoppingItem> updateShoppingItem({
   required int id,
   bool? done,
   String? category,
+  String? notes,
   String? text,
   String? unit,
   double? quantity,
@@ -163,6 +164,7 @@ Future<ShoppingItem> updateShoppingItem({
   final body = <String, dynamic>{
     if (done != null) 'done': done,
     if (category != null) 'category': category,
+    if (notes != null) 'notes': notes,
     if (text != null) 'text': text,
     if (unit != null) 'unit': unit,
     if (quantity != null) 'quantity': quantity,
@@ -343,6 +345,7 @@ class ShoppingItem {
   final String text;
   final bool done; // derived from 0/1
   final String? category;
+  final String notes;
   final List<int> recipeIds;
   final String? recipeTitles; // Comma-separated
 
@@ -351,6 +354,7 @@ class ShoppingItem {
     required this.text,
     required this.done,
     this.category,
+    this.notes = '',
     this.recipeIds = const [],
     this.recipeTitles,
   });
@@ -382,6 +386,7 @@ class ShoppingItem {
       text: j['text'] as String,
       done: doneBool,
       category: j['category'] as String?,
+      notes: (j['notes'] as String?) ?? '',
       recipeIds: recipeIds,
       recipeTitles: j['recipe_titles'] as String?,
     );

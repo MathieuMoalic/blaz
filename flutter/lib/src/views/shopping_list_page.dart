@@ -422,6 +422,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   // _editItem unchanged except replace any _refresh() calls with refresh()
   Future<void> _editItem(BuildContext context, ShoppingItem it) async {
     final ctrl = TextEditingController(text: it.text);
+    final notesCtrl = TextEditingController(text: it.notes);
     String cat = _catValue(it.category);
 
     final changed = await showModalBottomSheet<bool>(
@@ -458,6 +459,16 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                           decoration: const InputDecoration(
                             labelText: 'Item',
                             hintText: 'e.g. 2 lemons',
+                            border: OutlineInputBorder(),
+                          ),
+                          textInputAction: TextInputAction.next,
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: notesCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Notes',
+                            hintText: 'e.g. ripe ones',
                             border: OutlineInputBorder(),
                           ),
                           textInputAction: TextInputAction.done,
@@ -562,6 +573,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                 id: it.id,
                                 text: newText.isEmpty ? it.text : newText,
                                 category: newCat,
+                                notes: notesCtrl.text.trim(),
                               );
                               if (!context.mounted) return;
                               Navigator.pop(ctx, true);
@@ -632,10 +644,30 @@ class _RowTile extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            title: Text(
-              _formatItemText(item.text),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _formatItemText(item.text),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (item.notes.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      item.notes,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
