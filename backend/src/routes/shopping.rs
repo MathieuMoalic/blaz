@@ -5,7 +5,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::error::AppResult;
@@ -68,45 +68,7 @@ pub struct ParsedItem {
     pub name_norm: String,    // normalized for merge key/category
 }
 
-/* ---------- LLM normalization types ---------- */
-
-/// Returns true if `s` looks like a clean normalized ingredient name
-/// (short, no newlines, no LLM chatter).
-fn is_valid_normalized_name(s: &str) -> bool {
-    !s.is_empty()
-        && !s.contains('\n')
-        && s.len() <= 60
-        && s.split_whitespace().count() <= 5
-}
-
-#[derive(Serialize)]
-struct NormalizeLlmRequest {
-    model: String,
-    messages: Vec<NormalizeLlmMessage>,
-    max_tokens: usize,
-    temperature: f32,
-}
-
-#[derive(Serialize)]
-struct NormalizeLlmMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct NormalizeLlmResponse {
-    choices: Vec<NormalizeLlmChoice>,
-}
-
-#[derive(Deserialize)]
-struct NormalizeLlmChoice {
-    message: NormalizeLlmMessageContent,
-}
-
-#[derive(Deserialize)]
-struct NormalizeLlmMessageContent {
-    content: String,
-}
+/* ---------- Alias types ---------- */
 
 fn parse_qty_token(t: &str) -> Option<f64> {
     let t = t.trim().replace(',', ".");
@@ -269,200 +231,6 @@ fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
     }
 }
 
-/// Normalize a single ingredient name with caching.
-/// Checks cache first, then LLM, then saves result.
-async fn normalize_ingredient_name(state: &AppState, raw_name: &str) -> String {
-    let raw_lower = raw_name.trim().to_lowercase();
-    
-    // 1. Check cache first
-    if let Ok(Some(cached)) = sqlx::query_scalar::<_, String>(
-        "SELECT normalized_name FROM ingredient_normalizations WHERE raw_name = ?"
-    )
-    .bind(&raw_lower)
-    .fetch_optional(&state.pool)
-    .await
-    {
-        tracing::debug!(raw = %raw_name, cached = %cached, "Using cached normalization");
-        return cached;
-    }
-
-    // 2. Call LLM if configured
-    let normalized = if state.config.llm_api_key.is_some() {
-        call_llm_normalize_single(state, &raw_lower).await
-            .filter(|s| is_valid_normalized_name(s))
-            .unwrap_or_else(|| normalize_name(&raw_lower))
-    } else {
-        normalize_name(&raw_lower)
-    };
-
-    // 3. Save to cache
-    let _ = sqlx::query(
-        "INSERT OR REPLACE INTO ingredient_normalizations (raw_name, normalized_name) VALUES (?, ?)"
-    )
-    .bind(&raw_lower)
-    .bind(&normalized)
-    .execute(&state.pool)
-    .await;
-
-    tracing::info!(raw = %raw_name, normalized = %normalized, "Normalized ingredient name");
-    normalized
-}
-
-/// Normalize multiple ingredient names in one LLM call (batch).
-/// Checks cache for each, batches uncached ones, saves results.
-async fn normalize_ingredient_names_batch(state: &AppState, raw_names: &[String]) -> Vec<String> {
-    let mut results = Vec::with_capacity(raw_names.len());
-    let mut uncached_indices = Vec::new();
-    let mut uncached_names = Vec::new();
-
-    // 1. Check cache for each name
-    for (idx, raw_name) in raw_names.iter().enumerate() {
-        let raw_lower = raw_name.trim().to_lowercase();
-        
-        if let Ok(Some(cached)) = sqlx::query_scalar::<_, String>(
-            "SELECT normalized_name FROM ingredient_normalizations WHERE raw_name = ?"
-        )
-        .bind(&raw_lower)
-        .fetch_optional(&state.pool)
-        .await
-        {
-            results.push(cached);
-        } else {
-            results.push(String::new()); // Placeholder
-            uncached_indices.push(idx);
-            uncached_names.push(raw_lower);
-        }
-    }
-
-    // 2. If all cached, return early
-    if uncached_names.is_empty() {
-        tracing::debug!("All {} names found in cache", raw_names.len());
-        return results;
-    }
-
-    tracing::info!(
-        total = raw_names.len(),
-        cached = raw_names.len() - uncached_names.len(),
-        uncached = uncached_names.len(),
-        "Batch normalizing ingredients"
-    );
-
-    // 3. Batch call LLM for uncached names
-    let normalized_uncached: Vec<String> = if state.config.llm_api_key.is_some() {
-        call_llm_normalize_batch(state, &uncached_names).await
-            .map_or_else(
-                || uncached_names.iter().map(|n| normalize_name(n)).collect(),
-                |vec| {
-                    // Validate each result; fall back per-element if LLM gave chatter
-                    vec.into_iter().enumerate().map(|(i, s)| {
-                        if is_valid_normalized_name(&s) { s } else { normalize_name(&uncached_names[i]) }
-                    }).collect()
-                },
-            )
-    } else {
-        uncached_names.iter().map(|n| normalize_name(n)).collect()
-    };
-
-    // 4. Fill in results and save to cache
-    for (i, &result_idx) in uncached_indices.iter().enumerate() {
-        let normalized = &normalized_uncached[i];
-        results[result_idx].clone_from(normalized);
-        
-        // Save to cache
-        let _ = sqlx::query(
-            "INSERT OR REPLACE INTO ingredient_normalizations (raw_name, normalized_name) VALUES (?, ?)"
-        )
-        .bind(&uncached_names[i])
-        .bind(normalized)
-        .execute(&state.pool)
-        .await;
-    }
-
-    results
-}
-
-/// Strip surrounding quotes from a string if present.
-fn strip_quotes(s: &str) -> String {
-    let trimmed = s.trim();
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed[1..trimmed.len() - 1].to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-/// Call LLM to normalize a single ingredient name.
-/// Shared HTTP call for both single and batch normalize requests.
-/// Returns the raw content string from the LLM's first choice.
-async fn call_llm_normalize_text(
-    state: &AppState,
-    user_content: String,
-    max_tokens: usize,
-) -> Option<String> {
-    let api_key = state.config.llm_api_key.as_ref()?;
-    let request = NormalizeLlmRequest {
-        model: state.config.llm_model.clone(),
-        messages: vec![
-            NormalizeLlmMessage {
-                role: "system".to_string(),
-                content: state.config.system_prompt_normalize.clone(),
-            },
-            NormalizeLlmMessage {
-                role: "user".to_string(),
-                content: user_content,
-            },
-        ],
-        max_tokens,
-        temperature: 0.0,
-    };
-
-    let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", state.config.llm_api_url);
-
-    match client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&request)
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => match resp.json::<NormalizeLlmResponse>().await {
-            Ok(r) => r.choices.first().map(|c| c.message.content.clone()),
-            Err(e) => {
-                tracing::warn!("Failed to parse LLM response: {e}");
-                None
-            }
-        },
-        Ok(resp) => {
-            tracing::warn!("LLM returned error status: {}", resp.status());
-            None
-        }
-        Err(e) => {
-            tracing::warn!("Failed to call LLM: {e}");
-            None
-        }
-    }
-}
-
-async fn call_llm_normalize_single(state: &AppState, raw_name: &str) -> Option<String> {
-    let content = call_llm_normalize_text(state, raw_name.to_string(), 50).await?;
-    Some(strip_quotes(&content).to_lowercase())
-}
-
-/// Call LLM to normalize multiple ingredient names in one request.
-async fn call_llm_normalize_batch(state: &AppState, raw_names: &[String]) -> Option<Vec<String>> {
-    let batch_input = serde_json::to_string(raw_names).ok()?;
-    let content = call_llm_normalize_text(state, batch_input, raw_names.len() * 20).await?;
-    serde_json::from_str::<Vec<String>>(&content).ok().map(|vec| {
-        vec.into_iter()
-            .map(|s| strip_quotes(&s).to_lowercase())
-            .collect()
-    })
-}
-
 /* ---------- Routes ---------- */
 
 /// GET /shopping
@@ -540,8 +308,8 @@ pub async fn create(
             unit_norm = None;
         }
 
-        // Use LLM normalization for better merging
-        let name_normalized = normalize_ingredient_name(&state, &parsed.name_raw).await;
+        // Use alias table for merging (skip for manually-entered items)
+        let name_normalized = normalize_name(&parsed.name_raw.trim().to_lowercase());
         let key = make_key(&name_normalized, unit_norm);
 
         // Reuse existing category if present to avoid redundant LLM calls.
@@ -588,8 +356,8 @@ pub async fn create(
         return Ok(Json(row));
     }
 
-    // Fallback: unitless item - also use normalization
-    let name_normalized = normalize_ingredient_name(&state, &parsed.name_raw).await;
+    // Fallback: unitless item
+    let name_normalized = normalize_name(&parsed.name_raw.trim().to_lowercase());
     let key = make_key(&name_normalized, None);
 
     // Reuse existing category if present to avoid redundant LLM calls.
@@ -908,38 +676,16 @@ pub async fn merge_items(
     State(state): State<AppState>,
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    // Parse all item lines first so we normalize the clean name (without any embedded qty/unit prefix)
-    let parsed_items: Vec<ParsedItem> = req.items.iter().map(|it| {
-        parse_item_line(&it.name).unwrap_or_else(|| ParsedItem {
-            qty: None,
-            unit: None,
-            name_raw: it.name.clone(),
-            name_norm: normalize_name(&it.name),
-        })
-    }).collect();
+    for it in &req.items {
+        let merge_name_norm = normalize_name(&it.name);
 
-    // BATCH NORMALIZATION: use the parsed name_raw (qty/unit stripped) not the raw input
-    let raw_names: Vec<String> = parsed_items.iter().map(|p| p.name_raw.clone()).collect();
-    let normalized_names = normalize_ingredient_names_batch(&state, &raw_names).await;
-
-    for (idx, it) in req.items.iter().enumerate() {
-        let parsed_name = &parsed_items[idx];
-
-        // Prefer explicit fields; fall back to parsed-from-name
-        let qty = it.quantity.or(parsed_name.qty);
-        let unit = it.unit.as_ref().map(|u| u.trim().to_string()).or_else(|| parsed_name.unit.clone());
-
-        // Canonicalize units & quantities
-        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(unit.as_deref(), qty);
-
-        // If there's no real quantity, treat as unitless so it merges with plain items
+        // Parse qty/unit from the ingredient fields
+        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(it.unit.as_deref(), it.quantity);
         if qty_norm.is_none() {
             unit_norm = None;
         }
 
-        // Use batch-normalized name
-        let name_normalized = &normalized_names[idx];
-        let key = make_key(name_normalized, unit_norm);
+        let key = make_key(&merge_name_norm, unit_norm);
 
         // Normalize/validate incoming category, if present
         let chosen_cat = it.category.as_ref().and_then(|s| {
@@ -953,17 +699,12 @@ pub async fn merge_items(
             }
             Some(c)
         } else {
-            // Reuse existing category if present to avoid redundant LLM calls.
-            let existing_cat: Option<String> =
-                sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
-                    .bind(&key)
-                    .fetch_optional(&state.pool)
-                    .await?;
-
-            Some(match existing_cat {
-                Some(c) if !c.trim().is_empty() => c,
-                _ => guess_category(&state, &parsed_name.name_raw).await,
-            })
+            // Reuse existing category if already set; leave NULL for new items.
+            sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
+                .bind(&key)
+                .fetch_optional(&state.pool)
+                .await?
+                .flatten()
         };
 
         // Prepare recipe_ids JSON array
@@ -994,7 +735,7 @@ pub async fn merge_items(
               done = 0
             ",
         )
-        .bind(name_normalized)
+        .bind(&merge_name_norm)
         .bind(unit_norm)
         .bind(qty_norm)
         .bind(&key)
@@ -1150,5 +891,41 @@ mod tests {
         assert_eq!(p.unit, Some("kg".to_string()));
         assert_eq!(p.name_raw, "flour");
         assert_eq!(p.name_norm, "flour");
+    }
+
+    #[test]
+    fn test_normalize_name_basic() {
+        assert_eq!(normalize_name("flour"), "flour");
+        assert_eq!(normalize_name("  Flour  "), "flour");
+        assert_eq!(normalize_name("olive oil"), "olive oil");
+    }
+
+    #[test]
+    fn test_normalize_name_strips_punctuation() {
+        // hyphens and apostrophes should be preserved by normalize_name
+        let n = normalize_name("all-purpose flour");
+        assert!(!n.is_empty());
+    }
+
+    #[test]
+    fn test_merge_key_same_name_different_units_are_separate() {
+        // "1 kg potatoes" and "3 potatoes" must NOT merge — different units
+        let key1 = make_key("potatoes", Some("kg"));
+        let key2 = make_key("potatoes", None);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_merge_key_same_name_same_unit_are_equal() {
+        let key1 = make_key("potatoes", Some("kg"));
+        let key2 = make_key("potatoes", Some("kg"));
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_merge_key_name_is_normalized() {
+        let key1 = make_key(&normalize_name("Flour"), None);
+        let key2 = make_key(&normalize_name("flour"), None);
+        assert_eq!(key1, key2);
     }
 }

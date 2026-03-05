@@ -414,7 +414,85 @@ pub async fn estimate_macros(
     Ok(Json(Recipe::from(final_row)))
 }
 
-/* ---------------- helpers ---------------- */
+/* ---------- Re-parse ingredients with LLM ---------- */
+
+const REPARSE_SYSTEM: &str = r#"You are a recipe parser. Given a JSON array of ingredient strings, return a JSON object {"ingredients": [...]} where each element has:
+- "quantity": number or null
+- "unit": string or null (use short forms: g, kg, ml, L, tsp, tbsp — or leave null for items like "2 eggs")
+- "name": string (the ingredient name only, no quantity/unit/prep)
+- "prep": string or null (preparation note, e.g. "diced", "sifted")
+
+Return one entry per input line, in the same order. Never omit entries."#;
+
+/// `POST /recipes/{id}/reparse-ingredients`
+///
+/// Sends the recipe's ingredients to the LLM and returns the re-parsed list.
+/// Does NOT modify the recipe in the database — the client should PATCH afterwards.
+///
+/// # Errors
+/// Returns an error if the recipe cannot be loaded, LLM key is missing, or the LLM call fails.
+pub async fn reparse_ingredients(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Vec<crate::models::Ingredient>>> {
+    let row = load_recipe_row(&state, id).await?;
+
+    let token = state.config.llm_api_key.clone().unwrap_or_default();
+    if token.is_empty() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "LLM API key not configured".into(),
+        )
+            .into());
+    }
+
+    // Collect the raw text for each ingredient (reconstruct from stored fields).
+    let lines: Vec<String> = row.ingredients.0.iter().map(|i| {
+        let name = match i.prep.as_deref() {
+            Some(p) if !p.trim().is_empty() => format!("{}, {}", i.name, p.trim()),
+            _ => i.name.clone(),
+        };
+        match (i.quantity, i.unit.as_deref()) {
+            (Some(q), Some(u)) if !u.is_empty() => format!("{q} {u} {name}"),
+            (Some(q), _) => format!("{q} {name}"),
+            _ => name,
+        }
+    }).collect();
+
+    if lines.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    let user = serde_json::to_string(&lines)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let llm = LlmClient::new(
+        state.config.llm_api_url.clone(),
+        token,
+        state.config.llm_model.clone(),
+    );
+
+    let json = llm
+        .chat_json(&http, REPARSE_SYSTEM, &user, 0.1, std::time::Duration::from_secs(60), Some(2000))
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM failed: {e}")))?;
+
+    let ingredients_val = json
+        .get("ingredients")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(vec![]));
+
+    let parsed = crate::routes::parse_recipe::normalize_ingredients(ingredients_val);
+
+    Ok(Json(parsed))
+}
+
+
 
 async fn load_recipe_row(state: &AppState, id: i64) -> AppResult<RecipeRow> {
     let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");

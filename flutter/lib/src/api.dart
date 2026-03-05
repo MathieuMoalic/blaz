@@ -402,8 +402,10 @@ class Ingredient {
   final String? unit;
   final String name;
   final String? prep;
+  /// true = raw unparsed text; false = user-confirmed structured ingredient.
+  final bool raw;
 
-  Ingredient({this.quantity, this.unit, required this.name, this.prep});
+  Ingredient({this.quantity, this.unit, required this.name, this.prep, this.raw = false});
 
   factory Ingredient.fromJson(Map<String, dynamic> j) {
     String? prep;
@@ -432,6 +434,7 @@ class Ingredient {
           : null,
       name: j['name'] as String,
       prep: prep,
+      raw: j['raw'] == true,
     );
   }
 
@@ -440,6 +443,7 @@ class Ingredient {
     'unit': unit,
     'name': name,
     if (prep != null) 'prep': prep,
+    'raw': raw,
   };
 }
 
@@ -560,6 +564,20 @@ Future<Recipe> estimateRecipeMacros(int id) async {
   return Recipe.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
+Future<List<Ingredient>> reparseIngredients(int id) async {
+  final r = await http.post(
+    _u('/recipes/$id/reparse-ingredients'),
+    headers: _headers(),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .map((e) => Ingredient.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
+
+
 Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
   final uri = Uri.parse('$baseUrl/recipes/import');
   final resp = await http.post(
@@ -612,19 +630,23 @@ Future<Recipe> importRecipeFromImages(List<(String, List<int>)> images) async {
 /// Parses a single ingredient text line (e.g. "200 g flour") into a
 /// structured [Ingredient]. Recognises the canonical units stored by the
 /// backend (g, kg, ml, L, tsp, tbsp); everything else is treated as part of
-/// the name so the text round-trips correctly after an edit.
+/// Parses a single ingredient line into a structured [Ingredient] proposal.
 ///
-/// Used both at save-time (to avoid storing null quantities) and at
-/// display-time (to scale ingredients that were stored as plain text).
+/// The returned ingredient always has `raw: false` — it is a proposed parse,
+/// not a raw unprocessed line.
 Ingredient parseIngredientLine(String text) {
   final tokens = text.trim().split(RegExp(r'\s+'));
   if (tokens.isEmpty) {
-    return Ingredient(name: text, quantity: null, unit: null, prep: null);
+    return Ingredient(name: text);
   }
 
   final qty = double.tryParse(tokens[0].replaceAll(',', '.'));
-  if (qty == null || tokens.length < 2) {
-    return Ingredient(name: text, quantity: null, unit: null, prep: null);
+  if (qty == null) {
+    // No leading number — the whole text is the name.
+    return Ingredient(name: text);
+  }
+  if (tokens.length < 2) {
+    return Ingredient(name: text);
   }
 
   // Only the units the backend stores as canonical.
@@ -641,14 +663,13 @@ Ingredient parseIngredientLine(String text) {
   }
 
   if (nameIdx >= tokens.length) {
-    return Ingredient(name: text, quantity: null, unit: null, prep: null);
+    return Ingredient(name: text);
   }
 
   return Ingredient(
     name: tokens.sublist(nameIdx).join(' '),
     quantity: qty,
     unit: unit,
-    prep: null,
   );
 }
 
@@ -658,18 +679,15 @@ Future<Recipe> updateRecipe({
   String? source,
   String? yieldText,
   String? notes,
-  List<String>? ingredients,
+  List<Ingredient>? ingredients,
   List<String>? instructions,
 }) async {
-  final structuredIngredients =
-      ingredients?.map((t) => parseIngredientLine(t).toJson()).toList();
-
   final body = <String, dynamic>{
     if (title != null) 'title': title,
     if (source != null) 'source': source,
     if (yieldText != null) 'yield': yieldText,
     if (notes != null) 'notes': notes,
-    if (ingredients != null) 'ingredients': structuredIngredients,
+    if (ingredients != null) 'ingredients': ingredients.map((i) => i.toJson()).toList(),
     if (instructions != null) 'instructions': instructions,
   };
   final r = await http.patch(
@@ -762,20 +780,17 @@ Future<Recipe> createRecipeFull({
   String? source,
   String? yieldText,
   String? notes,
-  required List<String> ingredients,
+  required List<Ingredient> ingredients,
   required List<String> instructions,
 }) async {
   final uri = Uri.parse('$baseUrl/recipes');
-
-  final structuredIngredients =
-      ingredients.map((t) => parseIngredientLine(t).toJson()).toList();
 
   final body = <String, dynamic>{
     'title': title,
     'source': source,
     'yield': yieldText,
     'notes': notes,
-    'ingredients': structuredIngredients,
+    'ingredients': ingredients.map((i) => i.toJson()).toList(),
     'instructions': instructions,
   };
 
@@ -933,7 +948,7 @@ Future<ShoppingItem> createShoppingItem(String text) async {
   final r = await http.post(
     _u('/shopping'),
     headers: _headers({'content-type': 'application/json'}),
-    body: jsonEncode({'text': text}),
+    body: jsonEncode({'text': text, 'raw': true}),
   );
   if (r.statusCode != 200) _throw(r);
   return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);

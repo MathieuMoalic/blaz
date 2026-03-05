@@ -134,6 +134,7 @@ async fn import_single_recipe(
             unit: None,
             name: ing_str.clone(),
             prep: None,
+            raw: true,
         })
         .collect();
 

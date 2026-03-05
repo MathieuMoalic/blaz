@@ -454,6 +454,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                   child: const Icon(Icons.add),
                 ),
               ),
+
             ],
           ),
         ),

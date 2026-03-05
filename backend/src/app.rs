@@ -83,6 +83,10 @@ pub fn build_app(state: AppState) -> Router {
             "/recipes/{id}/macros/estimate",
             post(recipes::estimate_macros),
         )
+        .route(
+            "/recipes/{id}/reparse-ingredients",
+            post(recipes::reparse_ingredients),
+        )
         .route("/recipes/import", post(parse_recipe::import_from_url))
         .route("/recipes/import/images", post(import_recipe_images::import_from_images))
         .route("/recipes/import/recipesage", post(import_recipesage::import_recipesage))

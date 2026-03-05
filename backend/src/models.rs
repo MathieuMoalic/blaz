@@ -18,8 +18,11 @@ pub struct AppState {
 pub struct Ingredient {
     pub quantity: Option<f64>, // e.g. 120.0
     pub unit: Option<String>,  // "g","kg","ml","L","tsp","tbsp" (normalized)
-    pub name: String,          // "flour"
+    pub name: String,          // e.g. "all-purpose flour"
     pub prep: Option<String>,
+    /// `true` = raw unparsed text; `false` = user-confirmed structured ingredient.
+    #[serde(default)]
+    pub raw: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

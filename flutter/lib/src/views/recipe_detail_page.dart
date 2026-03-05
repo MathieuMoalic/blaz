@@ -74,16 +74,60 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   Future<void> _addIngredients(api.Recipe r) async {
     if (r.ingredients.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('No ingredients to add')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No ingredients to add')),
+      );
       return;
     }
 
-    final selected = await _pickIngredientsBottomSheet(
-      title: 'Add to shopping list',
-      items: r.ingredients,
-    );
+    // Parse any raw ingredients one at a time before showing the selection sheet.
+    final rawIndices = [
+      for (var i = 0; i < r.ingredients.length; i++)
+        if (r.ingredients[i].raw) i,
+    ];
+
+    var ingredients = List<api.Ingredient>.from(r.ingredients);
+
+    if (rawIndices.isNotEmpty && mounted) {
+      List<String> knownNames;
+      try {
+        knownNames = await api.fetchAllShoppingTexts();
+      } catch (_) {
+        knownNames = const [];
+      }
+
+      for (var pos = 0; pos < rawIndices.length; pos++) {
+        if (!mounted) return;
+        final i = rawIndices[pos];
+        final result = await showDialog<api.Ingredient>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => ParseIngredientDialog(
+            rawText: ingredients[i].name,
+            knownNames: knownNames,
+            current: pos + 1,
+            total: rawIndices.length,
+          ),
+        );
+        if (result != null) {
+          ingredients[i] = result;
+        }
+      }
+    }
+
+    if (!mounted) return;
+    final parsedIngredients = ingredients.where((i) => !i.raw).toList();
+
+    if (parsedIngredients.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No parsed ingredients to add.')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    final selected = await _pickIngredientsSheet(parsedIngredients);
 
     if (!mounted) return;
     if (selected == null || selected.isEmpty) return;
@@ -96,9 +140,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to add: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to add: $e')),
+      );
     }
   }
 
@@ -271,144 +315,15 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
   }
 
-  Future<List<api.Ingredient>?> _pickIngredientsBottomSheet({
-    required String title,
-    required List<api.Ingredient> items,
-  }) async {
+  /// Bottom sheet to select and optionally rename ingredients before adding to the shopping list.
+  Future<List<api.Ingredient>?> _pickIngredientsSheet(
+    List<api.Ingredient> items,
+  ) async {
     return showModalBottomSheet<List<api.Ingredient>>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) {
-        final media = MediaQuery.of(ctx);
-        final height = media.size.height * 0.7;
-
-        final selections = List<bool>.filled(items.length, false);
-        bool allSelected() => selections.every((v) => v);
-        bool anySelected() => selections.any((v) => v);
-
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            final triValue = allSelected()
-                ? true
-                : anySelected()
-                ? null
-                : false;
-
-            return SafeArea(
-              child: SizedBox(
-                height: height,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              title,
-                              style: Theme.of(ctx).textTheme.titleMedium,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Row(
-                            children: [
-                              const Text('Select all'),
-                              Checkbox(
-                                value: triValue,
-                                tristate: true,
-                                onChanged: (_) {
-                                  final target = !allSelected();
-                                  setSheetState(() {
-                                    for (
-                                      var i = 0;
-                                      i < selections.length;
-                                      i++
-                                    ) {
-                                      selections[i] = target;
-                                    }
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        itemCount: items.length,
-                        itemBuilder: (_, i) => CheckboxListTile(
-                          value: selections[i],
-                          onChanged: (v) =>
-                              setSheetState(() => selections[i] = v ?? false),
-                          title: Text(items[i].toLine(factor: _scale)),
-                          controlAffinity: ListTileControlAffinity.leading,
-                          dense: true,
-                        ),
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left: 16,
-                        right: 16,
-                        top: 10,
-                        bottom: media.viewInsets.bottom + 12,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(ctx, <String>[]),
-                              child: const Text('Cancel'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: anySelected()
-                                  ? () {
-                                      final picked = <api.Ingredient>[];
-                                      for (var i = 0; i < items.length; i++) {
-                                        if (selections[i]) {
-                                          final ing = items[i];
-                                          // Scale the ingredient
-                                          picked.add(
-                                            api.Ingredient(
-                                              quantity: ing.quantity != null
-                                                  ? ing.quantity! * _scale
-                                                  : null,
-                                              unit: ing.unit,
-                                              name: ing.name,
-                                              prep: null, // Don't include prep in shopping list
-                                            ),
-                                          );
-                                        }
-                                      }
-                                      Navigator.pop(ctx, picked);
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.shopping_cart_outlined),
-                              label: Text(
-                                anySelected()
-                                    ? 'Add ${selections.where((s) => s).length}'
-                                    : 'Add',
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      builder: (ctx) => _AddIngredientsSheet(items: items, scale: _scale),
     );
   }
 
@@ -576,13 +491,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                         else
                           ...r.ingredients.asMap().entries.map((e) {
                             final idx = e.key;
-                            var ing = e.value;
-                            // If stored as plain text (quantity == null), parse
-                            // it now so the scale factor has an effect even for
-                            // recipes that predate the structured-ingredient fix.
-                            if (ing.quantity == null) {
-                              ing = api.parseIngredientLine(ing.name);
-                            }
+                            final ing = e.value;
                             final line = ing.toLine(factor: _scale);
                             final checked = _checkedIngredients.contains(idx);
                             return _Bullet(
@@ -1309,6 +1218,208 @@ class _ImageViewerPageState extends State<_ImageViewerPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add-to-shopping-list bottom sheet
+
+class _AddIngredientsSheet extends StatefulWidget {
+  final List<api.Ingredient> items;
+  final double scale;
+
+  const _AddIngredientsSheet({required this.items, required this.scale});
+
+  @override
+  State<_AddIngredientsSheet> createState() => _AddIngredientsSheetState();
+}
+
+class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
+  late List<bool> _selected;
+  late List<String> _names;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = List.filled(widget.items.length, true);
+    _names = widget.items.map((i) => i.name).toList();
+  }
+
+  bool get _anySelected => _selected.any((v) => v);
+  bool get _allSelected => _selected.every((v) => v);
+
+  static String _fmtQty(double v) {
+    final s = ((v * 100).round() / 100.0).toString();
+    return s.endsWith('.0') ? s.replaceFirst('.0', '') : s;
+  }
+
+  String _tileLabel(int i) {
+    final ing = widget.items[i];
+    final q = ing.quantity != null ? ing.quantity! * widget.scale : null;
+    final qStr = q != null ? _fmtQty(q) : '';
+    final uStr = ing.unit ?? '';
+    final sep = (qStr.isNotEmpty && uStr.isNotEmpty) ? '\u00a0' : '';
+    final prefix = '$qStr$sep$uStr';
+    return prefix.isNotEmpty ? '$prefix  ${_names[i]}' : _names[i];
+  }
+
+  Future<void> _renameTile(int i) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _RenameDialog(initial: _names[i]),
+    );
+    if (result != null && result.isNotEmpty) setState(() => _names[i] = result);
+  }
+
+  void _confirm() {
+    final result = <api.Ingredient>[];
+    for (var i = 0; i < widget.items.length; i++) {
+      if (!_selected[i]) continue;
+      final ing = widget.items[i];
+      result.add(api.Ingredient(
+        quantity: ing.quantity != null ? ing.quantity! * widget.scale : null,
+        unit: ing.unit,
+        name: _names[i],
+      ));
+    }
+    Navigator.pop(context, result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final media = MediaQuery.of(context);
+
+    return SafeArea(
+      child: SizedBox(
+        height: media.size.height * 0.7,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('Add to shopping list', style: theme.textTheme.titleMedium),
+                  ),
+                  Checkbox(
+                    value: _allSelected ? true : (_anySelected ? null : false),
+                    tristate: true,
+                    onChanged: (_) {
+                      final target = !_allSelected;
+                      setState(() {
+                        for (var i = 0; i < _selected.length; i++) {
+                          _selected[i] = target;
+                        }
+                      });
+                    },
+                  ),
+                  Text('All', style: theme.textTheme.bodySmall),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: widget.items.length,
+                itemBuilder: (_, i) => CheckboxListTile(
+                  value: _selected[i],
+                  onChanged: (v) => setState(() => _selected[i] = v ?? false),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  dense: true,
+                  title: Text(_tileLabel(i)),
+                  secondary: IconButton(
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    tooltip: 'Rename',
+                    onPressed: () => _renameTile(i),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 10,
+                bottom: media.viewInsets.bottom + 12,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _anySelected ? _confirm : null,
+                      icon: const Icon(Icons.shopping_cart_outlined),
+                      label: Text(
+                        _anySelected
+                            ? 'Add ${_selected.where((s) => s).length}'
+                            : 'Add',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Simple rename dialog — owns its own TextEditingController
+
+class _RenameDialog extends StatefulWidget {
+  final String initial;
+  const _RenameDialog({required this.initial});
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Shopping name'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+        onSubmitted: (_) => Navigator.pop(context, _ctrl.text.trim()),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _ctrl.text.trim()),
+          child: const Text('OK'),
+        ),
+      ],
     );
   }
 }

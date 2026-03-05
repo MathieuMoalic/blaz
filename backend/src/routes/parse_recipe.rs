@@ -285,6 +285,7 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                         unit,
                         name,
                         prep,
+                        raw: false,
                     })
                 }
                 _ => None, // NO STRINGS ACCEPTED
