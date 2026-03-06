@@ -161,6 +161,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
     fn test_html_to_plain_text() {
         assert_eq!(
             html_to_plain_text("<p>Hello <b>world</b></p>"),

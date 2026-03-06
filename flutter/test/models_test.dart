@@ -743,4 +743,216 @@ void main() {
       expect(url, isNot(contains('?')));
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // MealPlanEntry.fromJson
+  // ──────────────────────────────────────────────────────────────────
+  group('MealPlanEntry.fromJson', () {
+    test('parses all fields', () {
+      final e = MealPlanEntry.fromJson({
+        'id': 7,
+        'day': '2026-03-10',
+        'recipe_id': 3,
+        'title': 'Pasta',
+        'image_path_small': 'recipes/3/small.webp',
+      });
+      expect(e.id, 7);
+      expect(e.day, '2026-03-10');
+      expect(e.recipeId, 3);
+      expect(e.title, 'Pasta');
+      expect(e.imagePathSmall, 'recipes/3/small.webp');
+    });
+
+    test('imagePathSmall is null when absent', () {
+      final e = MealPlanEntry.fromJson({
+        'id': 1,
+        'day': '2026-01-01',
+        'recipe_id': 1,
+        'title': 'Soup',
+      });
+      expect(e.imagePathSmall, isNull);
+    });
+
+    test('numeric id is coerced to int', () {
+      final e = MealPlanEntry.fromJson({
+        'id': 5.0,
+        'day': '2026-01-01',
+        'recipe_id': 2.0,
+        'title': 'Stew',
+      });
+      expect(e.id, 5);
+      expect(e.recipeId, 2);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // PrepReminder.fromJson / toJson
+  // ──────────────────────────────────────────────────────────────────
+  group('PrepReminder', () {
+    test('fromJson parses step and hours_before', () {
+      final r = PrepReminder.fromJson({'step': 'Soak beans', 'hours_before': 12});
+      expect(r.step, 'Soak beans');
+      expect(r.hoursBefore, 12);
+    });
+
+    test('toJson round-trips correctly', () {
+      const r = PrepReminder(step: 'Marinate chicken', hoursBefore: 4);
+      final j = r.toJson();
+      expect(j['step'], 'Marinate chicken');
+      expect(j['hours_before'], 4);
+    });
+
+    test('fromJson → toJson round-trip', () {
+      final original = {'step': 'Chill overnight', 'hours_before': 8};
+      final r = PrepReminder.fromJson(original);
+      expect(r.toJson(), original);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // PrepReminderDto.fromJson
+  // ──────────────────────────────────────────────────────────────────
+  group('PrepReminderDto.fromJson', () {
+    test('parses all fields', () {
+      final d = PrepReminderDto.fromJson({
+        'recipe_id': 5,
+        'recipe_title': 'Lentil Soup',
+        'step': 'Soak lentils',
+        'hours_before': 6,
+        'due_date': '2026-03-09',
+        'meal_date': '2026-03-10',
+      });
+      expect(d.recipeId, 5);
+      expect(d.recipeTitle, 'Lentil Soup');
+      expect(d.step, 'Soak lentils');
+      expect(d.hoursBefore, 6);
+      expect(d.dueDate, '2026-03-09');
+      expect(d.mealDate, '2026-03-10');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // ShoppingItem.fromJson
+  // ──────────────────────────────────────────────────────────────────
+  group('ShoppingItem.fromJson', () {
+    test('done=0 (int) → false', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1,
+        'text': 'milk',
+        'done': 0,
+        'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.done, isFalse);
+    });
+
+    test('done=1 (int) → true', () {
+      final item = ShoppingItem.fromJson({
+        'id': 2,
+        'text': 'eggs',
+        'done': 1,
+        'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.done, isTrue);
+    });
+
+    test('done=false (bool) → false', () {
+      final item = ShoppingItem.fromJson({
+        'id': 3,
+        'text': 'butter',
+        'done': false,
+        'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.done, isFalse);
+    });
+
+    test('done=true (bool) → true', () {
+      final item = ShoppingItem.fromJson({
+        'id': 4,
+        'text': 'flour',
+        'done': true,
+        'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.done, isTrue);
+    });
+
+    test('done="1" (string) → true', () {
+      final item = ShoppingItem.fromJson({
+        'id': 5,
+        'text': 'sugar',
+        'done': '1',
+        'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.done, isTrue);
+    });
+
+    test('done="0" (string) → false', () {
+      final item = ShoppingItem.fromJson({
+        'id': 6,
+        'text': 'salt',
+        'done': '0',
+        'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.done, isFalse);
+    });
+
+    test('category is null when absent', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'x', 'done': 0, 'notes': '', 'recipe_ids': '[]',
+      });
+      expect(item.category, isNull);
+    });
+
+    test('category is preserved when present', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'banana', 'done': 0, 'notes': '', 'recipe_ids': '[]',
+        'category': 'Fruits',
+      });
+      expect(item.category, 'Fruits');
+    });
+
+    test('recipe_ids JSON array is parsed', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'carrots', 'done': 0, 'notes': '',
+        'recipe_ids': '[3, 7, 12]',
+      });
+      expect(item.recipeIds, [3, 7, 12]);
+    });
+
+    test('recipe_ids empty array', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'onion', 'done': 0, 'notes': '',
+        'recipe_ids': '[]',
+      });
+      expect(item.recipeIds, isEmpty);
+    });
+
+    test('recipe_ids malformed JSON falls back to empty list', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'garlic', 'done': 0, 'notes': '',
+        'recipe_ids': 'not-json',
+      });
+      expect(item.recipeIds, isEmpty);
+    });
+
+    test('notes defaults to empty string when null', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'tomato', 'done': 0, 'recipe_ids': '[]',
+      });
+      expect(item.notes, '');
+    });
+
+    test('recipe_titles is read when present', () {
+      final item = ShoppingItem.fromJson({
+        'id': 1, 'text': 'pasta', 'done': 0, 'notes': '', 'recipe_ids': '[1]',
+        'recipe_titles': 'Carbonara, Bolognese',
+      });
+      expect(item.recipeTitles, 'Carbonara, Bolognese');
+    });
+  });
 }

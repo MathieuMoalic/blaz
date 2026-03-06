@@ -1,9 +1,8 @@
-import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../api.dart' as api;
 
-/// Read-only recipe view shown when visiting a /share/<token> URL.
+/// Read-only recipe view shown when visiting a `/share/<token>` URL.
 class SharedRecipePage extends StatefulWidget {
   final String token;
   const SharedRecipePage({super.key, required this.token});

@@ -167,6 +167,26 @@ async fn import_single_recipe(
         })
         .unwrap_or_default();
 
+    // Skip if a recipe with the same source URL (or title, if no source) already exists.
+    let duplicate_exists = if source.is_empty() {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM recipes WHERE title = ?)")
+            .bind(&title)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| format!("{title}: Database error: {e}"))?
+    } else {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM recipes WHERE source = ?)")
+            .bind(&source)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| format!("{title}: Database error: {e}"))?
+    };
+
+    if duplicate_exists {
+        tracing::info!("  Skipping duplicate recipe: {}", title);
+        return Ok(());
+    }
+
     let result = sqlx::query(
         r#"
         INSERT INTO recipes (title, source, "yield", notes, ingredients, instructions)
@@ -345,4 +365,70 @@ async fn store_recipe_image_bytes(
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── parse_instructions ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_instructions_none_returns_empty() {
+        assert_eq!(parse_instructions(None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_instructions_plain_string() {
+        let v = json!("Mix and bake.");
+        assert_eq!(parse_instructions(Some(v)), vec!["Mix and bake."]);
+    }
+
+    #[test]
+    fn parse_instructions_array_of_strings() {
+        let v = json!(["Step 1", "Step 2", "Step 3"]);
+        assert_eq!(
+            parse_instructions(Some(v)),
+            vec!["Step 1", "Step 2", "Step 3"]
+        );
+    }
+
+    #[test]
+    fn parse_instructions_array_of_howto_step_objects() {
+        let v = json!([
+            {"@type": "HowToStep", "text": "Preheat oven to 180°C."},
+            {"@type": "HowToStep", "text": "Mix the batter."}
+        ]);
+        assert_eq!(
+            parse_instructions(Some(v)),
+            vec!["Preheat oven to 180°C.", "Mix the batter."]
+        );
+    }
+
+    #[test]
+    fn parse_instructions_mixed_array_skips_objects_without_text() {
+        let v = json!([
+            "Step A",
+            {"@type": "HowToStep", "text": "Step B"},
+            {"@type": "HowToSection", "name": "no text key"},
+            42
+        ]);
+        assert_eq!(
+            parse_instructions(Some(v)),
+            vec!["Step A", "Step B"]
+        );
+    }
+
+    #[test]
+    fn parse_instructions_empty_array() {
+        let v = json!([]);
+        assert_eq!(parse_instructions(Some(v)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_instructions_null_returns_empty() {
+        let v = json!(null);
+        assert_eq!(parse_instructions(Some(v)), Vec::<String>::new());
+    }
 }

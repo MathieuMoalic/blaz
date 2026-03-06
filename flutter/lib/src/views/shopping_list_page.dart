@@ -471,6 +471,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
     // Get all unique item texts including done items for suggestions
     final allItemTexts = await fetchAllShoppingTexts();
     
+    if (!mounted) return;
     await showDialog(
       context: context,
       builder: (ctx) {
@@ -874,7 +875,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       if (mounted) {
         setState(() => _suggestions = newSuggestions);
       }
-    } catch (e, stack) {
+    } catch (e) {
       // If there's an error, just clear suggestions
       if (mounted) {
         setState(() => _suggestions = []);

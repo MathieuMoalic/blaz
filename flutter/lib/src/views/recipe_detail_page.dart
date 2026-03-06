@@ -1,4 +1,3 @@
-import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -337,7 +336,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     try {
       final token = await api.shareRecipe(r.id);
       // Build share URL from the current base URL
-      final base = (api.baseUrl ?? '').replaceAll(RegExp(r'/$'), '');
+      final base = api.baseUrl.replaceAll(RegExp(r'/$'), '');
       final link = '$base/share/$token';
       if (!mounted) return;
       await showDialog<void>(
@@ -1343,18 +1342,6 @@ class _MacrosSection extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-
-  Widget _pill(BuildContext context, String label, String value) {
-    final c = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: c.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text('$label: $value'),
     );
   }
 }

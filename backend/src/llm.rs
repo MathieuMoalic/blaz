@@ -298,3 +298,116 @@ pub fn extract_largest_json_object(s: &str) -> Option<String> {
 
     best.map(|(a, b)| s[a..=b].to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_fenced_json ──────────────────────────────────────────────────
+
+    #[test]
+    fn fenced_json_plain_fence() {
+        let s = "Some text\n```json\n{\"key\": \"value\"}\n```";
+        assert_eq!(
+            extract_fenced_json(s),
+            Some(r#"{"key": "value"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn fenced_json_bare_fence() {
+        let s = "```\n{\"a\": 1}\n```";
+        assert_eq!(extract_fenced_json(s), Some(r#"{"a": 1}"#.to_string()));
+    }
+
+    #[test]
+    fn fenced_json_uppercase_json_tag() {
+        let s = "```JSON\n{\"x\": true}\n```";
+        assert_eq!(extract_fenced_json(s), Some(r#"{"x": true}"#.to_string()));
+    }
+
+    #[test]
+    fn fenced_json_no_fence_returns_none() {
+        assert_eq!(extract_fenced_json(r#"{"a": 1}"#), None);
+        assert_eq!(extract_fenced_json("no json here"), None);
+    }
+
+    #[test]
+    fn fenced_json_empty_fence_returns_none() {
+        assert_eq!(extract_fenced_json("```json\n```"), None);
+    }
+
+    #[test]
+    fn fenced_json_nested_braces() {
+        let s = "```json\n{\"outer\": {\"inner\": 42}}\n```";
+        assert_eq!(
+            extract_fenced_json(s),
+            Some(r#"{"outer": {"inner": 42}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn fenced_json_content_before_and_after() {
+        let s = "Here is the result:\n```json\n{\"title\":\"Pasta\"}\n```\nEnd.";
+        assert_eq!(
+            extract_fenced_json(s),
+            Some(r#"{"title":"Pasta"}"#.to_string())
+        );
+    }
+
+    // ── extract_largest_json_object ─────────────────────────────────────────
+
+    #[test]
+    fn largest_json_simple_object() {
+        let s = r#"{"title": "Pasta"}"#;
+        assert_eq!(
+            extract_largest_json_object(s),
+            Some(r#"{"title": "Pasta"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn largest_json_picks_larger() {
+        // Two objects; the second is larger
+        let s = r#"{"a":1} and then {"title":"Carbonara","steps":["boil","drain"]}"#;
+        let result = extract_largest_json_object(s).unwrap();
+        assert!(result.contains("Carbonara"));
+    }
+
+    #[test]
+    fn largest_json_nested_object() {
+        let s = r#"Result: {"outer":{"inner":99}}"#;
+        let result = extract_largest_json_object(s).unwrap();
+        assert!(result.contains("outer"));
+        assert!(result.contains("inner"));
+    }
+
+    #[test]
+    fn largest_json_ignores_braces_in_strings() {
+        let s = r#"{"key": "value with {braces} inside"}"#;
+        let result = extract_largest_json_object(s).unwrap();
+        // Must include the full object, not stop at the brace inside the string
+        assert!(result.contains("braces"));
+    }
+
+    #[test]
+    fn largest_json_no_object_returns_none() {
+        assert_eq!(extract_largest_json_object("no braces here"), None);
+        assert_eq!(extract_largest_json_object(""), None);
+    }
+
+    #[test]
+    fn largest_json_prefix_text() {
+        let s = r#"Here is your recipe: {"title":"Soup","ingredients":[]}"#;
+        let result = extract_largest_json_object(s).unwrap();
+        assert!(result.starts_with('{'));
+        assert!(result.contains("Soup"));
+    }
+
+    #[test]
+    fn largest_json_handles_escape_sequences() {
+        let s = r#"{"msg": "he said \"hello\""}"#;
+        let result = extract_largest_json_object(s).unwrap();
+        assert!(result.contains("hello"));
+    }
+}

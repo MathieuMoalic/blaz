@@ -29,7 +29,6 @@ class MealPlanPageState extends State<MealPlanPage> {
   final Map<int, Recipe> _recipeIndex = {};
 
   List<PrepReminderDto> _reminders = [];
-  bool _remindersLoaded = false;
 
   final _itemScrollController = ItemScrollController();
   final _itemPositionsListener = ItemPositionsListener.create();
@@ -104,10 +103,9 @@ class MealPlanPageState extends State<MealPlanPage> {
       if (!mounted) return;
       setState(() {
         _reminders = reminders;
-        _remindersLoaded = true;
       });
     } catch (_) {
-      if (mounted) setState(() => _remindersLoaded = true);
+      // ignore: no-op on error
     }
   }
 

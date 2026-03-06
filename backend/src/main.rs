@@ -22,6 +22,8 @@ mod models;
 mod ntfy;
 mod routes;
 mod units;
+#[cfg(test)]
+mod tests;
 
 use clap::Parser;
 use tokio::net::TcpListener;
