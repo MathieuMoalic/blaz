@@ -230,6 +230,14 @@ pub fn normalize_instructions(v: JsonValue) -> Vec<String> {
                     let t = s.trim().to_string();
                     (!t.is_empty()).then_some(t)
                 }
+                // {"section": "Sauce"} → "## Sauce"
+                JsonValue::Object(m) => {
+                    m.get("section")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("## {s}"))
+                }
                 JsonValue::Number(n) => Some(n.to_string()),
                 JsonValue::Bool(b) => Some(b.to_string()),
                 _ => None,
@@ -251,6 +259,21 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
             .into_iter()
             .filter_map(|x| match x {
                 JsonValue::Object(mut m) => {
+                    // Section header: {"section": "Sauce"}
+                    if let Some(s) = m.get("section").and_then(|v| v.as_str()) {
+                        let label = s.trim().to_string();
+                        if !label.is_empty() {
+                            return Some(Ingredient {
+                                section: Some(label),
+                                quantity: None,
+                                unit: None,
+                                name: String::new(),
+                                prep: None,
+                                raw: false,
+                            });
+                        }
+                    }
+
                     let name = m
                         .remove("name")
                         .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
@@ -281,6 +304,7 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                         .filter(|s| !s.is_empty());
 
                     Some(Ingredient {
+                        section: None,
                         quantity,
                         unit,
                         name,

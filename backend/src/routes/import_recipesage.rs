@@ -130,6 +130,7 @@ async fn import_single_recipe(
         .recipe_ingredient
         .iter()
         .map(|ing_str| Ingredient {
+            section: None,
             quantity: None,
             unit: None,
             name: ing_str.clone(),

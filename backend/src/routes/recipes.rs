@@ -178,8 +178,11 @@ pub async fn create(
         return Err(StatusCode::BAD_REQUEST.into());
     }
 
-    // Strict validation for object-only ingredients
+    // Strict validation for object-only ingredients (skip section headers)
     for ing in &new.ingredients {
+        if ing.section.is_some() {
+            continue; // section header — name is intentionally empty
+        }
         if ing.name.trim().is_empty() {
             return Err(StatusCode::BAD_REQUEST.into());
         }
@@ -275,7 +278,7 @@ fn build_update_args(
     }
     if let Some(ref ings) = up.ingredients {
         for ing in ings {
-            if ing.name.trim().is_empty() {
+            if ing.section.is_none() && ing.name.trim().is_empty() {
                 return Err(StatusCode::BAD_REQUEST.into());
             }
         }
@@ -446,21 +449,28 @@ pub async fn reparse_ingredients(
             .into());
     }
 
-    // Collect the raw text for each ingredient (reconstruct from stored fields).
-    let lines: Vec<String> = row.ingredients.0.iter().map(|i| {
-        let name = match i.prep.as_deref() {
-            Some(p) if !p.trim().is_empty() => format!("{}, {}", i.name, p.trim()),
-            _ => i.name.clone(),
-        };
-        match (i.quantity, i.unit.as_deref()) {
-            (Some(q), Some(u)) if !u.is_empty() => format!("{q} {u} {name}"),
-            (Some(q), _) => format!("{q} {name}"),
-            _ => name,
-        }
-    }).collect();
+    let original = row.ingredients.0;
+
+    // Build lines only for non-section ingredients so the LLM only sees real ingredients.
+    let lines: Vec<String> = original
+        .iter()
+        .filter(|i| i.section.is_none())
+        .map(|i| {
+            let name = match i.prep.as_deref() {
+                Some(p) if !p.trim().is_empty() => format!("{}, {}", i.name, p.trim()),
+                _ => i.name.clone(),
+            };
+            match (i.quantity, i.unit.as_deref()) {
+                (Some(q), Some(u)) if !u.is_empty() => format!("{q} {u} {name}"),
+                (Some(q), _) => format!("{q} {name}"),
+                _ => name,
+            }
+        })
+        .collect();
 
     if lines.is_empty() {
-        return Ok(Json(vec![]));
+        // Only section headers, nothing to parse.
+        return Ok(Json(original));
     }
 
     let user = serde_json::to_string(&lines)
@@ -487,9 +497,23 @@ pub async fn reparse_ingredients(
         .cloned()
         .unwrap_or(serde_json::Value::Array(vec![]));
 
-    let parsed = crate::routes::parse_recipe::normalize_ingredients(ingredients_val);
+    // Reconstruct full list: section headers pass through unchanged; non-section
+    // ingredients are replaced by LLM results in order.
+    let mut llm_iter = crate::routes::parse_recipe::normalize_ingredients(ingredients_val)
+        .into_iter()
+        .filter(|i| i.section.is_none());
+    let result: Vec<crate::models::Ingredient> = original
+        .into_iter()
+        .map(|ingr| {
+            if ingr.section.is_some() {
+                ingr
+            } else {
+                llm_iter.next().unwrap_or(ingr)
+            }
+        })
+        .collect();
 
-    Ok(Json(parsed))
+    Ok(Json(result))
 }
 
 

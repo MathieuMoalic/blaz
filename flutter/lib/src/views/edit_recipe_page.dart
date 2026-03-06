@@ -92,6 +92,12 @@ class _EditRecipePageState extends State<EditRecipePage> {
   Future<void> _editIngredient(int index) async {
     final existing = index >= 0 ? _ingredients[index] : null;
 
+    // Tapping a section header renames it.
+    if (existing?.isSection == true) {
+      await _renameSection(index);
+      return;
+    }
+
     final result = await showDialog<Ingredient>(
       context: context,
       builder: (ctx) => _IngredientDialog(
@@ -108,6 +114,74 @@ class _EditRecipePageState extends State<EditRecipePage> {
           _ingredients.add(result);
         }
       });
+    }
+  }
+
+  Future<void> _renameSection(int index) async {
+    final current = _ingredients[index].section ?? '';
+    final ctrl = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename section'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Section name',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (result != null && result.isNotEmpty) {
+      setState(() => _ingredients[index] = Ingredient.sectionHeader(result));
+    }
+  }
+
+  Future<void> _addSection() async {
+    final ctrl = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add section'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Section name',
+            hintText: 'e.g. Sauce, Topping…',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (result != null && result.isNotEmpty) {
+      setState(() => _ingredients.add(Ingredient.sectionHeader(result)));
     }
   }
 
@@ -247,6 +321,11 @@ class _EditRecipePageState extends State<EditRecipePage> {
                       title: const Text('Add ingredient'),
                       onTap: _busy ? null : () => _editIngredient(-1),
                     ),
+                    ListTile(
+                      leading: const Icon(Icons.playlist_add),
+                      title: const Text('Add section'),
+                      onTap: _busy ? null : _addSection,
+                    ),
                   ],
                 ),
               ),
@@ -257,7 +336,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
                 controller: _instructionsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Instructions (one step per line)',
-                  hintText: 'e.g.\nFold in flour.\nBake 20 min.',
+                  hintText: 'e.g.\n## Section name\nFold in flour.\nBake 20 min.',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
@@ -341,6 +420,39 @@ class _IngredientTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
+
+    // Section header row
+    if (ingredient.isSection) {
+      return ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.fromLTRB(16, 4, 4, 0),
+        title: Text(
+          ingredient.section!,
+          style: theme.textTheme.labelLarge?.copyWith(
+            color: theme.colorScheme.primary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 16),
+              onPressed: onTap,
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Rename section',
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 16),
+              onPressed: onDelete,
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Remove section',
+            ),
+          ],
+        ),
+      );
+    }
+
     final isRaw = ingredient.raw;
 
     final qtyLabel = isRaw

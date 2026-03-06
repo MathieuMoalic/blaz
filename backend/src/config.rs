@@ -95,13 +95,15 @@ pub struct Config {
     pub ntfy_url: Option<String>,
 }
 
-const DEFAULT_SYSTEM_PROMPT_IMPORT: &str = r#"You are a precise recipe data extractor and normalizer.
+const DEFAULT_SYSTEM_PROMPT_IMPORT: &str = r###"You are a precise recipe data extractor and normalizer.
 
 INPUT: plain text from a recipe page (any language).
 OUTPUT: STRICT JSON with exactly these keys:
 {
   "title": string,
   "ingredients": [
+    {"section": string}              ← section header (use when recipe has named groups)
+    |
     {
       "quantity": null | number,
       "unit": null | "g" | "kg" | "ml" | "L" | "tsp" | "tbsp",
@@ -122,6 +124,10 @@ TASK:
 - For solid items, convert oz→g (1 oz ≈ 28 g).
   For liquids, convert fl oz→ml (1 fl oz ≈ 30 ml).
   For cups→ml (1 cup ≈ 240 ml).
+- If the recipe ingredients have named groups (e.g. "For the sauce", "Topping", "Dough"),
+  insert a {"section": "Name"} object BEFORE the ingredients of that group.
+  * Use a short, clean English name for each section (e.g. "Sauce", "Topping", "Dough").
+  * If all ingredients belong to one unnamed group, do NOT add any section headers.
 - If an ingredient has preparation words (e.g., sliced, diced, minced, grated, softened),
   place them ONLY in the "prep" field.
   Example:
@@ -134,26 +140,37 @@ TASK:
 - Use 0.5/0.25/0.75 style; never 1/2, 1/4, etc.
 - If no numeric quantity, set "quantity": null and "unit": null.
 - "instructions": array of steps (strings). No commentary.
+  * If the recipe instructions have named sections (e.g. "Make the sauce", "To serve"),
+    insert a string "## Section Name" BEFORE the steps of that section.
+    Example: ["## Pulled Jackfruit", "Shred the jackfruit.", "## Tzatziki", "Mix yogurt."]
+  * Only add section headers when the recipe text clearly names the groups.
 - Remove all mentions of "Vegan" inside the title.
 
-FORMAT EXAMPLE:
+FORMAT EXAMPLE (with sections):
 {
-  "title": "Carrot Soup",
+  "title": "BBQ Pulled Jackfruit",
   "ingredients": [
-    {"quantity":2,"unit":null,"name":"carrots","prep":"diced"},
-    {"quantity":150,"unit":"g","name":"flour","prep":null},
-    {"quantity":2,"unit":null,"name":"cloves garlic","prep":"minced"}
+    {"section": "Pulled Jackfruit"},
+    {"quantity":560,"unit":"g","name":"jackfruit","prep":"drained and rinsed"},
+    {"quantity":1,"unit":"tbsp","name":"olive oil","prep":null},
+    {"section": "Tzatziki"},
+    {"quantity":240,"unit":"ml","name":"non-dairy yogurt","prep":null},
+    {"quantity":0.5,"unit":null,"name":"cucumber","prep":"grated"}
   ],
   "instructions": [
-    "Cook the garlic.",
-    "Fold in flour."
+    "## Pulled Jackfruit",
+    "Shred the jackfruit and toss with spices.",
+    "Cook until caramelised.",
+    "## Tzatziki",
+    "Grate cucumber and squeeze out excess liquid.",
+    "Mix with yogurt, garlic, and lemon juice."
   ]
 }
 
 SELF-CHECK:
 Before answering, verify no banned units appear in "unit".
 Verify "name" does not contain comma-prep fragments.
-Answer only with the final JSON."#;
+Answer only with the final JSON."###;
 
 const DEFAULT_SYSTEM_PROMPT_NORMALIZE: &str = r#"You are an ingredient name normalizer for a shopping list.
 

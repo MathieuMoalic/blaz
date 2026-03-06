@@ -177,13 +177,34 @@ class _SharedRecipePageState extends State<SharedRecipePage> {
                       if (r.instructions.isEmpty)
                         const Text('—')
                       else
-                        for (int i = 0; i < r.instructions.length; i++)
-                          _Numbered(
-                            step: i + 1,
-                            text: r.instructions[i],
-                            checked: _checkedSteps.contains(i),
-                            onTap: () => _toggleStep(i),
-                          ),
+                        ...() {
+                          final widgets = <Widget>[];
+                          var stepNum = 0;
+                          for (var i = 0; i < r.instructions.length; i++) {
+                            final text = r.instructions[i];
+                            if (text.startsWith('## ')) {
+                              widgets.add(Padding(
+                                padding: const EdgeInsets.only(top: 10, bottom: 2),
+                                child: Text(
+                                  text.substring(3),
+                                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                    color: Theme.of(context).colorScheme.primary,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ));
+                            } else {
+                              stepNum++;
+                              widgets.add(_Numbered(
+                                step: stepNum,
+                                text: text,
+                                checked: _checkedSteps.contains(i),
+                                onTap: () => _toggleStep(i),
+                              ));
+                            }
+                          }
+                          return widgets;
+                        }(),
                     ],
                   ),
                 ),

@@ -96,7 +96,7 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route("/meal-plan/reminders", get(meal_plan::list_reminders))
         .route("/meal-plan/recipe/{recipe_id}", get(meal_plan::get_for_recipe))
-        .route("/meal-plan/{day}/{recipe_id}", delete(meal_plan::unassign))
+        .route("/meal-plan/{day}/{recipe_id}", delete(meal_plan::unassign).patch(meal_plan::move_entry))
         .route("/shopping", get(shopping::list).post(shopping::create))
         .route("/shopping/all-texts", get(shopping::list_all_texts))
         .route(

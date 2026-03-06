@@ -16,9 +16,15 @@ pub struct AppState {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Ingredient {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>, // if Some, this item is a section header
+    #[serde(default)]
     pub quantity: Option<f64>, // e.g. 120.0
+    #[serde(default)]
     pub unit: Option<String>,  // "g","kg","ml","L","tsp","tbsp" (normalized)
+    #[serde(default)]
     pub name: String,          // e.g. "all-purpose flour"
+    #[serde(default)]
     pub prep: Option<String>,
     /// `true` = raw unparsed text; `false` = user-confirmed structured ingredient.
     #[serde(default)]

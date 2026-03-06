@@ -170,6 +170,65 @@ pub async fn get_for_recipe(
 }
 
 
+#[derive(Deserialize)]
+pub struct MoveEntry {
+    pub new_day: String,
+}
+
+/// PATCH /meal-plan/{day}/{recipe_id}  { `"new_day"`: "YYYY-MM-DD" }
+/// Move a meal plan entry to a different day.
+///
+/// # Errors
+/// Returns an error if:
+/// - The target day format is invalid.
+/// - The entry does not exist (404).
+/// - The recipe is already scheduled on the target day (409).
+/// - The database update fails.
+pub async fn move_entry(
+    State(state): State<AppState>,
+    Path((day, recipe_id)): Path<(String, i64)>,
+    Json(req): Json<MoveEntry>,
+) -> AppResult<Json<MealPlanEntry>> {
+    NaiveDate::parse_from_str(&req.new_day, "%Y-%m-%d")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let res = sqlx::query(
+        r"UPDATE meal_plan SET day = ? WHERE day = ? AND recipe_id = ?",
+    )
+    .bind(&req.new_day)
+    .bind(&day)
+    .bind(recipe_id)
+    .execute(&state.pool)
+    .await;
+
+    match res {
+        Ok(r) if r.rows_affected() == 0 => return Err(StatusCode::NOT_FOUND.into()),
+        Ok(_) => {}
+        Err(e) => {
+            if let sqlx::Error::Database(db) = &e
+                && db.is_unique_violation() {
+                    return Err(StatusCode::CONFLICT.into());
+                }
+            return Err(e.into());
+        }
+    }
+
+    let row = sqlx::query_as::<_, MealPlanEntry>(
+        r"
+        SELECT mp.id, mp.day, mp.recipe_id, r.title AS title, r.image_path_small
+          FROM meal_plan mp
+          JOIN recipes r ON r.id = mp.recipe_id
+         WHERE mp.day = ? AND mp.recipe_id = ?
+        ",
+    )
+    .bind(&req.new_day)
+    .bind(recipe_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(row))
+}
+
 /// GET /meal-plan/reminders?from=YYYY-MM-DD&to=YYYY-MM-DD
 ///
 /// Returns prep reminders for all meals in the given date range, with the

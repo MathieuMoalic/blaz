@@ -405,10 +405,29 @@ class Ingredient {
   final String? prep;
   /// true = raw unparsed text; false = user-confirmed structured ingredient.
   final bool raw;
+  /// Non-null → this item is a section header (not an actual ingredient).
+  final String? section;
 
-  Ingredient({this.quantity, this.unit, required this.name, this.prep, this.raw = false});
+  bool get isSection => section != null;
+
+  Ingredient({this.quantity, this.unit, required this.name, this.prep, this.raw = false, this.section});
+
+  /// Creates a section-header placeholder (not a real ingredient).
+  Ingredient.sectionHeader(String sectionName)
+      : quantity = null,
+        unit = null,
+        name = '',
+        prep = null,
+        raw = false,
+        section = sectionName;
 
   factory Ingredient.fromJson(Map<String, dynamic> j) {
+    // Section header: {"section": "Sauce"}
+    final sectionVal = j['section'] as String?;
+    if (sectionVal != null && sectionVal.isNotEmpty) {
+      return Ingredient.sectionHeader(sectionVal);
+    }
+
     String? prep;
 
     final p = j['prep'];
@@ -433,19 +452,22 @@ class Ingredient {
       unit: (j['unit'] as String?)?.isNotEmpty == true
           ? j['unit'] as String
           : null,
-      name: j['name'] as String,
+      name: j['name'] as String? ?? '',
       prep: prep,
       raw: j['raw'] == true,
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'quantity': quantity,
-    'unit': unit,
-    'name': name,
-    if (prep != null) 'prep': prep,
-    'raw': raw,
-  };
+  Map<String, dynamic> toJson() {
+    if (isSection) return {'section': section};
+    return {
+      'quantity': quantity,
+      'unit': unit,
+      'name': name,
+      if (prep != null) 'prep': prep,
+      'raw': raw,
+    };
+  }
 }
 
 extension IngredientFormat on Ingredient {
@@ -886,6 +908,20 @@ Future<void> unassignRecipeFromDay({
     headers: _headers(),
   );
   if (r.statusCode != 200) _throw(r);
+}
+
+Future<MealPlanEntry> moveMealPlanEntry({
+  required String fromDay,
+  required String toDay,
+  required int recipeId,
+}) async {
+  final r = await http.patch(
+    _u('/meal-plan/$fromDay/$recipeId'),
+    headers: {..._headers(), 'Content-Type': 'application/json'},
+    body: jsonEncode({'new_day': toDay}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return MealPlanEntry.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
 Future<List<PrepReminderDto>> fetchUpcomingReminders() async {

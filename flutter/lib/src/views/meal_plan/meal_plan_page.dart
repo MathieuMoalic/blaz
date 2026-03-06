@@ -224,6 +224,24 @@ class MealPlanPageState extends State<MealPlanPage> {
                           // Keep targeted reload if you like:
                           await _reloadDay(dayIso);
                         },
+                        onMoveMeal: (meal) async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          try {
+                            await moveMealPlanEntry(
+                              fromDay: meal.day,
+                              toDay: dayIso,
+                              recipeId: meal.recipeId,
+                            );
+                            await Future.wait([
+                              _reloadDay(meal.day),
+                              _reloadDay(dayIso),
+                            ]);
+                          } catch (e) {
+                            messenger.showSnackBar(
+                              SnackBar(content: Text('Could not move meal: $e')),
+                            );
+                          }
+                        },
                         onLoaded: (items) => _cache[dayIso] = items,
                       ),
                     );

@@ -82,7 +82,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   // ---- Actions --------------------------------------------------------------
 
-  /// Parse raw/unparsed ingredients using LLM, then review each one, then save.
+  /// Parse raw/unparsed ingredients using LLM, save, then open edit mode for review.
   /// Returns the updated recipe, or null if cancelled/failed.
   Future<api.Recipe?> _parseIngredients(api.Recipe r) async {
     final toParseIndices = [
@@ -133,54 +133,20 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     if (!mounted) return null;
 
-    // Step 2: fetch known shopping names for suggestions.
-    List<String> knownNames;
-    try {
-      knownNames = await api.fetchAllShoppingTexts();
-    } catch (_) {
-      knownNames = const [];
-    }
-
-    // Step 3: show each proposed parse for user review.
-    var ingredients = List<api.Ingredient>.from(r.ingredients);
-    var saved = 0;
-
+    // Step 2: merge all LLM results and save immediately.
+    final ingredients = List<api.Ingredient>.from(r.ingredients);
     for (var pos = 0; pos < toParseIndices.length; pos++) {
-      if (!mounted) return null;
       final i = toParseIndices[pos];
-      // Use the LLM result as the pre-filled parse (it is already raw:false).
-      final llmIngredient = (pos < llmResult.length) ? llmResult[i] : null;
-      final rawText = r.ingredients[i].name; // original unparsed text
-      final result = await showDialog<api.Ingredient>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => ParseIngredientDialog(
-          rawText: rawText,
-          knownNames: knownNames,
-          current: pos + 1,
-          total: toParseIndices.length,
-          prefill: llmIngredient,
-        ),
-      );
-      if (result != null) {
-        ingredients[i] = result;
-        saved++;
+      if (i < llmResult.length) {
+        ingredients[i] = llmResult[i];
       }
     }
 
-    if (!mounted) return null;
-
-    // Step 4: save.
+    api.Recipe updated;
     try {
-      final updated = await api.updateRecipe(id: r.id, ingredients: ingredients);
+      updated = await api.updateRecipe(id: r.id, ingredients: ingredients);
       _future = Future.value(updated);
       if (mounted) setState(() {});
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Saved $saved parsed ingredient(s)')),
-        );
-      }
-      return updated;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -189,6 +155,21 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       }
       return null;
     }
+
+    if (!mounted) return null;
+
+    // Step 3: open edit page so the user can review and adjust parsed ingredients.
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EditRecipePage(recipe: updated),
+      ),
+    );
+    if (mounted) {
+      _future = api.fetchRecipe(widget.recipeId);
+      setState(() {});
+    }
+
+    return updated;
   }
 
   Future<void> _addIngredients(api.Recipe r) async {
@@ -231,7 +212,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
 
     if (!mounted) return;
-    final selected = await _pickIngredientsSheet(recipe.ingredients);
+    final selected = await _pickIngredientsSheet(
+      recipe.ingredients.where((ing) => !ing.isSection).toList(),
+    );
 
     if (!mounted) return;
     if (selected == null || selected.isEmpty) return;
@@ -640,6 +623,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           ...r.ingredients.asMap().entries.map((e) {
                             final idx = e.key;
                             final ing = e.value;
+                            if (ing.isSection) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 10, bottom: 2),
+                                child: Text(
+                                  ing.section!,
+                                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                    color: Theme.of(context).colorScheme.primary,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              );
+                            }
                             final line = ing.toLine(factor: _scale);
                             final checked = _checkedIngredients.contains(idx);
                             return _Bullet(
@@ -669,13 +664,34 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                         if (r.instructions.isEmpty)
                           const Text('—')
                         else
-                          for (int i = 0; i < r.instructions.length; i++)
-                            _Numbered(
-                              step: i + 1,
-                              text: r.instructions[i],
-                              checked: _checkedSteps.contains(i),
-                              onTap: () => _toggleStep(i),
-                            ),
+                          ...() {
+                            final widgets = <Widget>[];
+                            var stepNum = 0;
+                            for (var i = 0; i < r.instructions.length; i++) {
+                              final text = r.instructions[i];
+                              if (text.startsWith('## ')) {
+                                widgets.add(Padding(
+                                  padding: const EdgeInsets.only(top: 10, bottom: 2),
+                                  child: Text(
+                                    text.substring(3),
+                                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                      color: Theme.of(context).colorScheme.primary,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ));
+                              } else {
+                                stepNum++;
+                                widgets.add(_Numbered(
+                                  step: stepNum,
+                                  text: text,
+                                  checked: _checkedSteps.contains(i),
+                                  onTap: () => _toggleStep(i),
+                                ));
+                              }
+                            }
+                            return widgets;
+                          }(),
                       ],
                     ),
                   ),
