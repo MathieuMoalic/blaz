@@ -152,3 +152,41 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  update-flake:
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute nix SRI hash and update flake.nix
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          BINARY="blaz-${TAG}-x86_64-linux"
+          URL="https://github.com/MathieuMoalic/blaz/releases/download/${TAG}/${BINARY}"
+
+          curl -fsSL "$URL" -o /tmp/blaz-bin
+          HEX=$(sha256sum /tmp/blaz-bin | awk '{print $1}')
+          B64=$(python3 -c "import binascii,base64,sys; print(base64.b64encode(binascii.unhexlify(sys.argv[1])).decode())" "$HEX")
+          SRI="sha256-${B64}"
+
+          OLD_VERSION=$(grep -oP '(?<=version = ")[0-9]+\.[0-9]+\.[0-9]+' flake.nix | tail -1)
+
+          sed -i "s|version = \"${OLD_VERSION}\";|version = \"${VERSION}\";|g" flake.nix
+          sed -i "s|sha256 = \"sha256-[^\"]*\";|sha256 = \"${SRI}\";|" flake.nix
+
+          echo "Updated flake.nix: version=${VERSION} hash=${SRI}"
+
+      - name: Commit flake.nix update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add flake.nix
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update prebuilt to ${GITHUB_REF_NAME}"
+          git push
+
