@@ -1,5 +1,35 @@
 import 'package:flutter/material.dart';
 
+/// Shared placeholder shown when a recipe has no image or image fails to load.
+class RecipeImagePlaceholder extends StatelessWidget {
+  final double iconSize;
+  const RecipeImagePlaceholder({super.key, this.iconSize = 48});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        alignment: Alignment.center,
+        child: Icon(
+          Icons.restaurant_menu,
+          size: iconSize,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      );
+}
+
+/// Shared helper: Image.network with consistent error/loading handling.
+Widget recipeNetworkImage(String url, {BoxFit fit = BoxFit.cover, double iconSize = 48}) {
+  return Image.network(
+    url,
+    fit: fit,
+    errorBuilder: (_, __, ___) => RecipeImagePlaceholder(iconSize: iconSize),
+    frameBuilder: (context, child, frame, wasSync) {
+      if (wasSync || frame != null) return child;
+      return RecipeImagePlaceholder(iconSize: iconSize);
+    },
+  );
+}
+
 /// Recipe card with image on top and title below.
 ///
 /// When [width] is null the card expands to fill its parent (grid cell).
@@ -46,17 +76,8 @@ class RecipeCard extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 imageUrl == null
-                    ? _placeholder(_mini ? 28 : 48)
-                    : Image.network(
-                        imageUrl!,
-                        fit: BoxFit.cover,
-                        frameBuilder: (context, child, frame, wasSync) {
-                          if (wasSync || frame != null) return child;
-                          return const Center(child: CircularProgressIndicator());
-                        },
-                        errorBuilder: (_, __, ___) =>
-                            _placeholder(_mini ? 28 : 48),
-                      ),
+                    ? RecipeImagePlaceholder(iconSize: _mini ? 28 : 48)
+                    : recipeNetworkImage(imageUrl!, iconSize: _mini ? 28 : 48),
                 if (!_mini && onAssign != null)
                   Positioned(
                     top: 8,
@@ -107,8 +128,4 @@ class RecipeCard extends StatelessWidget {
     );
   }
 
-  Widget _placeholder(double iconSize) => Container(
-        alignment: Alignment.center,
-        child: Icon(Icons.restaurant_menu, size: iconSize),
-      );
 }

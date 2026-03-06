@@ -148,6 +148,7 @@ pub struct MealPlanEntry {
     pub day: String, // "YYYY-MM-DD"
     pub recipe_id: i64,
     pub title: String, // joined from recipes for convenience
+    pub image_path_small: Option<String>, // joined from recipes
 }
 
 #[derive(Deserialize)]

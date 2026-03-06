@@ -31,7 +31,8 @@ pub async fn get_for_day(
         SELECT mp.id,
                mp.day,
                mp.recipe_id,
-               r.title AS title
+               r.title AS title,
+               r.image_path_small
           FROM meal_plan mp
           JOIN recipes r ON r.id = mp.recipe_id
          WHERE mp.day = ?
@@ -63,21 +64,20 @@ pub async fn assign(
         .await?;
 
     // 2) Insert into meal_plan including the title (NOT NULL)
-    let resp = sqlx::query_as::<_, MealPlanEntry>(
+    let insert = sqlx::query(
         r"
         INSERT INTO meal_plan (day, recipe_id, title)
         VALUES (?, ?, ?)
-        RETURNING id, day, recipe_id, title
         ",
     )
     .bind(&req.day)
     .bind(req.recipe_id)
     .bind(&title)
-    .fetch_one(&state.pool)
+    .execute(&state.pool)
     .await;
 
-    let row = match resp {
-        Ok(row) => row,
+    match insert {
+        Ok(_) => {}
         Err(e) => {
             if let sqlx::Error::Database(db) = &e
                 && db.is_unique_violation() {
@@ -85,7 +85,21 @@ pub async fn assign(
                 }
             return Err(e.into());
         }
-    };
+    }
+
+    // 3) Fetch back with joined image_path_small
+    let row = sqlx::query_as::<_, MealPlanEntry>(
+        r"
+        SELECT mp.id, mp.day, mp.recipe_id, r.title AS title, r.image_path_small
+          FROM meal_plan mp
+          JOIN recipes r ON r.id = mp.recipe_id
+         WHERE mp.day = ? AND mp.recipe_id = ?
+        ",
+    )
+    .bind(&req.day)
+    .bind(req.recipe_id)
+    .fetch_one(&state.pool)
+    .await?;
 
     Ok(Json(row))
 }
@@ -140,7 +154,7 @@ pub async fn get_for_recipe(
     let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
     let rows: Vec<MealPlanEntry> = sqlx::query_as::<_, MealPlanEntry>(
         r"
-        SELECT mp.id, mp.day, mp.recipe_id, r.title AS title
+        SELECT mp.id, mp.day, mp.recipe_id, r.title AS title, r.image_path_small
           FROM meal_plan mp
           JOIN recipes r ON r.id = mp.recipe_id
          WHERE mp.recipe_id = ? AND mp.day >= ?

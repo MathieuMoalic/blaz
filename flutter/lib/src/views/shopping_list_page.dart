@@ -44,6 +44,9 @@ String _formatItemText(String text) {
   return formatted;
 }
 
+String _catValue(String? c) =>
+    (c == null || c.trim().isEmpty) ? 'Other' : c.trim();
+
 /// Format date from "Recipe Title (2026-02-20)" format
 /// Returns formatted like "Recipe Title (Today)", "Recipe Title (in 2 days)", "Recipe Title (Feb 20)"
 String _formatRecipeWithDate(String recipeWithDate) {
@@ -485,190 +488,263 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 
   // _editItem unchanged except replace any _refresh() calls with refresh()
   Future<void> _editItem(BuildContext context, ShoppingItem it) async {
-    final ctrl = TextEditingController(text: it.text);
-    final notesCtrl = TextEditingController(text: it.notes);
-    String cat = _catValue(it.category);
-
-    final changed = await showModalBottomSheet<bool>(
+    final result = await showModalBottomSheet<ShoppingItem>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (ctx) {
-        final bottom = MediaQuery.of(ctx).viewInsets.bottom;
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: bottom),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                    child: Row(
-                      children: [
-                        Text(
-                          'Edit item',
-                          style: Theme.of(ctx).textTheme.titleMedium,
+      builder: (ctx) => _EditShoppingItemSheet(item: it),
+    );
+
+    if (result != null) {
+      _applyLocalUpdate((list) {
+        final idx = list.indexWhere((x) => x.id == it.id);
+        if (idx != -1) list[idx] = result;
+        return list;
+      });
+      unawaited(refresh());
+    }
+  }
+}
+
+/// Modal bottom sheet for editing a shopping list item.
+/// Owns its own TextEditingControllers to avoid disposed-controller crashes.
+class _EditShoppingItemSheet extends StatefulWidget {
+  final ShoppingItem item;
+  const _EditShoppingItemSheet({required this.item});
+
+  @override
+  State<_EditShoppingItemSheet> createState() => _EditShoppingItemSheetState();
+}
+
+class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
+  late final TextEditingController _qtyCtrl;
+  late final TextEditingController _unitCtrl;
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _notesCtrl;
+  late String _cat;
+
+  @override
+  void initState() {
+    super.initState();
+    final parsed = parseIngredientLine(widget.item.text);
+    _qtyCtrl = TextEditingController(
+      text: parsed.quantity != null
+          ? (parsed.quantity! % 1 == 0
+              ? parsed.quantity!.toInt().toString()
+              : parsed.quantity!.toString())
+          : '',
+    );
+    _unitCtrl = TextEditingController(text: parsed.unit ?? '');
+    _nameCtrl = TextEditingController(text: parsed.name);
+    _notesCtrl = TextEditingController(text: widget.item.notes);
+    _cat = _catValue(widget.item.category);
+  }
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    _unitCtrl.dispose();
+    _nameCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+            child: Row(
+              children: [
+                Text('Edit item', style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      flex: 2,
+                      child: TextField(
+                        controller: _qtyCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Qty',
+                          border: OutlineInputBorder(),
+                          isDense: true,
                         ),
-                      ],
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textInputAction: TextInputAction.next,
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      flex: 2,
+                      child: TextField(
+                        controller: _unitCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Unit',
+                          hintText: 'g, ml…',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        textInputAction: TextInputAction.next,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                    isDense: true,
                   ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: ctrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Item',
-                            hintText: 'e.g. 2 lemons',
-                            border: OutlineInputBorder(),
-                          ),
-                          textInputAction: TextInputAction.next,
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: notesCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Notes',
-                            hintText: 'e.g. ripe ones',
-                            border: OutlineInputBorder(),
-                          ),
-                          textInputAction: TextInputAction.done,
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            const Text('Category'),
-                            const SizedBox(width: 12),
-                            DropdownButton<String>(
-                              value: cat,
-                              onChanged: (v) =>
-                                  setSheetState(() => cat = v ?? 'Other'),
-                              items: kShoppingCategoryOptions
-                                  .map(
-                                    (o) => DropdownMenuItem(
-                                      value: o.value,
-                                      child: Text(o.label),
-                                    ),
-                                  )
-                                  .toList(),
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _notesCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes',
+                    hintText: 'e.g. ripe ones',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  textInputAction: TextInputAction.done,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Text('Category'),
+                    const SizedBox(width: 12),
+                    DropdownButton<String>(
+                      value: _cat,
+                      onChanged: (v) => setState(() => _cat = v ?? 'Other'),
+                      items: kShoppingCategoryOptions
+                          .map(
+                            (o) => DropdownMenuItem(
+                              value: o.value,
+                              child: Text(o.label),
                             ),
-                            const Spacer(),
-                            IconButton(
-                              tooltip: 'Delete item',
-                              onPressed: () async {
-                                await deleteShoppingItem(it.id);
-                                if (!context.mounted) return;
-                                Navigator.pop(ctx, true);
-                              },
-                              icon: const Icon(Icons.delete_outline),
+                          )
+                          .toList(),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Delete item',
+                      onPressed: () async {
+                        await deleteShoppingItem(widget.item.id);
+                        if (!context.mounted) return;
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                ),
+                if (widget.item.recipeTitles != null &&
+                    widget.item.recipeTitles!.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.restaurant_menu, size: 16),
+                            SizedBox(width: 6),
+                            Text(
+                              'From recipes:',
+                              style: TextStyle(fontWeight: FontWeight.w500),
                             ),
                           ],
                         ),
-                        if (it.recipeTitles != null && it.recipeTitles!.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(height: 8),
+                        ...widget.item.recipeTitles!
+                            .split(', ')
+                            .map((recipeWithDate) {
+                          final formatted = _formatRecipeWithDate(recipeWithDate);
+                          return Padding(
+                            padding: const EdgeInsets.only(left: 22, bottom: 4),
+                            child: Row(
                               children: [
-                                const Row(
-                                  children: [
-                                    Icon(Icons.restaurant_menu, size: 16),
-                                    SizedBox(width: 6),
-                                    Text(
-                                      'From recipes:',
-                                      style: TextStyle(fontWeight: FontWeight.w500),
-                                    ),
-                                  ],
+                                const Text('• ', style: TextStyle(fontSize: 16)),
+                                Expanded(
+                                  child: Text(
+                                    formatted,
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
                                 ),
-                                const SizedBox(height: 8),
-                                ...it.recipeTitles!.split(', ').map((recipeWithDate) {
-                                  final formatted = _formatRecipeWithDate(recipeWithDate);
-                                  return Padding(
-                                    padding: const EdgeInsets.only(left: 22, bottom: 4),
-                                    child: Row(
-                                      children: [
-                                        const Text('• ', style: TextStyle(fontSize: 16)),
-                                        Expanded(
-                                          child: Text(
-                                            formatted,
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
                               ],
                             ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: const Text('Cancel'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: FilledButton(
-                            onPressed: () async {
-                              final newText = ctrl.text.trim();
-                              final newCat = cat == 'Other' ? '' : cat;
-
-                              final updated = await updateShoppingItem(
-                                id: it.id,
-                                text: newText.isEmpty ? it.text : newText,
-                                category: newCat,
-                                notes: notesCtrl.text.trim(),
-                              );
-                              if (!context.mounted) return;
-                              Navigator.pop(ctx, true);
-
-                              _applyLocalUpdate((list) {
-                                final idx = list.indexWhere(
-                                  (x) => x.id == it.id,
-                                );
-                                if (idx != -1) list[idx] = updated;
-                                return list;
-                              });
-                            },
-                            child: const Text('Save'),
-                          ),
-                        ),
+                          );
+                        }),
                       ],
                     ),
                   ),
                 ],
-              ),
-            );
-          },
-        );
-      },
-    );
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () async {
+                      final name = _nameCtrl.text.trim();
+                      if (name.isEmpty) return;
+                      final qty = double.tryParse(
+                          _qtyCtrl.text.trim().replaceAll(',', '.'));
+                      final unit = _unitCtrl.text.trim().isEmpty
+                          ? null
+                          : _unitCtrl.text.trim();
+                      final newCat = _cat == 'Other' ? '' : _cat;
 
-    if (changed == true) {
-      setState(() {});
-      // Optionally pull a fresh server snapshot
-      unawaited(refresh());
-    }
+                      final updated = await updateShoppingItem(
+                        id: widget.item.id,
+                        name: name,
+                        quantity: qty,
+                        unit: unit,
+                        category: newCat,
+                        notes: _notesCtrl.text.trim(),
+                      );
+                      if (!context.mounted) return;
+                      Navigator.pop(context, updated);
+                    },
+                    child: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

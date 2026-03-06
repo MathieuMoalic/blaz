@@ -157,7 +157,7 @@ class _MiniCardRow extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: entries.map((e) {
-            final imgUrl = mediaUrl('recipes/${e.recipeId}/small.webp');
+            final imgUrl = mediaUrl(e.imagePathSmall);
             return Padding(
               padding: const EdgeInsets.only(right: 8),
               child: RecipeCard(

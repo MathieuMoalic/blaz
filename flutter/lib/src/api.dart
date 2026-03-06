@@ -162,6 +162,7 @@ Future<ShoppingItem> updateShoppingItem({
   String? category,
   String? notes,
   String? text,
+  String? name,
   String? unit,
   double? quantity,
 }) async {
@@ -170,6 +171,7 @@ Future<ShoppingItem> updateShoppingItem({
     if (category != null) 'category': category,
     if (notes != null) 'notes': notes,
     if (text != null) 'text': text,
+    if (name != null) 'name': name,
     if (unit != null) 'unit': unit,
     if (quantity != null) 'quantity': quantity,
   };
@@ -188,15 +190,11 @@ Uri _u(String path, [Map<String, dynamic>? q]) => Uri.parse(
   '$baseUrl$path',
 ).replace(queryParameters: q?.map((k, v) => MapEntry(k, '$v')));
 
-String? mediaUrl(String? rel, {String? cacheBuster}) {
+String? mediaUrl(String? rel) {
   if (rel == null || rel.isEmpty) return null;
   final base = baseUrl.replaceAll(RegExp(r'/+$'), '');
   final path = rel.startsWith('/') ? rel.substring(1) : rel;
-  final url = '$base/media/$path';
-  if (cacheBuster != null && cacheBuster.isNotEmpty) {
-    return '$url?t=${Uri.encodeComponent(cacheBuster)}';
-  }
-  return url;
+  return '$base/media/$path';
 }
 
 Never _throw(http.Response r) =>
@@ -290,17 +288,20 @@ class MealPlanEntry {
   final String day; // yyyy-MM-dd
   final int recipeId;
   final String title;
+  final String? imagePathSmall;
   MealPlanEntry({
     required this.id,
     required this.day,
     required this.recipeId,
     required this.title,
+    this.imagePathSmall,
   });
   factory MealPlanEntry.fromJson(Map<String, dynamic> j) => MealPlanEntry(
     id: (j['id'] as num).toInt(),
     day: j['day'] as String,
     recipeId: (j['recipe_id'] as num).toInt(),
     title: j['title'] as String,
+    imagePathSmall: j['image_path_small'] as String?,
   );
 }
 

@@ -536,6 +536,8 @@ class ParseIngredientDialog extends StatefulWidget {
   final List<String> knownNames;
   final int current;
   final int total;
+  /// Optional LLM-proposed parse to pre-fill instead of the local parser.
+  final Ingredient? prefill;
 
   const ParseIngredientDialog({
     super.key,
@@ -543,6 +545,7 @@ class ParseIngredientDialog extends StatefulWidget {
     required this.knownNames,
     required this.current,
     required this.total,
+    this.prefill,
   });
 
   @override
@@ -558,7 +561,7 @@ class _ParseIngredientDialogState extends State<ParseIngredientDialog> {
   @override
   void initState() {
     super.initState();
-    final p = parseIngredientLine(widget.rawText);
+    final p = widget.prefill ?? parseIngredientLine(widget.rawText);
     _qty  = TextEditingController(text: p.quantity != null ? _fmtQty(p.quantity!) : '');
     _unit = TextEditingController(text: p.unit ?? '');
     _name = TextEditingController(text: p.name);

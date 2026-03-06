@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../api.dart';
+import '../../widgets/recipe_card.dart';
 
 Future<Set<int>?> showRecipePickerSheet({
   required BuildContext context,
@@ -199,25 +200,27 @@ Future<Set<int>?> showRecipePickerSheet({
                                 const Divider(height: 1),
                             itemBuilder: (_, i) {
                               final r = filtered[i];
-                              final thumb = mediaUrl(r.imagePathSmall, cacheBuster: r.updatedAt);
+                              final thumb = mediaUrl(r.imagePathSmall);
                               final checked = selected.contains(r.id);
                               return ListTile(
                                 onTap: () => toggle(r.id),
                                 leading: thumb == null
-                                    ? const SizedBox(
-                                        width: 44,
-                                        height: 44,
-                                        child: Icon(Icons.image_not_supported),
-                                      )
-                                    : ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.network(
-                                          thumb,
-                                          width: 44,
-                                          height: 44,
-                                          fit: BoxFit.cover,
-                                        ),
-                                      ),
+                                     ? ClipRRect(
+                                         borderRadius: BorderRadius.circular(6),
+                                         child: const SizedBox(
+                                           width: 44,
+                                           height: 44,
+                                           child: RecipeImagePlaceholder(iconSize: 24),
+                                         ),
+                                       )
+                                     : ClipRRect(
+                                         borderRadius: BorderRadius.circular(6),
+                                         child: SizedBox(
+                                           width: 44,
+                                           height: 44,
+                                           child: recipeNetworkImage(thumb, iconSize: 24),
+                                         ),
+                                       ),
                                 title: Text(r.title),
                                 trailing: Checkbox(
                                   value: checked,

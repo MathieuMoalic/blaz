@@ -14,6 +14,17 @@ class RecipeDetailPage extends StatefulWidget {
   State<RecipeDetailPage> createState() => _RecipeDetailPageState();
 }
 
+/// Returns true if the ingredient appears unparsed:
+/// - explicitly marked raw, OR
+/// - has no qty/unit stored but the name itself contains a parseable qty/unit
+///   (e.g. "2 tbsp ginger" stored as raw text before the raw field existed)
+bool _looksUnparsed(api.Ingredient i) {
+  if (i.raw) return true;
+  if (i.quantity != null || i.unit != null) return false;
+  final parsed = api.parseIngredientLine(i.name);
+  return parsed.quantity != null || parsed.unit != null;
+}
+
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
   // Precise Atwater factors (kcal per gram).
   static const double kcalPerGProt = 4.27;
@@ -71,6 +82,115 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   // ---- Actions --------------------------------------------------------------
 
+  /// Parse raw/unparsed ingredients using LLM, then review each one, then save.
+  /// Returns the updated recipe, or null if cancelled/failed.
+  Future<api.Recipe?> _parseIngredients(api.Recipe r) async {
+    final toParseIndices = [
+      for (var i = 0; i < r.ingredients.length; i++)
+        if (_looksUnparsed(r.ingredients[i])) i,
+    ];
+    if (toParseIndices.isEmpty) return r;
+
+    // Step 1: call LLM to get proposed parses for the whole recipe at once.
+    List<api.Ingredient> llmResult;
+    try {
+      if (!mounted) return null;
+      // Show a non-dismissible loading dialog while waiting for LLM.
+      final future = api.reparseIngredients(r.id);
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 16),
+                Text(
+                  'Parsing ${toParseIndices.length} ingredient(s) with AI…',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      llmResult = await future;
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('AI parse failed: $e')),
+        );
+      }
+      return null;
+    }
+
+    if (!mounted) return null;
+
+    // Step 2: fetch known shopping names for suggestions.
+    List<String> knownNames;
+    try {
+      knownNames = await api.fetchAllShoppingTexts();
+    } catch (_) {
+      knownNames = const [];
+    }
+
+    // Step 3: show each proposed parse for user review.
+    var ingredients = List<api.Ingredient>.from(r.ingredients);
+    var saved = 0;
+
+    for (var pos = 0; pos < toParseIndices.length; pos++) {
+      if (!mounted) return null;
+      final i = toParseIndices[pos];
+      // Use the LLM result as the pre-filled parse (it is already raw:false).
+      final llmIngredient = (pos < llmResult.length) ? llmResult[i] : null;
+      final rawText = r.ingredients[i].name; // original unparsed text
+      final result = await showDialog<api.Ingredient>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => ParseIngredientDialog(
+          rawText: rawText,
+          knownNames: knownNames,
+          current: pos + 1,
+          total: toParseIndices.length,
+          prefill: llmIngredient,
+        ),
+      );
+      if (result != null) {
+        ingredients[i] = result;
+        saved++;
+      }
+    }
+
+    if (!mounted) return null;
+
+    // Step 4: save.
+    try {
+      final updated = await api.updateRecipe(id: r.id, ingredients: ingredients);
+      _future = Future.value(updated);
+      if (mounted) setState(() {});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved $saved parsed ingredient(s)')),
+        );
+      }
+      return updated;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save: $e')),
+        );
+      }
+      return null;
+    }
+  }
+
   Future<void> _addIngredients(api.Recipe r) async {
     if (r.ingredients.isEmpty) {
       if (!mounted) return;
@@ -80,54 +200,38 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       return;
     }
 
-    // Parse any raw ingredients one at a time before showing the selection sheet.
-    final rawIndices = [
-      for (var i = 0; i < r.ingredients.length; i++)
-        if (r.ingredients[i].raw) i,
-    ];
-
-    var ingredients = List<api.Ingredient>.from(r.ingredients);
-
-    if (rawIndices.isNotEmpty && mounted) {
-      List<String> knownNames;
-      try {
-        knownNames = await api.fetchAllShoppingTexts();
-      } catch (_) {
-        knownNames = const [];
-      }
-
-      for (var pos = 0; pos < rawIndices.length; pos++) {
-        if (!mounted) return;
-        final i = rawIndices[pos];
-        final result = await showDialog<api.Ingredient>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => ParseIngredientDialog(
-            rawText: ingredients[i].name,
-            knownNames: knownNames,
-            current: pos + 1,
-            total: rawIndices.length,
-          ),
-        );
-        if (result != null) {
-          ingredients[i] = result;
-        }
-      }
-    }
-
-    if (!mounted) return;
-    final parsedIngredients = ingredients.where((i) => !i.raw).toList();
-
-    if (parsedIngredients.isEmpty) {
+    var recipe = r;
+    if (recipe.ingredients.any(_looksUnparsed)) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No parsed ingredients to add.')),
+      final start = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Unparsed ingredients'),
+          content: const Text(
+            'Some ingredients haven\'t been parsed yet. '
+            'Parse them now before adding to the shopping list?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Start Parsing'),
+            ),
+          ],
+        ),
       );
-      return;
+      if (start != true || !mounted) return;
+      final updated = await _parseIngredients(recipe);
+      if (updated == null || !mounted) return;
+      recipe = updated;
+      if (recipe.ingredients.any(_looksUnparsed)) return; // still unparsed
     }
 
     if (!mounted) return;
-    final selected = await _pickIngredientsSheet(parsedIngredients);
+    final selected = await _pickIngredientsSheet(recipe.ingredients);
 
     if (!mounted) return;
     if (selected == null || selected.isEmpty) return;
@@ -412,8 +516,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             return Center(child: Text('Error: ${snap.error}'));
           }
           final r = snap.data!;
-          final small = api.mediaUrl(r.imagePathSmall, cacheBuster: r.updatedAt);
-          final full = api.mediaUrl(r.imagePathFull, cacheBuster: r.updatedAt);
+          final small = api.mediaUrl(r.imagePathSmall);
+          final full = api.mediaUrl(r.imagePathFull);
           final heroTag = 'recipe-image-${r.id}';
 
           return RefreshIndicator(
@@ -459,6 +563,50 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 8),
+                        if (r.ingredients.any(_looksUnparsed)) ...[
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.secondaryContainer,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_rounded,
+                                  size: 18,
+                                  color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Some ingredients are not yet parsed',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton.tonal(
+                                  onPressed: () async {
+                                    final updated = await _parseIngredients(r);
+                                    if (updated == null) return;
+                                  },
+                                  style: FilledButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  ),
+                                  child: const Text('Parse', style: TextStyle(fontSize: 13)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         Row(
                           children: [
                             Text(
@@ -1237,13 +1385,11 @@ class _AddIngredientsSheet extends StatefulWidget {
 
 class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
   late List<bool> _selected;
-  late List<String> _names;
 
   @override
   void initState() {
     super.initState();
     _selected = List.filled(widget.items.length, true);
-    _names = widget.items.map((i) => i.name).toList();
   }
 
   bool get _anySelected => _selected.any((v) => v);
@@ -1261,15 +1407,7 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
     final uStr = ing.unit ?? '';
     final sep = (qStr.isNotEmpty && uStr.isNotEmpty) ? '\u00a0' : '';
     final prefix = '$qStr$sep$uStr';
-    return prefix.isNotEmpty ? '$prefix  ${_names[i]}' : _names[i];
-  }
-
-  Future<void> _renameTile(int i) async {
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => _RenameDialog(initial: _names[i]),
-    );
-    if (result != null && result.isNotEmpty) setState(() => _names[i] = result);
+    return prefix.isNotEmpty ? '$prefix  ${ing.name}' : ing.name;
   }
 
   void _confirm() {
@@ -1280,7 +1418,7 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
       result.add(api.Ingredient(
         quantity: ing.quantity != null ? ing.quantity! * widget.scale : null,
         unit: ing.unit,
-        name: _names[i],
+        name: ing.name,
       ));
     }
     Navigator.pop(context, result);
@@ -1330,12 +1468,6 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
                   controlAffinity: ListTileControlAffinity.leading,
                   dense: true,
                   title: Text(_tileLabel(i)),
-                  secondary: IconButton(
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    tooltip: 'Rename',
-                    onPressed: () => _renameTile(i),
-                    visualDensity: VisualDensity.compact,
-                  ),
                 ),
               ),
             ),

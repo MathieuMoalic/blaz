@@ -699,12 +699,17 @@ pub async fn merge_items(
             }
             Some(c)
         } else {
-            // Reuse existing category if already set; leave NULL for new items.
-            sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
-                .bind(&key)
-                .fetch_optional(&state.pool)
-                .await?
-                .flatten()
+            // Reuse existing category if already set; call LLM for new items.
+            let existing: Option<String> =
+                sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
+                    .bind(&key)
+                    .fetch_optional(&state.pool)
+                    .await?
+                    .flatten();
+            match existing {
+                Some(c) if !c.trim().is_empty() => Some(c),
+                _ => Some(guess_category(&state, &it.name).await),
+            }
         };
 
         // Prepare recipe_ids JSON array

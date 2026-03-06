@@ -117,6 +117,8 @@ async fn main() -> anyhow::Result<()> {
     let pool = make_pool(config.database_path.clone()).await?;
     tokio::fs::create_dir_all(&config.media_dir).await.ok();
 
+    cleanup_broken_image_paths(&pool, &config.media_dir).await;
+
     let jwt_secret = config.jwt_secret.as_ref().unwrap();
     let state = AppState {
         pool,
@@ -134,6 +136,58 @@ async fn main() -> anyhow::Result<()> {
 fn handle_command(command: Commands) -> anyhow::Result<()> {
     match command {
         Commands::HashPassword => hash_password_interactive(),
+    }
+}
+
+/// On startup, null-out `image_path_small` / `image_path_full` for recipes
+/// whose image files no longer exist on disk, so clients never request them.
+async fn cleanup_broken_image_paths(pool: &sqlx::SqlitePool, media_dir: &std::path::Path) {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        image_path_small: Option<String>,
+        image_path_full: Option<String>,
+    }
+
+    let Ok(rows) = sqlx::query_as::<_, Row>(
+        "SELECT id, image_path_small, image_path_full FROM recipes \
+         WHERE image_path_small IS NOT NULL OR image_path_full IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    else {
+        return;
+    };
+
+    let mut cleared = 0u32;
+    for row in rows {
+        let small_missing = row
+            .image_path_small
+            .as_deref()
+            .is_some_and(|p| !media_dir.join(p).exists());
+        let full_missing = row
+            .image_path_full
+            .as_deref()
+            .is_some_and(|p| !media_dir.join(p).exists());
+
+        if small_missing || full_missing {
+            let _ = sqlx::query(
+                "UPDATE recipes SET \
+                 image_path_small = CASE WHEN ? THEN NULL ELSE image_path_small END, \
+                 image_path_full  = CASE WHEN ? THEN NULL ELSE image_path_full  END \
+                 WHERE id = ?",
+            )
+            .bind(small_missing)
+            .bind(full_missing)
+            .bind(row.id)
+            .execute(pool)
+            .await;
+            cleared += 1;
+        }
+    }
+
+    if cleared > 0 {
+        tracing::info!("Cleared broken image paths from {cleared} recipe(s)");
     }
 }
 

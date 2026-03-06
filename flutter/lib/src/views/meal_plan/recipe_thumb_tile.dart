@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../widgets/recipe_card.dart';
 
 class RecipeThumbTile extends StatelessWidget {
   final double width;
@@ -42,16 +43,8 @@ class RecipeThumbTile extends StatelessWidget {
                   Expanded(
                     flex: 7,
                     child: imageUrl != null && imageUrl!.isNotEmpty
-                        ? Image.network(imageUrl!, fit: BoxFit.cover)
-                        : Container(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            alignment: Alignment.center,
-                            child: Icon(
-                              Icons.restaurant_menu,
-                              size: 48,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
+                        ? recipeNetworkImage(imageUrl!)
+                        : const RecipeImagePlaceholder(),
                   ),
                   // Title area (constrained)
                   Padding(
