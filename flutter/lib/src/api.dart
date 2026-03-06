@@ -601,7 +601,7 @@ Future<List<Ingredient>> reparseIngredients(int id) async {
 
 
 
-Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
+Future<Recipe> importRecipeFromUrl({required String url, String? model, bool dryRun = false}) async {
   final uri = Uri.parse('$baseUrl/recipes/import');
   final resp = await http.post(
     uri,
@@ -609,6 +609,7 @@ Future<Recipe> importRecipeFromUrl({required String url, String? model}) async {
     body: jsonEncode({
       'url': url,
       if (model != null && model.isNotEmpty) 'model': model,
+      if (dryRun) 'dry_run': true,
     }),
   );
 

@@ -25,6 +25,10 @@ pub struct ImportFromUrlReq {
     /// Optional model override (e.g., "deepseek/deepseek-chat-v3.1")
     #[serde(default)]
     pub model: Option<String>,
+    /// When true, parse the URL but do NOT persist to the database.
+    /// Returns a Recipe with id=0. Use this for re-import (updating an existing recipe).
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// # Errors
@@ -109,6 +113,28 @@ pub async fn import_from_url(
         ingredients: norm.ingredients,
         instructions: norm.instructions,
     };
+
+    if req.dry_run {
+        // Caller wants the parsed data but will manage persistence themselves.
+        // Return a transient Recipe (id=0) without writing to the database.
+        let recipe = Recipe {
+            id: 0,
+            title: payload.title,
+            source: payload.source,
+            r#yield: payload.r#yield,
+            notes: payload.notes,
+            created_at: String::new(),
+            updated_at: String::new(),
+            ingredients: payload.ingredients,
+            instructions: payload.instructions,
+            image_path_small: None,
+            image_path_full: None,
+            macros: None,
+            share_token: None,
+            prep_reminders: None,
+        };
+        return Ok(Json(recipe));
+    }
 
     let created = recipes::create(State(state.clone()), Json(payload)).await?;
     let recipe_id = created.0.id;

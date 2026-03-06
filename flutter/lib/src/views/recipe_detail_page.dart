@@ -105,7 +105,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
 
     try {
-      final imported = await api.importRecipeFromUrl(url: r.source);
+      final imported = await api.importRecipeFromUrl(url: r.source, dryRun: true);
       await api.updateRecipe(
         id: r.id,
         title: imported.title,
