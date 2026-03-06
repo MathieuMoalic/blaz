@@ -105,11 +105,11 @@
     # and keeps deployment fast while source builds always give you latest.
     prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {
       pname = "blaz";
-      version = "2.1.0";
+      version = "2.2.0";
 
       src = pkgs.fetchurl {
         url = "https://github.com/MathieuMoalic/blaz/releases/download/v${version}/blaz-v${version}-x86_64-linux";
-        sha256 = "sha256-8XSdaDY1ze6B8eMozgaLMpaSxEBHaEvrDndBomg3kFY=";
+        sha256 = "sha256-g0xDIY7STo+16tqBCIZQ6bH2EZEIJNNH6oqLw3duQi8=";
       };
 
       dontUnpack = true;
