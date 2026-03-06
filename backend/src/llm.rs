@@ -81,6 +81,15 @@ impl LlmClient {
         }
 
         let envelope: JsonValue = serde_json::from_str(&text)?;
+
+        // Warn if the model was cut off — this usually causes truncated JSON.
+        if envelope
+            .pointer("/choices/0/finish_reason")
+            .and_then(|v| v.as_str()) == Some("length")
+        {
+            tracing::warn!("LLM response truncated (finish_reason=length); output may be incomplete");
+        }
+
         let content = envelope
             .pointer("/choices/0/message/content")
             .and_then(|v| v.as_str())

@@ -82,6 +82,49 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   // ---- Actions --------------------------------------------------------------
 
+  Future<void> _reimportFromUrl(api.Recipe r) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Re-import from URL?'),
+        content: const Text(
+          'This will overwrite the title, ingredients, and instructions with freshly imported data. '
+          'Notes, images, and the source URL will be kept.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Re-import')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Re-importing…'), duration: Duration(seconds: 30)),
+    );
+
+    try {
+      final imported = await api.importRecipeFromUrl(url: r.source);
+      await api.updateRecipe(
+        id: r.id,
+        title: imported.title,
+        yieldText: imported.yieldText,
+        ingredients: imported.ingredients,
+        instructions: imported.instructions,
+      );
+      _refresh();
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text('Re-imported successfully')));
+    } catch (e) {
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text('Re-import failed: $e')));
+    }
+  }
+
   /// Parse raw/unparsed ingredients using LLM, save, then open edit mode for review.
   /// Returns the updated recipe, or null if cancelled/failed.
   Future<api.Recipe?> _parseIngredients(api.Recipe r) async {
@@ -434,6 +477,19 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          FutureBuilder<api.Recipe>(
+            future: _future,
+            builder: (context, snap) {
+              final isUrl = snap.hasData &&
+                  snap.data!.source.startsWith('http');
+              if (!isUrl) return const SizedBox.shrink();
+              return IconButton(
+                tooltip: 'Re-import from URL',
+                icon: const Icon(Icons.refresh),
+                onPressed: () => _reimportFromUrl(snap.data!),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Share',
             icon: const Icon(Icons.share_outlined),

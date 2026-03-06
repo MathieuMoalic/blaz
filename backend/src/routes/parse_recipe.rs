@@ -82,7 +82,7 @@ pub async fn import_from_url(
             &user,
             0.1,
             Duration::from_secs(120),
-            Some(5000),
+            Some(16_000),
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
