@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../api.dart';
+import '../auth.dart';
 import '../widgets/recipe_card.dart';
 import '../platform/kv_store.dart';
 import 'recipe_detail_page.dart';
 import 'add_recipe_page.dart';
+import 'login_page.dart';
 import 'meal_plan/day_picker_sheet.dart';
 
 class RecipesPage extends StatefulWidget {
@@ -118,6 +120,13 @@ class RecipesPageState extends State<RecipesPage> {
   }
 
   Future<void> _assignRecipe(Recipe r) async {
+    // Check if user is authenticated
+    if (Auth.token == null) {
+      if (!mounted) return;
+      await _promptLogin('assign recipes to meal plan');
+      return;
+    }
+
     final day = await showDayPickerSheet(
       context: context,
       recipeTitle: r.title,
@@ -139,11 +148,47 @@ class RecipesPageState extends State<RecipesPage> {
   }
 
   Future<void> _onAddRecipe() async {
+    // Check if user is authenticated
+    if (Auth.token == null) {
+      await _promptLogin('add recipes');
+      return;
+    }
+
     final created = await Navigator.of(
       context,
     ).push<bool>(MaterialPageRoute(builder: (_) => const AddRecipePage()));
     if (created == true) {
       await refresh();
+    }
+  }
+
+  Future<void> _promptLogin(String action) async {
+    final shouldLogin = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Login Required'),
+        content: Text('You need to login to $action.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Login'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLogin == true && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+      );
+      // Refresh the page after login to update auth state
+      if (mounted) {
+        await refresh();
+      }
     }
   }
 
@@ -245,6 +290,8 @@ class RecipesPageState extends State<RecipesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isAuthenticated = Auth.token != null;
+    
     return Column(
       children: [
         if (_searchVisible)
@@ -354,7 +401,7 @@ class RecipesPageState extends State<RecipesPage> {
                                 );
                                 await refresh();
                               },
-                              onAssign: () => _assignRecipe(r),
+                              onAssign: isAuthenticated ? () => _assignRecipe(r) : null,
                             );
                           },
                         );
@@ -420,16 +467,17 @@ class RecipesPageState extends State<RecipesPage> {
                   ),
                 ),
               ),
-              Positioned(
-                right: 16,
-                bottom: 16,
-                child: FloatingActionButton(
-                  heroTag: 'add',
-                  onPressed: _onAddRecipe,
-                  tooltip: 'Add recipe',
-                  child: const Icon(Icons.add),
+              if (isAuthenticated)
+                Positioned(
+                  right: 16,
+                  bottom: 16,
+                  child: FloatingActionButton(
+                    heroTag: 'add',
+                    onPressed: _onAddRecipe,
+                    tooltip: 'Add recipe',
+                    child: const Icon(Icons.add),
+                  ),
                 ),
-              ),
             ],
           ),
         ),

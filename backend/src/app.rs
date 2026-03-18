@@ -66,15 +66,16 @@ pub fn build_app(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/version", get(version))
         .route("/auth/login", post(auth::login))
-        .route("/api/share/{token}", get(share_recipe::get_shared_recipe));
+        .route("/api/share/{token}", get(share_recipe::get_shared_recipe))
+        .route("/recipes", get(recipes::list))
+        .route("/recipes/{id}", get(recipes::get));
 
     // Protected routes (authentication required)
     let protected_routes = Router::new()
-        .route("/recipes", get(recipes::list).post(recipes::create))
+        .route("/recipes", post(recipes::create))
         .route(
             "/recipes/{id}",
-            get(recipes::get)
-                .delete(recipes::delete)
+            delete(recipes::delete)
                 .patch(recipes::update),
         )
         .route("/recipes/{id}/image", post(recipes::upload_image))

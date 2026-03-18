@@ -886,13 +886,15 @@ async fn auth_unauthorized_access() {
 
     let client = reqwest::Client::new();
 
+    // GET /recipes is now public - should return 200
     let resp = client
         .get(format!("{base}/recipes"))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
+    // POST /recipes requires auth
     let resp = client
         .post(format!("{base}/recipes"))
         .json(&json!({"title":"test","source":"test","ingredients":[],"instructions":[]}))
@@ -1022,9 +1024,20 @@ async fn auth_invalid_bearer_token() {
 
     let client = reqwest::Client::new();
 
+    // GET /recipes is now public - even with invalid token, it should work
     let resp = client
         .get(format!("{base}/recipes"))
         .header("Authorization", "Bearer this-is-not-a-valid-jwt")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    
+    // But POST /recipes should still reject invalid token
+    let resp = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", "Bearer this-is-not-a-valid-jwt")
+        .json(&json!({"title":"test","source":"test","ingredients":[],"instructions":[]}))
         .send()
         .await
         .unwrap();
@@ -1039,10 +1052,20 @@ async fn auth_malformed_authorization_header() {
 
     let client = reqwest::Client::new();
 
-    // Missing "Bearer " prefix
+    // Missing "Bearer " prefix - GET /recipes should still work (public)
     let resp = client
         .get(format!("{base}/recipes"))
         .header("Authorization", "notbearer token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    
+    // But POST /recipes should reject malformed auth
+    let resp = client
+        .post(format!("{base}/recipes"))
+        .header("Authorization", "notbearer token")
+        .json(&json!({"title":"test","source":"test","ingredients":[],"instructions":[]}))
         .send()
         .await
         .unwrap();
@@ -1907,9 +1930,10 @@ async fn ntfy_not_notified_on_unauthorized() {
 
     let client = reqwest::Client::new();
 
-    // Hit a protected route without a token → 401
+    // Hit a protected route without a token → 401 (use POST /recipes instead of GET)
     let resp = client
-        .get(format!("{base}/recipes"))
+        .post(format!("{base}/recipes"))
+        .json(&json!({"title":"test","source":"test","ingredients":[],"instructions":[]}))
         .send()
         .await
         .unwrap();

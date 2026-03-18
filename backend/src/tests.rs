@@ -126,7 +126,7 @@ mod integration {
     // ── auth guard ───────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn recipes_list_requires_auth() {
+    async fn recipes_list_allows_unauthenticated() {
         let tmp = tempfile::tempdir().unwrap();
         let app = crate::app::build_app(make_test_state(&tmp).await);
 
@@ -135,11 +135,11 @@ mod integration {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn recipes_list_rejects_bad_token() {
+    async fn recipes_list_allows_bad_token() {
         let tmp = tempfile::tempdir().unwrap();
         let app = crate::app::build_app(make_test_state(&tmp).await);
 
@@ -153,7 +153,7 @@ mod integration {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     // ── recipe CRUD ──────────────────────────────────────────────────────────

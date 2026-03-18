@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'auth.dart';
 import 'views/recipes_page.dart';
 import 'views/meal_plan/meal_plan_page.dart';
 import 'views/shopping_list_page.dart';
 import 'views/app_state_page.dart';
+import 'views/login_page.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -124,6 +126,14 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final canPopNested = _navKeys[_index].currentState?.canPop() ?? false;
+    final isAuthenticated = Auth.token != null;
+
+    // If not authenticated, force to recipes tab only
+    if (!isAuthenticated && _index != 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _index = 0);
+      });
+    }
 
     return PopScope(
       canPop: !canPopNested,
@@ -134,12 +144,32 @@ class _HomeShellState extends State<HomeShell> {
         }
       },
       child: Scaffold(
+        appBar: !isAuthenticated ? AppBar(
+          title: const Text('Recipes'),
+          actions: [
+            FilledButton.icon(
+              onPressed: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                );
+                setState(() {}); // Rebuild to update auth state
+              },
+              icon: const Icon(Icons.login),
+              label: const Text('Login'),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ) : null,
         body: SafeArea(
-          child: Stack(children: List.generate(4, _buildTabNavigator)),
+          child: Stack(
+            children: isAuthenticated
+                ? List.generate(4, _buildTabNavigator)
+                : [_buildTabNavigator(0)], // Only recipes tab when not authenticated
+          ),
         ),
-        bottomNavigationBar: NavigationBar(
+        bottomNavigationBar: isAuthenticated ? NavigationBar(
           selectedIndex: _index,
-          onDestinationSelected: _onTabSelected, // UPDATED
+          onDestinationSelected: _onTabSelected,
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.restaurant_menu),
@@ -158,7 +188,7 @@ class _HomeShellState extends State<HomeShell> {
               label: 'Settings',
             ),
           ],
-        ),
+        ) : null,
       ),
     );
   }

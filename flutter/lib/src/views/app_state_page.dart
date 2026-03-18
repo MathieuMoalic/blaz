@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api.dart' as api;
+import '../auth.dart';
+import 'login_page.dart';
 
 class AppStatePage extends StatefulWidget {
   const AppStatePage({super.key});
@@ -37,6 +39,7 @@ class _AppStatePageState extends State<AppStatePage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isAuthenticated = Auth.token != null;
 
     Widget body;
     if (_loading) {
@@ -99,7 +102,47 @@ class _AppStatePageState extends State<AppStatePage> {
       body = const SizedBox.shrink();
     }
 
-    return body;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        automaticallyImplyLeading: false,
+      ),
+      body: Column(
+        children: [
+          body,
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: isAuthenticated
+                ? FilledButton.icon(
+                    onPressed: () async {
+                      await Auth.logout();
+                      setState(() {
+                        _credits = null;
+                        _error = null;
+                      });
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Logged out')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Logout'),
+                  )
+                : FilledButton.icon(
+                    onPressed: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const LoginPage()),
+                      );
+                      setState(() => _load());
+                    },
+                    icon: const Icon(Icons.login),
+                    label: const Text('Login'),
+                  ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _stat(String label, String value) => Column(

@@ -7,7 +7,6 @@ import 'src/platform_io.dart'
     if (dart.library.html) 'src/platform_stub.dart'
     as plat;
 
-import 'src/views/login_page.dart';
 import 'src/views/shared_recipe_page.dart';
 import 'src/auth.dart';
 import 'src/home_shell.dart';
@@ -49,9 +48,8 @@ class BlazApp extends StatelessWidget {
         return SharedRecipePage(token: match.group(1)!);
       }
     }
-    return Auth.token == null
-        ? const LoginPage()
-        : const VersionChecker(child: HomeShell());
+    // Allow access to HomeShell (recipes view) even without auth
+    return const VersionChecker(child: HomeShell());
   }
 
   ThemeData _theme(Brightness b) => ThemeData(

@@ -111,9 +111,9 @@ void setAuthToken(String? t) {
   _authToken = t;
 }
 
-Map<String, String> _headers([Map<String, String>? extra]) {
+Map<String, String> _headers([Map<String, String>? extra, bool includeAuth = true]) {
   final h = <String, String>{};
-  if (_authToken != null && _authToken!.isNotEmpty) {
+  if (includeAuth && _authToken != null && _authToken!.isNotEmpty) {
     h['Authorization'] = 'Bearer $_authToken';
   }
   if (extra != null) h.addAll(extra);
@@ -783,7 +783,7 @@ Future<Recipe> uploadRecipeImage({
 }
 
 Future<List<Recipe>> fetchRecipes() async {
-  final res = await http.get(_u('/recipes'), headers: _headers());
+  final res = await http.get(_u('/recipes'), headers: _headers(null, false));
   if (res.statusCode != 200) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
@@ -792,7 +792,7 @@ Future<List<Recipe>> fetchRecipes() async {
 }
 
 Future<Recipe> fetchRecipe(int id) async {
-  final res = await http.get(_u('/recipes/$id'), headers: _headers());
+  final res = await http.get(_u('/recipes/$id'), headers: _headers(null, false));
   if (res.statusCode != 200) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }

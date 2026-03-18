@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../api.dart' as api;
+import '../auth.dart';
 import 'edit_recipe_page.dart';
+import 'login_page.dart';
 import 'meal_plan/day_picker_sheet.dart';
 
 class RecipeDetailPage extends StatefulWidget {
@@ -79,9 +81,41 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
   }
 
+  Future<bool> _checkAuth(String action) async {
+    if (Auth.token != null) return true;
+    
+    final shouldLogin = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Login Required'),
+        content: Text('You need to login to $action.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Login'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLogin == true && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+      );
+      return Auth.token != null;
+    }
+    return false;
+  }
+
   // ---- Actions --------------------------------------------------------------
 
   Future<void> _reimportFromUrl(api.Recipe r) async {
+    if (!await _checkAuth('re-import recipes')) return;
+    
     final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -215,6 +249,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _addIngredients(api.Recipe r) async {
+    if (!await _checkAuth('add ingredients to shopping list')) return;
+    
     if (r.ingredients.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -276,6 +312,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _assignToMealPlan(api.Recipe r) async {
+    if (!await _checkAuth('add recipes to meal plan')) return;
+    
     final day = await showDayPickerSheet(
       context: context,
       recipeTitle: r.title,
@@ -302,6 +340,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _estimateMacros() async {
+    if (!await _checkAuth('estimate macros')) return;
+    
     if (_estimatingMacros) return;
     // Never mark this callback async inside setState.
     setState(() {
@@ -333,6 +373,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _shareRecipe(api.Recipe r) async {
+    if (!await _checkAuth('share recipes')) return;
+    
     try {
       final token = await api.shareRecipe(r.id);
       // Build share URL from the current base URL
@@ -390,6 +432,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _confirmDelete(api.Recipe r) async {
+    if (!await _checkAuth('delete recipes')) return;
+    
     // Check for upcoming meal plan entries before showing the dialog.
     List<api.MealPlanEntry> upcoming = [];
     try {
@@ -473,75 +517,78 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isAuthenticated = Auth.token != null;
+    
     return Scaffold(
       appBar: AppBar(
         actions: [
-          FutureBuilder<api.Recipe>(
-            future: _future,
-            builder: (context, snap) {
-              final isUrl = snap.hasData &&
-                  snap.data!.source.startsWith('http');
-              if (!isUrl) return const SizedBox.shrink();
-              return IconButton(
-                tooltip: 'Re-import from URL',
-                icon: const Icon(Icons.refresh),
-                onPressed: () => _reimportFromUrl(snap.data!),
-              );
-            },
-          ),
-          IconButton(
-            tooltip: 'Share',
-            icon: const Icon(Icons.share_outlined),
-            onPressed: () async {
-              final r = await _future;
-              if (!mounted) return;
-              _shareRecipe(r);
-            },
-          ),
-          IconButton(
-            tooltip: 'Add to meal plan',
-            icon: const Icon(Icons.event_outlined),
-            onPressed: () async {
-              final r = await _future;
-              if (!mounted) return;
-              _assignToMealPlan(r);
-            },
-          ),
-          IconButton(
-            tooltip: 'Add ingredients to shopping list',
-            icon: const Icon(Icons.shopping_cart_outlined),
-            onPressed: () async {
-              final r = await _future;
-              if (!mounted) return;
-              _addIngredients(r);
-            },
-          ),
-          IconButton(
-            tooltip: 'Edit',
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: () async {
-              final r = await _future;
-              if (!context.mounted) return;
+          if (isAuthenticated) ...[
+            FutureBuilder<api.Recipe>(
+              future: _future,
+              builder: (context, snap) {
+                final isUrl = snap.hasData &&
+                    snap.data!.source.startsWith('http');
+                if (!isUrl) return const SizedBox.shrink();
+                return IconButton(
+                  tooltip: 'Re-import from URL',
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () => _reimportFromUrl(snap.data!),
+                );
+              },
+            ),
+            IconButton(
+              tooltip: 'Share',
+              icon: const Icon(Icons.share_outlined),
+              onPressed: () async {
+                final r = await _future;
+                if (!mounted) return;
+                _shareRecipe(r);
+              },
+            ),
+            IconButton(
+              tooltip: 'Add to meal plan',
+              icon: const Icon(Icons.event_outlined),
+              onPressed: () async {
+                final r = await _future;
+                if (!mounted) return;
+                _assignToMealPlan(r);
+              },
+            ),
+            IconButton(
+              tooltip: 'Add ingredients to shopping list',
+              icon: const Icon(Icons.shopping_cart_outlined),
+              onPressed: () async {
+                final r = await _future;
+                if (!mounted) return;
+                _addIngredients(r);
+              },
+            ),
+            IconButton(
+              tooltip: 'Edit',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () async {
+                final r = await _future;
+                if (!context.mounted) return;
 
-              final changed = await Navigator.push<bool>(
-                context,
-                MaterialPageRoute(builder: (_) => EditRecipePage(recipe: r)),
-              );
-              if (!mounted) return;
+                final changed = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(builder: (_) => EditRecipePage(recipe: r)),
+                );
+                if (!mounted) return;
 
-              if (changed == true) _refresh();
-            },
-          ),
-
-          IconButton(
-            tooltip: 'Delete',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () async {
-              final r = await _future;
-              if (!mounted) return;
-              _confirmDelete(r);
-            },
-          ),
+                if (changed == true) _refresh();
+              },
+            ),
+            IconButton(
+              tooltip: 'Delete',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () async {
+                final r = await _future;
+                if (!mounted) return;
+                _confirmDelete(r);
+              },
+            ),
+          ],
         ],
       ),
       body: FutureBuilder<api.Recipe>(
