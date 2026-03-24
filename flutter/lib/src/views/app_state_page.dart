@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart' as api;
 import '../auth.dart';
+import '../notifications.dart';
 import 'login_page.dart';
 
 class AppStatePage extends StatefulWidget {
@@ -14,11 +17,48 @@ class _AppStatePageState extends State<AppStatePage> {
   api.LlmCredits? _credits;
   bool _loading = false;
   String? _error;
+  bool _notificationsEnabled = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadNotificationSetting();
+  }
+
+  Future<void> _loadNotificationSetting() async {
+    if (!Platform.isAndroid) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
+      });
+    }
+  }
+
+  Future<void> _toggleNotifications(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notifications_enabled', enabled);
+    
+    if (enabled) {
+      await initNotifications();
+    } else {
+      await cancelNotifications();
+    }
+    
+    setState(() => _notificationsEnabled = enabled);
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled 
+                ? 'Prep reminder notifications enabled' 
+                : 'Prep reminder notifications disabled'
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _load() async {
@@ -110,6 +150,18 @@ class _AppStatePageState extends State<AppStatePage> {
       body: Column(
         children: [
           body,
+          if (Platform.isAndroid && isAuthenticated)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Card(
+                child: SwitchListTile(
+                  title: const Text('Prep reminder notifications'),
+                  subtitle: const Text('Check every 6 hours for upcoming prep tasks'),
+                  value: _notificationsEnabled,
+                  onChanged: _toggleNotifications,
+                ),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: isAuthenticated
