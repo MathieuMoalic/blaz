@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api.dart' as api;
 import '../auth.dart';
 import 'edit_recipe_page.dart';
@@ -1064,16 +1065,41 @@ class _MetaRow extends StatelessWidget {
   final String label;
   final String value;
   const _MetaRow({required this.label, required this.value});
+  
+  bool get _isUrl => value.startsWith('http://') || value.startsWith('https://');
+  
+  Future<void> _launchUrl() async {
+    final uri = Uri.parse(value);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw Exception('Could not launch $value');
+    }
+  }
+  
   @override
   Widget build(BuildContext context) {
     final styleLabel = Theme.of(context).textTheme.bodySmall;
     final styleValue = Theme.of(context).textTheme.bodyMedium;
+    final colorScheme = Theme.of(context).colorScheme;
+    
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           SizedBox(width: 90, child: Text(label, style: styleLabel)),
-          Expanded(child: Text(value, style: styleValue)),
+          Expanded(
+            child: _isUrl
+                ? InkWell(
+                    onTap: _launchUrl,
+                    child: Text(
+                      value,
+                      style: styleValue?.copyWith(
+                        color: colorScheme.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  )
+                : Text(value, style: styleValue),
+          ),
         ],
       ),
     );
