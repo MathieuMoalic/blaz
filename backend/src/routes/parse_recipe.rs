@@ -34,6 +34,7 @@ pub struct ImportFromUrlReq {
 /// # Errors
 ///
 /// Err if we can't fetch from the url
+#[allow(clippy::too_many_lines)]
 pub async fn import_from_url(
     State(state): State<AppState>,
     Json(req): Json<ImportFromUrlReq>,
@@ -71,15 +72,23 @@ pub async fn import_from_url(
     let http = reqwest::Client::new();
     let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
 
-    // STAGE 1: Extract raw text
-    tracing::info!("Stage 1: Extracting raw text");
+    // TRY SCHEMA.ORG EXTRACTION FIRST
     let (title, ingredient_strings, instruction_strings) = 
-        stage1_extract(&llm, &http, &state, excerpt, &req.url, &title_guess)
-            .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 1 (extract) failed: {e}")))?;
+        if let Some(schema) = crate::schema_org::extract_schema_recipe(&html) {
+            tracing::info!("Using schema.org data: {} ingredients", schema.ingredients.len());
+            (schema.name, schema.ingredients, schema.instructions)
+        } else {
+            // FALLBACK: STAGE 1 LLM extraction
+            tracing::info!("No schema.org found, using Stage 1 LLM extraction");
+            let result = stage1_extract(&llm, &http, &state, excerpt, &req.url, &title_guess)
+                .await
+                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 1 (extract) failed: {e}")))?;
+            
+            tracing::info!("Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings", 
+                result.0, result.1.len(), result.2.len());
+            result
+        };
     
-    tracing::info!("Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings", 
-        title, ingredient_strings.len(), instruction_strings.len());
     for (i, ing) in ingredient_strings.iter().enumerate() {
         tracing::debug!("  Ingredient {}: {}", i, ing);
     }

@@ -21,6 +21,7 @@ mod logging;
 mod models;
 mod ntfy;
 mod routes;
+mod schema_org;
 mod units;
 #[cfg(test)]
 mod tests;
