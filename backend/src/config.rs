@@ -278,45 +278,66 @@ OUTPUT: STRICT JSON with exactly these keys:
   "instructions": [string]
 }
 
-TASK:
-- Translate ALL text to English.
-- Extract a clean, concise title.
-- Extract ingredients as an array of strings, one per line.
-  * If the recipe has named ingredient sections (e.g., "For the sauce", "Topping", "Dough"),
-    insert a string starting with "## " followed by the section name.
-    Example: "## Sauce", "## Topping"
-  * Keep each ingredient as-is (don't parse quantities yet).
-  * Example:
-    ["## Pulled Jackfruit", "2 cans jackfruit", "1 tbsp olive oil", "## Tzatziki", "1 cup yogurt"]
-- Extract instructions as an array of strings, one step per line.
-  * If the recipe has named instruction sections (e.g., "Make the sauce", "Assembly"),
-    insert a string starting with "## " followed by the section name.
-  * Example:
-    ["## Pulled Jackfruit", "Shred the jackfruit.", "Cook until done.", "## Tzatziki", "Mix yogurt."]
-- Remove "Vegan" from the title if present.
-- If data is missing, return an empty array for that key.
-- Do NOT parse quantities, units, or prep instructions yet.
-- Do NOT add commentary or extra keys.
+CRITICAL: Your job is to EXTRACT, not parse or simplify. Preserve ALL details from the original text.
+
+RULES FOR INGREDIENTS:
+- Extract ingredients as an array of strings, one per line
+- PRESERVE EXACT TEXT including:
+  * ALL quantities (2, 1/2, 2-3, etc.)
+  * ALL units (cups, oz, g, tablespoons, cloves, cans, etc.)
+  * ALL parenthetical details (450g, 15 oz, drained, etc.)
+  * ALL descriptions (fresh, kosher, non-dairy, etc.)
+  * ALL prep notes (chopped, diced, grated, etc.)
+- If the recipe has named sections (e.g., "For the sauce", "Topping", "Dough"):
+  * Insert a string starting with "## " followed by the section name
+  * Example: "## Sauce", "## Topping"
+- Translate to English if needed
+- Do NOT simplify, summarize, or remove any details
+
+RULES FOR INSTRUCTIONS:
+- Extract instructions as an array of strings, one step per line
+- If the recipe has named sections:
+  * Insert a string starting with "## " followed by the section name
+- Preserve all details and timing information
+- Translate to English if needed
+
+RULES FOR TITLE:
+- Extract a clean, concise title
+- Remove "Vegan" if present
+- Translate to English if needed
+
+BAD EXAMPLES (what NOT to do):
+❌ "2 cups (400g) chickpeas, drained" → "Chickpeas" (lost quantities!)
+❌ "1 tablespoon olive oil" → "Olive oil" (lost quantity!)
+❌ "6 garlic cloves, minced" → "Fresh garlic" (lost quantity and prep!)
+
+GOOD EXAMPLES (correct extraction):
+✅ "2 cups (400g) chickpeas, drained" → "2 cups (400g) chickpeas, drained"
+✅ "1 tablespoon olive oil" → "1 tablespoon olive oil"
+✅ "6 garlic cloves, minced" → "6 garlic cloves, minced"
+✅ "1 1/2 inch piece ginger, peeled" → "1 1/2 inch piece ginger, peeled"
+✅ "2-3 Thai chili peppers, sliced" → "2-3 Thai chili peppers, sliced"
 
 FORMAT EXAMPLE:
 {
-  "title": "BBQ Pulled Jackfruit Wraps",
+  "title": "Creamy Umami Noodle Soup",
   "ingredients": [
-    "## Pulled Jackfruit",
-    "2 cans (560g) young jackfruit",
-    "1 tablespoon olive oil",
-    "1 teaspoon smoked paprika",
-    "## Tzatziki",
-    "1 cup non-dairy yogurt",
-    "1/2 cucumber"
+    "## Mushrooms",
+    "16 to 20 oz (450 to 570g) mixed mushrooms",
+    "2 tablespoons neutral-flavored oil",
+    "Kosher salt",
+    "## Noodles and Broth",
+    "16 ounces (450g) fresh udon noodles",
+    "1 tablespoon neutral-flavored oil",
+    "6 garlic cloves, chopped",
+    "1 1/2 inch piece ginger, peeled and finely chopped"
   ],
   "instructions": [
-    "## Pulled Jackfruit",
-    "Drain and rinse the jackfruit, then shred with your hands.",
-    "Heat olive oil in a pan and add jackfruit and spices.",
-    "## Tzatziki",
-    "Grate the cucumber and squeeze out excess liquid.",
-    "Mix with yogurt."
+    "## Mushrooms",
+    "Preheat oven to 450°F (230°C).",
+    "Slice mushrooms and spread on sheet pans.",
+    "## Broth",
+    "Sauté garlic and ginger in oil for 2-3 minutes."
   ]
 }
 
