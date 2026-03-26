@@ -278,21 +278,24 @@ OUTPUT: STRICT JSON with exactly these keys:
   "instructions": [string]
 }
 
-CRITICAL: Your job is to EXTRACT, not parse or simplify. Preserve ALL details from the original text.
+CRITICAL: Your job is to EXTRACT, not parse or simplify. Extract EVERY SINGLE ingredient from the recipe, preserving ALL details.
 
 RULES FOR INGREDIENTS:
 - Extract ingredients as an array of strings, one per line
+- Extract EVERY ingredient - don't skip any, even if there are many
 - PRESERVE EXACT TEXT including:
   * ALL quantities (2, 1/2, 2-3, etc.)
   * ALL units (cups, oz, g, tablespoons, cloves, cans, etc.)
   * ALL parenthetical details (450g, 15 oz, drained, etc.)
   * ALL descriptions (fresh, kosher, non-dairy, etc.)
   * ALL prep notes (chopped, diced, grated, etc.)
-- If the recipe has named sections (e.g., "For the sauce", "Topping", "Dough"):
+- If the recipe has named sections (e.g., "For the sauce", "Citrus Vinaigrette", "Topping"):
   * Insert a string starting with "## " followed by the section name
-  * Example: "## Sauce", "## Topping"
+  * Example: "## Sauce", "## Citrus Vinaigrette", "## Topping"
+  * Make sure to include ALL ingredients from ALL sections
 - Translate to English if needed
 - Do NOT simplify, summarize, or remove any details
+- Do NOT skip ingredients - if there are 20 ingredients, return all 20
 
 RULES FOR INSTRUCTIONS:
 - Extract instructions as an array of strings, one step per line
@@ -320,24 +323,34 @@ GOOD EXAMPLES (correct extraction):
 
 FORMAT EXAMPLE:
 {
-  "title": "Creamy Umami Noodle Soup",
+  "title": "Roasted Beet and Fennel Salad",
   "ingredients": [
-    "## Mushrooms",
-    "16 to 20 oz (450 to 570g) mixed mushrooms",
-    "2 tablespoons neutral-flavored oil",
+    "3 medium red or golden beets (12 to 15 ounces, 340-430g)",
+    "2 medium fennel bulbs (reserve fronds for salad)",
+    "Extra virgin olive oil (for roasting)",
     "Kosher salt",
-    "## Noodles and Broth",
-    "16 ounces (450g) fresh udon noodles",
-    "1 tablespoon neutral-flavored oil",
-    "6 garlic cloves, chopped",
-    "1 1/2 inch piece ginger, peeled and finely chopped"
+    "1 small lemon, zested and juiced",
+    "1/3 cup (38g) raw walnuts, finely chopped",
+    "½ teaspoon Aleppo pepper",
+    "1 cup (160g) cooked chickpeas",
+    "½ cup (6g) flat-leaf Italian parsley, chopped",
+    "¼ cup (4g) fresh dill, finely chopped",
+    "1 medium orange",
+    "1 large ripe avocado",
+    "## Citrus Vinaigrette",
+    "3 tablespoons extra virgin olive oil",
+    "½ teaspoon lemon zest",
+    "2 tablespoons fresh lemon juice",
+    "1 teaspoon Dijon mustard",
+    "¼ teaspoon sea salt",
+    "1 teaspoon maple syrup"
   ],
   "instructions": [
-    "## Mushrooms",
-    "Preheat oven to 450°F (230°C).",
-    "Slice mushrooms and spread on sheet pans.",
-    "## Broth",
-    "Sauté garlic and ginger in oil for 2-3 minutes."
+    "## Roast Vegetables",
+    "Preheat oven to 425°F (230°C).",
+    "Roast beets for 45-90 minutes until fork-tender.",
+    "## Make Vinaigrette",
+    "Combine all vinaigrette ingredients in a jar and shake."
   ]
 }
 
