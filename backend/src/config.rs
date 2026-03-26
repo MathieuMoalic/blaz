@@ -331,24 +331,51 @@ Each ingredient can be either:
 1. A section header: {"section": "Name"}
 2. A structured ingredient: {"quantity": null|number, "unit": null|string, "name": string, "prep": null|string}
 
-RULES:
+CRITICAL PARSING RULES:
 - For section headers (lines starting with "##"), output: {"section": "Name"}
   Example: "## Sauce" → {"section": "Sauce"}
-- For regular ingredients:
-  * Extract quantity as a number (or null if missing)
-  * Extract unit as a string (or null if missing)
-    - Keep units AS-IS from the input (don't convert yet)
-    - Examples: "cup", "cups", "oz", "tbsp", "g", "ml"
-  * Extract name (the main ingredient)
-  * Extract prep instructions to separate "prep" field
-    - Prep words: sliced, diced, minced, chopped, grated, shredded, softened, melted, etc.
-    - Example: "2 carrots, diced" → {"quantity":2,"unit":null,"name":"carrots","prep":"diced"}
-  * The "name" field must NOT contain prep words or quantities
-  * If quantity is a range (e.g., "2-3 cups"), use the mean value (2.5)
-  * Convert fractions: 1/2 → 0.5, 1/4 → 0.25, 3/4 → 0.75, 1/3 → 0.33
-- If an ingredient has no quantity, set "quantity": null and "unit": null
-- Do NOT convert units to metric yet (that's stage 3)
-- Do NOT add commentary or extra fields
+
+- For regular ingredients, YOU MUST extract all 4 fields:
+  1. QUANTITY (number or null):
+     - ALWAYS look for numbers at the start: "2 carrots" → quantity: 2
+     - Convert fractions: 1/2 → 0.5, 1/4 → 0.25, 3/4 → 0.75, 1/3 → 0.33
+     - For ranges, use mean: "2-3 cups" → 2.5
+     - If weight/volume is in parentheses, use that: "2 cans (400g)" → 400
+     - If no quantity found, set null
+  
+  2. UNIT (string or null):
+     - ALWAYS look for unit words after quantity: "2 cups flour" → unit: "cups"
+     - Common units: cup, cups, tbsp, tablespoon, tsp, teaspoon, oz, ounce, lb, pound, g, gram, kg, ml, L, clove, cloves, can, cans
+     - If weight/volume is in parentheses, use that unit: "2 cans (400g)" → unit: "g"
+     - Keep units AS-IS from input (don't convert yet)
+     - If no unit found, set null
+  
+  3. NAME (string):
+     - The main ingredient, WITHOUT quantity, unit, or prep words
+     - Example: "2 cups flour, sifted" → name: "flour"
+     - Example: "1 can (15oz) chickpeas" → name: "chickpeas"
+  
+  4. PREP (string or null):
+     - Preparation instructions ONLY
+     - Common prep words: sliced, diced, minced, chopped, grated, shredded, softened, melted, peeled, crushed, drained, rinsed
+     - Example: "2 carrots, diced" → prep: "diced"
+     - If no prep found, set null
+
+IMPORTANT EXAMPLES:
+Input: "2 cups all-purpose flour"
+Output: {"quantity": 2, "unit": "cups", "name": "all-purpose flour", "prep": null}
+
+Input: "1 can (15 oz) chickpeas, drained"
+Output: {"quantity": 15, "unit": "oz", "name": "chickpeas", "prep": "drained"}
+
+Input: "1/2 teaspoon salt"
+Output: {"quantity": 0.5, "unit": "teaspoon", "name": "salt", "prep": null}
+
+Input: "2-3 cloves garlic, minced"
+Output: {"quantity": 2.5, "unit": "cloves", "name": "garlic", "prep": "minced"}
+
+Input: "Fresh basil for garnish"
+Output: {"quantity": null, "unit": null, "name": "fresh basil", "prep": "for garnish"}
 
 FORMAT EXAMPLE:
 INPUT:
@@ -356,19 +383,23 @@ INPUT:
   "## Pulled Jackfruit",
   "2 cans (560g) young jackfruit",
   "1 tablespoon olive oil",
+  "1/2 teaspoon smoked paprika",
   "## Tzatziki",
   "1 cup non-dairy yogurt",
-  "1/2 cucumber, grated"
+  "1/2 cucumber, grated",
+  "2 cloves garlic, minced"
 ]
 
 OUTPUT:
 [
   {"section": "Pulled Jackfruit"},
-  {"quantity": 560, "unit": "g", "name": "jackfruit", "prep": null},
+  {"quantity": 560, "unit": "g", "name": "young jackfruit", "prep": null},
   {"quantity": 1, "unit": "tablespoon", "name": "olive oil", "prep": null},
+  {"quantity": 0.5, "unit": "teaspoon", "name": "smoked paprika", "prep": null},
   {"section": "Tzatziki"},
   {"quantity": 1, "unit": "cup", "name": "non-dairy yogurt", "prep": null},
-  {"quantity": 0.5, "unit": null, "name": "cucumber", "prep": "grated"}
+  {"quantity": 0.5, "unit": null, "name": "cucumber", "prep": "grated"},
+  {"quantity": 2, "unit": "cloves", "name": "garlic", "prep": "minced"}
 ]
 
 Answer only with the JSON array."###;
