@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart' as api;
@@ -38,7 +39,7 @@ class _AppStatePageState extends State<AppStatePage> {
   }
 
   Future<void> _loadNotificationSetting() async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
@@ -222,7 +223,7 @@ class _AppStatePageState extends State<AppStatePage> {
                 ),
               ),
             ),
-          if (Platform.isAndroid && isAuthenticated)
+          if (!kIsWeb && Platform.isAndroid && isAuthenticated)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Card(

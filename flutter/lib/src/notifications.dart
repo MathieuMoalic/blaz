@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,7 +14,7 @@ final FlutterLocalNotificationsPlugin _notifications =
 
 /// Initialize notifications and background worker (Android only)
 Future<void> initNotifications() async {
-  if (!Platform.isAndroid) return;
+  if (kIsWeb || !Platform.isAndroid) return;
 
   // Check if notifications are enabled
   final prefs = await SharedPreferences.getInstance();
@@ -57,7 +58,7 @@ Future<void> initNotifications() async {
 
 /// Cancel all scheduled reminder checks
 Future<void> cancelNotifications() async {
-  if (!Platform.isAndroid) return;
+  if (kIsWeb || !Platform.isAndroid) return;
   await Workmanager().cancelByUniqueName(_reminderCheckTask);
   await _notifications.cancelAll();
 }
