@@ -77,6 +77,12 @@ pub async fn import_from_url(
         stage1_extract(&llm, &http, &state, excerpt, &req.url, &title_guess)
             .await
             .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 1 (extract) failed: {e}")))?;
+    
+    tracing::info!("Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings", 
+        title, ingredient_strings.len(), instruction_strings.len());
+    for (i, ing) in ingredient_strings.iter().enumerate() {
+        tracing::debug!("  Ingredient {}: {}", i, ing);
+    }
 
     // STAGE 2: Structure ingredients
     tracing::info!("Stage 2: Structuring {} ingredients", ingredient_strings.len());
@@ -84,6 +90,12 @@ pub async fn import_from_url(
         stage2_structure_ingredients(&llm, &http, &state, &ingredient_strings)
             .await
             .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 2 (structure) failed: {e}")))?;
+    
+    tracing::info!("Stage 2 complete: {} structured ingredients", structured_ingredients.len());
+    for (i, ing) in structured_ingredients.iter().enumerate() {
+        tracing::debug!("  Structured {}: qty={:?}, unit={:?}, name={}, prep={:?}", 
+            i, ing.quantity, ing.unit, ing.name, ing.prep);
+    }
 
     // STAGE 3: Convert to metric
     tracing::info!("Stage 3: Converting to metric");
@@ -91,6 +103,12 @@ pub async fn import_from_url(
         stage3_convert_to_metric(&llm, &http, &state, &structured_ingredients)
             .await
             .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 3 (convert) failed: {e}")))?;
+    
+    tracing::info!("Stage 3 complete: {} ingredients after metric conversion", structured_ingredients.len());
+    for (i, ing) in structured_ingredients.iter().enumerate() {
+        tracing::debug!("  Final {}: qty={:?}, unit={:?}, name={}, prep={:?}", 
+            i, ing.quantity, ing.unit, ing.name, ing.prep);
+    }
 
     let final_title = if title.trim().is_empty() {
         fallback_title_from_url(&req.url).unwrap_or_else(|| "Imported recipe".to_string())
@@ -229,6 +247,8 @@ async fn stage1_extract(
         Some(16_000),
     )
     .await?;
+    
+    tracing::debug!("Stage 1 LLM response: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
 
     let title = json
         .get("title")
@@ -283,6 +303,8 @@ async fn stage2_structure_ingredients(
         Some(16_000),
     )
     .await?;
+    
+    tracing::debug!("Stage 2 LLM response: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
 
     let ingredients = json.as_array().map_or_else(
         || {
@@ -296,6 +318,8 @@ async fn stage2_structure_ingredients(
         },
         |_arr| normalize_ingredients(json.clone()),
     );
+    
+    tracing::debug!("Stage 2 after normalize: {} ingredients", ingredients.len());
 
     validate_stage2(&ingredients);
     
