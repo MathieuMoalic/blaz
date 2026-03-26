@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart' as api;
 import '../auth.dart';
 import 'edit_recipe_page.dart';
@@ -140,7 +141,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
 
     try {
-      final imported = await api.importRecipeFromUrl(url: r.source, dryRun: true);
+      // Get user's selected model
+      final prefs = await SharedPreferences.getInstance();
+      final model = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
+      
+      final imported = await api.importRecipeFromUrl(url: r.source, model: model, dryRun: true);
       await api.updateRecipe(
         id: r.id,
         title: imported.title,

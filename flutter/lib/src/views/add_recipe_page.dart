@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -76,7 +77,11 @@ class _AddRecipePageState extends State<AddRecipePage> {
     }
     setState(() => _importing = true);
     try {
-      final created = await importRecipeFromUrl(url: url);
+      // Get user's selected model
+      final prefs = await SharedPreferences.getInstance();
+      final model = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
+      
+      final created = await importRecipeFromUrl(url: url, model: model);
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,

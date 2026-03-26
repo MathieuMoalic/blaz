@@ -61,7 +61,6 @@ pub async fn import_from_url(
 
     let model = req.model.as_deref().unwrap_or(&state.config.llm_model);
     let base = state.config.llm_api_url.as_str();
-    let system = state.config.system_prompt_import.as_str();
 
     let excerpt = if text.len() > MAX_CHARS {
         &text[..MAX_CHARS]
@@ -69,40 +68,34 @@ pub async fn import_from_url(
         &text
     };
 
-    let user = format!(
-        "URL: {url}\nTITLE: {title}\n\nCONTENT:\n{content}",
-        url = req.url,
-        title = title_guess,
-        content = excerpt
-    );
-
     let http = reqwest::Client::new();
     let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
 
-    let llm_json = llm
-        .chat_json(
-            &http,
-            system,
-            &user,
-            0.1,
-            Duration::from_secs(120),
-            Some(16_000),
-        )
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM extract failed: {e}")))?;
+    // STAGE 1: Extract raw text
+    tracing::info!("Stage 1: Extracting raw text");
+    let (title, ingredient_strings, instruction_strings) = 
+        stage1_extract(&llm, &http, &state, excerpt, &req.url, &title_guess)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 1 (extract) failed: {e}")))?;
 
-    let raw = ExtractRaw::from_json(&llm_json);
-    let title_from_llm = raw.title.clone();
-    let norm = raw.normalize();
+    // STAGE 2: Structure ingredients
+    tracing::info!("Stage 2: Structuring {} ingredients", ingredient_strings.len());
+    let mut structured_ingredients =
+        stage2_structure_ingredients(&llm, &http, &state, &ingredient_strings)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 2 (structure) failed: {e}")))?;
 
-    let chosen_title = title_from_llm
-        .as_deref()
-        .map_or_else(|| title_guess.clone(), clean_title);
+    // STAGE 3: Convert to metric
+    tracing::info!("Stage 3: Converting to metric");
+    structured_ingredients =
+        stage3_convert_to_metric(&llm, &http, &state, &structured_ingredients)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 3 (convert) failed: {e}")))?;
 
-    let final_title = if chosen_title.trim().is_empty() {
+    let final_title = if title.trim().is_empty() {
         fallback_title_from_url(&req.url).unwrap_or_else(|| "Imported recipe".to_string())
     } else {
-        chosen_title
+        title
     };
 
     let payload = NewRecipe {
@@ -110,8 +103,8 @@ pub async fn import_from_url(
         source: req.url.clone(),
         r#yield: String::new(),
         notes: String::new(),
-        ingredients: norm.ingredients,
-        instructions: norm.instructions,
+        ingredients: structured_ingredients,
+        instructions: instruction_strings,
     };
 
     if req.dry_run {
@@ -209,6 +202,265 @@ async fn try_fetch_and_attach_image(
 
     anyhow::bail!("no image candidate found by extract_main_image_url")
 }
+
+/* =========================
+ * Stage 1: Extract raw text
+ * ========================= */
+
+async fn stage1_extract(
+    llm: &LlmClient,
+    http: &reqwest::Client,
+    state: &AppState,
+    content: &str,
+    url: &str,
+    title_guess: &str,
+) -> anyhow::Result<(String, Vec<String>, Vec<String>)> {
+    let user = format!(
+        "URL: {url}\nTITLE: {title_guess}\n\nCONTENT:\n{content}"
+    );
+
+    let json = call_llm_with_retry(
+        llm,
+        http,
+        &state.config.system_prompt_extract,
+        &user,
+        0.1,
+        Duration::from_secs(120),
+        Some(16_000),
+    )
+    .await?;
+
+    let title = json
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(clean_title)
+        .unwrap_or_default();
+
+    let ingredients = json
+        .get("ingredients")
+        .and_then(|v| v.as_array())
+        .map_or_else(Vec::new, |arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>()
+        });
+
+    let instructions = json
+        .get("instructions")
+        .and_then(|v| v.as_array())
+        .map_or_else(Vec::new, |arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>()
+        });
+
+    validate_stage1(&ingredients, &instructions)?;
+    
+    Ok((title, ingredients, instructions))
+}
+
+/* =========================
+ * Stage 2: Structure ingredients
+ * ========================= */
+
+async fn stage2_structure_ingredients(
+    llm: &LlmClient,
+    http: &reqwest::Client,
+    state: &AppState,
+    ingredient_strings: &[String],
+) -> anyhow::Result<Vec<Ingredient>> {
+    let input_json = serde_json::to_string(ingredient_strings)?;
+    
+    let json = call_llm_with_retry(
+        llm,
+        http,
+        &state.config.system_prompt_structure,
+        &input_json,
+        0.1,
+        Duration::from_secs(120),
+        Some(16_000),
+    )
+    .await?;
+
+    let ingredients = json.as_array().map_or_else(
+        || {
+            json.get("ingredients")
+                .and_then(|v| v.as_array())
+                .map_or_else(Vec::new, |_arr| {
+                    normalize_ingredients(
+                        json.get("ingredients").cloned().unwrap_or(JsonValue::Null),
+                    )
+                })
+        },
+        |_arr| normalize_ingredients(json.clone()),
+    );
+
+    validate_stage2(&ingredients);
+    
+    Ok(ingredients)
+}
+
+/* =========================
+ * Stage 3: Convert to metric
+ * ========================= */
+
+async fn stage3_convert_to_metric(
+    llm: &LlmClient,
+    http: &reqwest::Client,
+    state: &AppState,
+    ingredients: &[Ingredient],
+) -> anyhow::Result<Vec<Ingredient>> {
+    // Serialize current ingredients as JSON
+    let ingredients_json: Vec<JsonValue> = ingredients
+        .iter()
+        .map(|ing| {
+            ing.section.as_ref().map_or_else(
+                || {
+                    serde_json::json!({
+                        "quantity": ing.quantity,
+                        "unit": ing.unit,
+                        "name": ing.name,
+                        "prep": ing.prep,
+                    })
+                },
+                |section| serde_json::json!({"section": section}),
+            )
+        })
+        .collect();
+
+    let input_json = serde_json::to_string(&ingredients_json)?;
+
+    let json = call_llm_with_retry(
+        llm,
+        http,
+        &state.config.system_prompt_convert,
+        &input_json,
+        0.1,
+        Duration::from_secs(120),
+        Some(16_000),
+    )
+    .await?;
+
+    let converted = json.as_array().map_or_else(
+        || {
+            json.get("ingredients")
+                .and_then(|v| v.as_array())
+                .map_or_else(Vec::new, |_arr| {
+                    normalize_ingredients(
+                        json.get("ingredients").cloned().unwrap_or(JsonValue::Null),
+                    )
+                })
+        },
+        |_arr| normalize_ingredients(json.clone()),
+    );
+
+    validate_stage3(&converted)?;
+    
+    Ok(converted)
+}
+
+/* =========================
+ * Retry wrapper
+ * ========================= */
+
+async fn call_llm_with_retry(
+    llm: &LlmClient,
+    http: &reqwest::Client,
+    system: &str,
+    user: &str,
+    temperature: f32,
+    timeout: Duration,
+    max_tokens: Option<u32>,
+) -> anyhow::Result<JsonValue> {
+    // Try once
+    match llm.chat_json(http, system, user, temperature, timeout, max_tokens).await {
+        Ok(json) => Ok(json),
+        Err(e) => {
+            tracing::warn!("LLM call failed, retrying once: {}", e);
+            // Retry once
+            llm.chat_json(http, system, user, temperature, timeout, max_tokens).await
+        }
+    }
+}
+
+/* =========================
+ * Validation functions
+ * ========================= */
+
+fn validate_stage1(ingredients: &[String], instructions: &[String]) -> anyhow::Result<()> {
+    if ingredients.is_empty() {
+        anyhow::bail!("Stage 1 returned no ingredients");
+    }
+    if instructions.is_empty() {
+        anyhow::bail!("Stage 1 returned no instructions");
+    }
+    // Check for reasonable counts
+    if ingredients.len() > 200 {
+        anyhow::bail!("Stage 1 returned too many ingredients ({})", ingredients.len());
+    }
+    if instructions.len() > 200 {
+        anyhow::bail!("Stage 1 returned too many instructions ({})", instructions.len());
+    }
+    Ok(())
+}
+
+const BANNED_UNITS: &[&str] = &["cup", "cups", "oz", "ounce", "ounces", "fl oz", "fluid ounce", "pound", "lb", "lbs", "pint", "quart", "gallon"];
+const PREP_WORDS: &[&str] = &["sliced", "diced", "minced", "chopped", "grated", "shredded", "softened", "melted"];
+
+fn validate_stage2(ingredients: &[Ingredient]) {
+    // Check for banned units (warning only, not fatal)
+    
+    for ing in ingredients {
+        if let Some(unit) = &ing.unit {
+            let unit_lower = unit.to_lowercase();
+            if BANNED_UNITS.contains(&unit_lower.as_str()) {
+                tracing::warn!("Stage 2 validation: ingredient '{}' has banned unit '{}'", ing.name, unit);
+            }
+        }
+        
+        // Check name doesn't contain prep words (warning only)
+        if !ing.name.is_empty() {
+            let name_lower = ing.name.to_lowercase();
+            for prep_word in PREP_WORDS {
+                if name_lower.contains(prep_word) {
+                    tracing::warn!("Stage 2 validation: ingredient name '{}' contains prep word '{}'", ing.name, prep_word);
+                }
+            }
+        }
+    }
+}
+
+fn validate_stage3(ingredients: &[Ingredient]) -> anyhow::Result<()> {
+    const ALLOWED_UNITS: &[&str] = &["g", "kg", "ml", "l", "tsp", "tbsp", "tablespoon", "teaspoon"];
+    const BANNED_UNITS: &[&str] = &["cup", "cups", "oz", "ounce", "ounces", "fl oz", "fluid ounce", "pound", "lb", "lbs", "pint", "quart", "gallon"];
+    
+    for ing in ingredients {
+        if let Some(unit) = &ing.unit {
+            let unit_lower = unit.to_lowercase();
+            
+            if BANNED_UNITS.contains(&unit_lower.as_str()) {
+                anyhow::bail!(
+                    "Stage 3 validation failed: ingredient '{}' still has banned unit '{}'",
+                    ing.name,
+                    unit
+                );
+            }
+            
+            if !ALLOWED_UNITS.contains(&unit_lower.as_str()) {
+                tracing::warn!(
+                    "Stage 3 validation: ingredient '{}' has non-standard unit '{}'",
+                    ing.name,
+                    unit
+                );
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 /* =========================
  * Tolerant normalization (+ optional title)
  * ========================= */

@@ -18,12 +18,23 @@ class _AppStatePageState extends State<AppStatePage> {
   bool _loading = false;
   String? _error;
   bool _notificationsEnabled = false;
+  String _selectedModel = 'anthropic/claude-3.5-sonnet';
+  
+  // Popular OpenRouter models for recipe parsing
+  final List<Map<String, String>> _models = [
+    {'id': 'anthropic/claude-3.5-sonnet', 'name': 'Claude 3.5 Sonnet'},
+    {'id': 'google/gemini-2.0-flash-exp:free', 'name': 'Gemini 2.0 Flash (Free)'},
+    {'id': 'openai/gpt-4o', 'name': 'GPT-4o'},
+    {'id': 'deepseek/deepseek-chat', 'name': 'DeepSeek Chat'},
+    {'id': 'meta-llama/llama-3.3-70b-instruct', 'name': 'Llama 3.3 70B'},
+  ];
 
   @override
   void initState() {
     super.initState();
     _load();
     _loadNotificationSetting();
+    _loadModelSetting();
   }
 
   Future<void> _loadNotificationSetting() async {
@@ -33,6 +44,33 @@ class _AppStatePageState extends State<AppStatePage> {
       setState(() {
         _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
       });
+    }
+  }
+
+  Future<void> _loadModelSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _selectedModel = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
+      });
+    }
+  }
+
+  Future<void> _setModel(String? model) async {
+    if (model == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('llm_model', model);
+    
+    setState(() => _selectedModel = model);
+    
+    if (mounted) {
+      final modelName = _models.firstWhere(
+        (m) => m['id'] == model, 
+        orElse: () => {'name': model}
+      )['name'];
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Model set to $modelName')),
+      );
     }
   }
 
@@ -150,6 +188,40 @@ class _AppStatePageState extends State<AppStatePage> {
       body: Column(
         children: [
           body,
+          if (isAuthenticated)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Recipe Import Settings',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'LLM Model',
+                          helperText: 'Model used for recipe parsing',
+                          border: OutlineInputBorder(),
+                        ),
+                        value: _selectedModel,
+                        items: _models.map((model) {
+                          return DropdownMenuItem(
+                            value: model['id'],
+                            child: Text(model['name']!),
+                          );
+                        }).toList(),
+                        onChanged: _setModel,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           if (Platform.isAndroid && isAuthenticated)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),

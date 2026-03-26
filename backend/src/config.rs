@@ -78,6 +78,18 @@ pub struct Config {
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_IMPORT", default_value = DEFAULT_SYSTEM_PROMPT_IMPORT)]
     pub system_prompt_import: String,
 
+    /// System prompt for recipe extraction (stage 1: raw text to strings)
+    #[arg(long, env = "BLAZ_SYSTEM_PROMPT_EXTRACT", default_value = DEFAULT_SYSTEM_PROMPT_EXTRACT)]
+    pub system_prompt_extract: String,
+
+    /// System prompt for ingredient structuring (stage 2: strings to components)
+    #[arg(long, env = "BLAZ_SYSTEM_PROMPT_STRUCTURE", default_value = DEFAULT_SYSTEM_PROMPT_STRUCTURE)]
+    pub system_prompt_structure: String,
+
+    /// System prompt for metric conversion (stage 3: imperial to metric)
+    #[arg(long, env = "BLAZ_SYSTEM_PROMPT_CONVERT", default_value = DEFAULT_SYSTEM_PROMPT_CONVERT)]
+    pub system_prompt_convert: String,
+
     /// System prompt for macro estimation
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_MACROS", default_value = DEFAULT_SYSTEM_PROMPT_MACROS)]
     pub system_prompt_macros: String,
@@ -253,6 +265,170 @@ Rules:
 - Do not include regular cooking steps
 - Do not include commentary or extra fields
 - Return [] if nothing qualifies
+
+Answer only with the JSON array."#;
+
+const DEFAULT_SYSTEM_PROMPT_EXTRACT: &str = r###"You are a recipe text extractor.
+
+INPUT: Plain text from a recipe page (any language).
+OUTPUT: STRICT JSON with exactly these keys:
+{
+  "title": string,
+  "ingredients": [string],
+  "instructions": [string]
+}
+
+TASK:
+- Translate ALL text to English.
+- Extract a clean, concise title.
+- Extract ingredients as an array of strings, one per line.
+  * If the recipe has named ingredient sections (e.g., "For the sauce", "Topping", "Dough"),
+    insert a string starting with "## " followed by the section name.
+    Example: "## Sauce", "## Topping"
+  * Keep each ingredient as-is (don't parse quantities yet).
+  * Example:
+    ["## Pulled Jackfruit", "2 cans jackfruit", "1 tbsp olive oil", "## Tzatziki", "1 cup yogurt"]
+- Extract instructions as an array of strings, one step per line.
+  * If the recipe has named instruction sections (e.g., "Make the sauce", "Assembly"),
+    insert a string starting with "## " followed by the section name.
+  * Example:
+    ["## Pulled Jackfruit", "Shred the jackfruit.", "Cook until done.", "## Tzatziki", "Mix yogurt."]
+- Remove "Vegan" from the title if present.
+- If data is missing, return an empty array for that key.
+- Do NOT parse quantities, units, or prep instructions yet.
+- Do NOT add commentary or extra keys.
+
+FORMAT EXAMPLE:
+{
+  "title": "BBQ Pulled Jackfruit Wraps",
+  "ingredients": [
+    "## Pulled Jackfruit",
+    "2 cans (560g) young jackfruit",
+    "1 tablespoon olive oil",
+    "1 teaspoon smoked paprika",
+    "## Tzatziki",
+    "1 cup non-dairy yogurt",
+    "1/2 cucumber"
+  ],
+  "instructions": [
+    "## Pulled Jackfruit",
+    "Drain and rinse the jackfruit, then shred with your hands.",
+    "Heat olive oil in a pan and add jackfruit and spices.",
+    "## Tzatziki",
+    "Grate the cucumber and squeeze out excess liquid.",
+    "Mix with yogurt."
+  ]
+}
+
+Answer only with the final JSON."###;
+
+const DEFAULT_SYSTEM_PROMPT_STRUCTURE: &str = r###"You are an ingredient parser.
+
+INPUT: An array of ingredient strings (already translated to English).
+OUTPUT: STRICT JSON array of structured ingredients.
+
+Each ingredient can be either:
+1. A section header: {"section": "Name"}
+2. A structured ingredient: {"quantity": null|number, "unit": null|string, "name": string, "prep": null|string}
+
+RULES:
+- For section headers (lines starting with "##"), output: {"section": "Name"}
+  Example: "## Sauce" → {"section": "Sauce"}
+- For regular ingredients:
+  * Extract quantity as a number (or null if missing)
+  * Extract unit as a string (or null if missing)
+    - Keep units AS-IS from the input (don't convert yet)
+    - Examples: "cup", "cups", "oz", "tbsp", "g", "ml"
+  * Extract name (the main ingredient)
+  * Extract prep instructions to separate "prep" field
+    - Prep words: sliced, diced, minced, chopped, grated, shredded, softened, melted, etc.
+    - Example: "2 carrots, diced" → {"quantity":2,"unit":null,"name":"carrots","prep":"diced"}
+  * The "name" field must NOT contain prep words or quantities
+  * If quantity is a range (e.g., "2-3 cups"), use the mean value (2.5)
+  * Convert fractions: 1/2 → 0.5, 1/4 → 0.25, 3/4 → 0.75, 1/3 → 0.33
+- If an ingredient has no quantity, set "quantity": null and "unit": null
+- Do NOT convert units to metric yet (that's stage 3)
+- Do NOT add commentary or extra fields
+
+FORMAT EXAMPLE:
+INPUT:
+[
+  "## Pulled Jackfruit",
+  "2 cans (560g) young jackfruit",
+  "1 tablespoon olive oil",
+  "## Tzatziki",
+  "1 cup non-dairy yogurt",
+  "1/2 cucumber, grated"
+]
+
+OUTPUT:
+[
+  {"section": "Pulled Jackfruit"},
+  {"quantity": 560, "unit": "g", "name": "jackfruit", "prep": null},
+  {"quantity": 1, "unit": "tablespoon", "name": "olive oil", "prep": null},
+  {"section": "Tzatziki"},
+  {"quantity": 1, "unit": "cup", "name": "non-dairy yogurt", "prep": null},
+  {"quantity": 0.5, "unit": null, "name": "cucumber", "prep": "grated"}
+]
+
+Answer only with the JSON array."###;
+
+const DEFAULT_SYSTEM_PROMPT_CONVERT: &str = r#"You are a unit converter for recipes.
+
+INPUT: JSON array of structured ingredients (with sections and regular ingredients).
+OUTPUT: Same JSON array with ALL imperial units converted to metric.
+
+CONVERSION RULES:
+- ALLOWED metric units ONLY: g, kg, ml, L, tsp, tbsp
+- BANNED units (must be converted): cup, cups, oz, ounce, ounces, fl oz, fluid ounce, pound, lb, lbs, pint, quart, gallon
+- Keep tsp and tbsp as-is (these are okay)
+- For section headers ({"section": "..."}), pass them through unchanged
+
+CONVERSIONS:
+Solid ingredients (flour, sugar, butter, etc.):
+- 1 oz → 28 g
+- 1 lb → 454 g
+- 1 cup flour → 120 g
+- 1 cup sugar → 200 g
+- 1 cup butter → 227 g
+- For generic solids: 1 cup → 150 g (reasonable default)
+
+Liquid ingredients (water, milk, oil, etc.):
+- 1 fl oz → 30 ml
+- 1 cup → 240 ml
+- 1 pint → 475 ml
+- 1 quart → 950 ml
+- 1 gallon → 3785 ml (or 3.8 L)
+
+RULES:
+- Convert quantities accordingly
+- Round sensibly (no 227.5g → just 230g or 225g)
+- Use g for small amounts, kg for > 1000g
+- Use ml for small amounts, L for > 1000ml
+- If an ingredient already has metric units, leave it unchanged
+- Preserve the "prep" field exactly as-is
+- Do NOT add commentary or extra fields
+
+FORMAT EXAMPLE:
+INPUT:
+[
+  {"section": "Pulled Jackfruit"},
+  {"quantity": 2, "unit": "cups", "name": "jackfruit", "prep": null},
+  {"quantity": 1, "unit": "tablespoon", "name": "olive oil", "prep": null},
+  {"section": "Tzatziki"},
+  {"quantity": 1, "unit": "cup", "name": "non-dairy yogurt", "prep": null},
+  {"quantity": 0.5, "unit": null, "name": "cucumber", "prep": "grated"}
+]
+
+OUTPUT:
+[
+  {"section": "Pulled Jackfruit"},
+  {"quantity": 300, "unit": "g", "name": "jackfruit", "prep": null},
+  {"quantity": 1, "unit": "tbsp", "name": "olive oil", "prep": null},
+  {"section": "Tzatziki"},
+  {"quantity": 240, "unit": "ml", "name": "non-dairy yogurt", "prep": null},
+  {"quantity": 0.5, "unit": null, "name": "cucumber", "prep": "grated"}
+]
 
 Answer only with the JSON array."#;
 
