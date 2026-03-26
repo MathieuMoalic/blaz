@@ -24,12 +24,18 @@ pub fn extract_schema_recipe(html: &str) -> Option<SchemaRecipe> {
             Err(_) => continue,
         };
 
-        // Handle both single Recipe object and array with Recipe inside
-        let recipe = if json.is_array() {
-            json.as_array()?
-                .iter()
-                .find(|item| is_recipe_type(item))
+        // Handle different JSON-LD formats:
+        // 1. Direct Recipe object: {"@type": "Recipe", ...}
+        // 2. Array with Recipe: [{"@type": "WebSite"}, {"@type": "Recipe"}]
+        // 3. Graph format: {"@graph": [{"@type": "Recipe"}]}
+        let recipe = if let Some(graph) = json.get("@graph").and_then(|g| g.as_array()) {
+            // Handle @graph format (common with Yoast SEO)
+            graph.iter().find(|item| is_recipe_type(item))
+        } else if json.is_array() {
+            // Handle array format
+            json.as_array()?.iter().find(|item| is_recipe_type(item))
         } else if is_recipe_type(&json) {
+            // Handle direct Recipe object
             Some(&json)
         } else {
             None
@@ -216,6 +222,38 @@ mod tests {
 
         let recipe = extract_schema_recipe(html).unwrap();
         assert_eq!(recipe.name, "Array Recipe");
+    }
+
+    #[test]
+    fn test_extract_recipe_from_graph() {
+        let html = r#"
+            <html>
+            <head>
+                <script type="application/ld+json">
+                {
+                    "@context": "https://schema.org",
+                    "@graph": [
+                        {
+                            "@type": "WebSite",
+                            "name": "Test Site"
+                        },
+                        {
+                            "@type": "Recipe",
+                            "name": "Graph Recipe",
+                            "recipeIngredient": ["2 cups flour", "1 tsp salt"],
+                            "recipeInstructions": ["Mix", "Bake"]
+                        }
+                    ]
+                }
+                </script>
+            </head>
+            </html>
+        "#;
+
+        let recipe = extract_schema_recipe(html).unwrap();
+        assert_eq!(recipe.name, "Graph Recipe");
+        assert_eq!(recipe.ingredients.len(), 2);
+        assert_eq!(recipe.instructions.len(), 2);
     }
 
     #[test]
