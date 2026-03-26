@@ -564,6 +564,21 @@ pub fn normalize_instructions(v: JsonValue) -> Vec<String> {
     }
 }
 
+fn normalize_unit(unit: &str) -> String {
+    let lower = unit.to_lowercase();
+    match lower.as_str() {
+        "tablespoon" | "tablespoons" => "tbsp".to_string(),
+        "teaspoon" | "teaspoons" => "tsp".to_string(),
+        "ounce" | "ounces" => "oz".to_string(),
+        "pound" | "pounds" => "lb".to_string(),
+        "gram" | "grams" => "g".to_string(),
+        "kilogram" | "kilograms" => "kg".to_string(),
+        "milliliter" | "milliliters" | "millilitre" | "millilitres" => "ml".to_string(),
+        "liter" | "liters" | "litre" | "litres" => "L".to_string(),
+        _ => unit.to_string(), // Keep original if not in list
+    }
+}
+
 pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
     match v {
         JsonValue::Array(items) => items
@@ -607,7 +622,8 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                     let unit = m
                         .remove("unit")
                         .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
-                        .filter(|s| !s.is_empty());
+                        .filter(|s| !s.is_empty())
+                        .map(|u| normalize_unit(&u));
 
                     let prep = m
                         .remove("prep")

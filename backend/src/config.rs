@@ -371,16 +371,23 @@ CRITICAL PARSING RULES:
 
 - For regular ingredients, YOU MUST extract all 4 fields:
   1. QUANTITY (number or null):
-     - ALWAYS look for numbers at the start: "2 carrots" → quantity: 2
+     - **PRIORITY**: If weight/volume is in parentheses, ALWAYS use that: 
+       * "1/3 cup (38g)" → quantity: 38
+       * "2 cans (400g)" → quantity: 400
+       * "1 cup (160g)" → quantity: 160
+     - Otherwise, look for numbers at the start: "2 carrots" → quantity: 2
      - Convert fractions: 1/2 → 0.5, 1/4 → 0.25, 3/4 → 0.75, 1/3 → 0.33
      - For ranges, use mean: "2-3 cups" → 2.5
-     - If weight/volume is in parentheses, use that: "2 cans (400g)" → 400
      - If no quantity found, set null
   
   2. UNIT (string or null):
-     - ALWAYS look for unit words after quantity: "2 cups flour" → unit: "cups"
-     - Common units: cup, cups, tbsp, tablespoon, tsp, teaspoon, oz, ounce, lb, pound, g, gram, kg, ml, L, clove, cloves, can, cans
-     - If weight/volume is in parentheses, use that unit: "2 cans (400g)" → unit: "g"
+     - **PRIORITY**: If weight/volume is in parentheses, ALWAYS use that unit:
+       * "1/3 cup (38g)" → unit: "g"
+       * "2 cans (400g)" → unit: "g"  
+       * "1 cup (160g)" → unit: "g"
+       * "2 cups (480ml)" → unit: "ml"
+     - Otherwise, look for unit words: "2 cups flour" → unit: "cups"
+     - Common units: cup, cups, tbsp, tablespoon, tsp, teaspoon, oz, ounce, lb, pound, g, gram, kg, ml, L
      - Keep units AS-IS from input (don't convert yet)
      - If no unit found, set null
   
