@@ -49,7 +49,7 @@ Future<void> initNotifications() async {
     _reminderCheckTask,
     _reminderCheckTask,
     frequency: const Duration(hours: 6),
-    existingWorkPolicy: ExistingWorkPolicy.keep,
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
     constraints: Constraints(
       networkType: NetworkType.connected,
     ),
