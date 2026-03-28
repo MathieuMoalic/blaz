@@ -979,8 +979,8 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                       title: Text(_formatItemText(suggestion)),
                       trailing: const Icon(Icons.arrow_forward, size: 16),
                       onTap: () {
-                        // Fill the text field but don't submit - let user edit quantity
                         widget.controller.text = suggestion;
+                        _submitText();
                       },
                     );
                   },
