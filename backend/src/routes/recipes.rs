@@ -187,6 +187,23 @@ pub struct CheckDuplicateResp {
     pub duplicates: Vec<DuplicateMatch>,
 }
 
+/// Normalize a URL for comparison (lowercase, remove trailing slash, remove www.)
+fn normalize_url(url: &str) -> String {
+    let mut normalized = url.trim().to_lowercase();
+    // Remove trailing slash
+    while normalized.ends_with('/') {
+        normalized.pop();
+    }
+    // Remove protocol for comparison
+    normalized = normalized
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_string();
+    // Remove www. prefix
+    normalized = normalized.trim_start_matches("www.").to_string();
+    normalized
+}
+
 /// Check if a recipe with the same URL or similar title already exists
 pub async fn check_duplicate(
     State(state): State<AppState>,
@@ -194,25 +211,30 @@ pub async fn check_duplicate(
 ) -> AppResult<Json<CheckDuplicateResp>> {
     let mut duplicates = Vec::new();
 
-    // Check for exact URL match
+    // Check for URL match (normalized comparison)
     if let Some(url) = &req.url {
         let url_trimmed = url.trim();
         if !url_trimmed.is_empty() {
+            let normalized_input = normalize_url(url_trimmed);
+
+            // Get all recipes and compare normalized URLs
             let rows: Vec<(i64, String, String)> = sqlx::query_as(
-                "SELECT id, title, source FROM recipes WHERE source = ? AND deleted_at IS NULL"
+                "SELECT id, title, source FROM recipes WHERE source != '' AND deleted_at IS NULL"
             )
-            .bind(url_trimmed)
             .fetch_all(&state.pool)
             .await
             .unwrap_or_default();
 
             for (id, title, source) in rows {
-                duplicates.push(DuplicateMatch {
-                    id,
-                    title,
-                    source,
-                    match_type: "url".to_string(),
-                });
+                let normalized_source = normalize_url(&source);
+                if normalized_source == normalized_input {
+                    duplicates.push(DuplicateMatch {
+                        id,
+                        title,
+                        source,
+                        match_type: "url".to_string(),
+                    });
+                }
             }
         }
     }
