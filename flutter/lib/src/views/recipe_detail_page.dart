@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -42,10 +43,88 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   bool _estimatingMacros = false;
 
+  // Timer state
+  int _timerSeconds = 0;
+  bool _timerRunning = false;
+  Timer? _timer;
+
   @override
   void initState() {
     super.initState();
     _future = api.fetchRecipe(widget.recipeId);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  // ---- Timer ----------------------------------------------------------------
+
+  void _startTimer() {
+    if (_timerRunning) return;
+    setState(() => _timerRunning = true);
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_timerSeconds > 0) {
+        setState(() => _timerSeconds--);
+        if (_timerSeconds == 0) {
+          _stopTimer();
+          _onTimerComplete();
+        }
+      }
+    });
+  }
+
+  void _stopTimer() {
+    _timer?.cancel();
+    setState(() => _timerRunning = false);
+  }
+
+  void _resetTimer() {
+    _stopTimer();
+    setState(() => _timerSeconds = 0);
+  }
+
+  void _setTimer(int seconds) {
+    setState(() => _timerSeconds = seconds);
+  }
+
+  void _onTimerComplete() {
+    // Play a sound or show notification
+    HapticFeedback.heavyImpact();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Timer finished!'),
+        duration: Duration(seconds: 5),
+      ),
+    );
+  }
+
+  String _formatTime(int totalSeconds) {
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  void _showTimerSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => _TimerSheet(
+        seconds: _timerSeconds,
+        running: _timerRunning,
+        formatTime: _formatTime,
+        onStart: _startTimer,
+        onStop: _stopTimer,
+        onReset: _resetTimer,
+        onSetTime: _setTimer,
+      ),
+    );
   }
 
   // ---- Helpers --------------------------------------------------------------
@@ -528,6 +607,33 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          // Timer button (always visible, discrete)
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                tooltip: 'Timer',
+                icon: Icon(
+                  _timerRunning ? Icons.timer : Icons.timer_outlined,
+                  color: _timerRunning ? Theme.of(context).colorScheme.primary : null,
+                ),
+                onPressed: _showTimerSheet,
+              ),
+              if (_timerSeconds > 0)
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    constraints: const BoxConstraints(minWidth: 12, minHeight: 12),
+                  ),
+                ),
+            ],
+          ),
           if (isAuthenticated) ...[
             FutureBuilder<api.Recipe>(
               future: _future,
@@ -1689,6 +1795,131 @@ class _RenameDialogState extends State<_RenameDialog> {
           child: const Text('OK'),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Timer bottom sheet
+
+class _TimerSheet extends StatelessWidget {
+  final int seconds;
+  final bool running;
+  final String Function(int) formatTime;
+  final VoidCallback onStart;
+  final VoidCallback onStop;
+  final VoidCallback onReset;
+  final ValueChanged<int> onSetTime;
+
+  const _TimerSheet({
+    required this.seconds,
+    required this.running,
+    required this.formatTime,
+    required this.onStart,
+    required this.onStop,
+    required this.onReset,
+    required this.onSetTime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Timer display
+          Text(
+            formatTime(seconds),
+            style: theme.textTheme.displayLarge?.copyWith(
+              fontWeight: FontWeight.w300,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Quick presets
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              for (final (label, secs) in [
+                ('1m', 60),
+                ('3m', 180),
+                ('5m', 300),
+                ('10m', 600),
+                ('15m', 900),
+                ('30m', 1800),
+              ])
+                ActionChip(
+                  label: Text(label),
+                  onPressed: () {
+                    onSetTime(secs);
+                    Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // Controls
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              // Reset
+              IconButton.filled(
+                onPressed: seconds > 0 ? () {
+                  onReset();
+                  Navigator.pop(context);
+                } : null,
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Reset',
+                style: IconButton.styleFrom(
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  foregroundColor: theme.colorScheme.onSurface,
+                ),
+              ),
+
+              // Play/Pause (larger)
+              IconButton.filled(
+                onPressed: seconds > 0 ? () {
+                  if (running) {
+                    onStop();
+                  } else {
+                    onStart();
+                  }
+                  Navigator.pop(context);
+                } : null,
+                icon: Icon(running ? Icons.pause : Icons.play_arrow, size: 32),
+                tooltip: running ? 'Pause' : 'Start',
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(64, 64),
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.onPrimary,
+                ),
+              ),
+
+              // +1 minute
+              IconButton.filled(
+                onPressed: () {
+                  onSetTime(seconds + 60);
+                  Navigator.pop(context);
+                },
+                icon: const Icon(Icons.add),
+                tooltip: 'Add 1 minute',
+                style: IconButton.styleFrom(
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  foregroundColor: theme.colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
     );
   }
 }
