@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../api.dart';
 import '../auth.dart';
@@ -15,7 +16,7 @@ class RecipesPage extends StatefulWidget {
   State<RecipesPage> createState() => RecipesPageState();
 }
 
-enum _RecipeSort { nameAsc, nameDesc, recentlyUpdated }
+enum _RecipeSort { nameAsc, nameDesc, recentlyUpdated, random }
 
 class RecipesPageState extends State<RecipesPage> {
   late Future<List<Recipe>> _future;
@@ -26,6 +27,7 @@ class RecipesPageState extends State<RecipesPage> {
   bool _searchVisible = false;
   Timer? _debounce;
   _RecipeSort _sort = _RecipeSort.nameAsc;
+  int _randomSeed = 0;
 
   static const _kvSort = 'recipes_sort';
 
@@ -55,7 +57,12 @@ class RecipesPageState extends State<RecipesPage> {
   }
 
   Future<void> _setSort(_RecipeSort sort) async {
-    setState(() => _sort = sort);
+    setState(() {
+      _sort = sort;
+      if (sort == _RecipeSort.random) {
+        _randomSeed = DateTime.now().microsecondsSinceEpoch;
+      }
+    });
     await setString(_kvSort, sort.name);
   }
 
@@ -284,6 +291,8 @@ class RecipesPageState extends State<RecipesPage> {
         );
       case _RecipeSort.recentlyUpdated:
         list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      case _RecipeSort.random:
+        list.shuffle(Random(_randomSeed));
     }
     return list;
   }
@@ -442,6 +451,7 @@ class RecipesPageState extends State<RecipesPage> {
                       (_RecipeSort.nameAsc, 'Name (A–Z)'),
                       (_RecipeSort.nameDesc, 'Name (Z–A)'),
                       (_RecipeSort.recentlyUpdated, 'Recently updated'),
+                      (_RecipeSort.random, 'Random'),
                     ])
                       MenuItemButton(
                         onPressed: () => _setSort(sort),
