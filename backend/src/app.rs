@@ -73,11 +73,14 @@ pub fn build_app(state: AppState) -> Router {
     // Protected routes (authentication required)
     let protected_routes = Router::new()
         .route("/recipes", post(recipes::create))
+        .route("/recipes/deleted", get(recipes::list_deleted))
         .route(
             "/recipes/{id}",
             delete(recipes::delete)
                 .patch(recipes::update),
         )
+        .route("/recipes/{id}/restore", post(recipes::restore))
+        .route("/recipes/{id}/permanent", delete(recipes::permanent_delete))
         .route("/recipes/{id}/image", post(recipes::upload_image))
         .route("/recipes/{id}/share", post(share_recipe::create_share_token).delete(share_recipe::revoke_share_token))
         .route(

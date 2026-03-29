@@ -138,7 +138,7 @@ pub async fn upload_image(
 ///
 /// Err if querying the db fails
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
-    let sql = format!("SELECT {RECIPE_COLS} FROM recipes ORDER BY id");
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NULL ORDER BY id");
     let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
         .fetch_all(&state.pool)
         .await
@@ -150,11 +150,29 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>>
     Ok(Json(rows.into_iter().map(Recipe::from).collect()))
 }
 
+/// List soft-deleted recipes (trash)
+///
+/// # Errors
+///
+/// Err if querying the db fails
+pub async fn list_deleted(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC");
+    let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.list_deleted failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(rows.into_iter().map(Recipe::from).collect()))
+}
+
 /// # Errors
 ///
 /// Err if querying the db fails
 pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Recipe>> {
-    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ? AND deleted_at IS NULL");
     let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(id)
         .fetch_one(&state.pool)
@@ -234,13 +252,57 @@ pub async fn create(
 /// # Errors
 ///
 /// Err if querying the db fails
+/// Soft delete a recipe (move to trash)
 pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<StatusCode> {
-    let res = sqlx::query(r"DELETE FROM recipes WHERE id = ?")
+    let res = sqlx::query(r"UPDATE recipes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL")
         .bind(id)
         .execute(&state.pool)
         .await
         .map_err(|e| {
             error!(?e, "recipes.delete failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    if res.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND.into());
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Restore a soft-deleted recipe
+pub async fn restore(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Recipe>> {
+    let res = sqlx::query(r"UPDATE recipes SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.restore failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    if res.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND.into());
+    }
+
+    // Return the restored recipe
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
+    let row: RecipeRow = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+
+    Ok(Json(row.into()))
+}
+
+/// Permanently delete a recipe (from trash)
+pub async fn permanent_delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<StatusCode> {
+    // Only allow permanent delete of already soft-deleted recipes
+    let res = sqlx::query(r"DELETE FROM recipes WHERE id = ? AND deleted_at IS NOT NULL")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| {
+            error!(?e, "recipes.permanent_delete failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 

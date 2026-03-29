@@ -6,6 +6,7 @@ import '../api.dart' as api;
 import '../auth.dart';
 import '../notifications.dart';
 import 'login_page.dart';
+import 'deleted_recipes_page.dart';
 
 class AppStatePage extends StatefulWidget {
   const AppStatePage({super.key});
@@ -232,6 +233,25 @@ class _AppStatePageState extends State<AppStatePage> {
                   subtitle: const Text('Check every 6 hours for upcoming prep tasks'),
                   value: _notificationsEnabled,
                   onChanged: _toggleNotifications,
+                ),
+              ),
+            ),
+          if (isAuthenticated)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Card(
+                child: ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('Recently Deleted'),
+                  subtitle: const Text('View and restore deleted recipes'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const DeletedRecipesPage(),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),

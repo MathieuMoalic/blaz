@@ -840,6 +840,35 @@ Future<void> deleteRecipe(int id) async {
   }
 }
 
+/// Fetches soft-deleted recipes (trash).
+Future<List<Recipe>> fetchDeletedRecipes() async {
+  final res = await http.get(_u('/recipes/deleted'), headers: _headers());
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final List<dynamic> data = jsonDecode(res.body) as List<dynamic>;
+  return data
+      .map((e) => Recipe.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
+/// Restores a soft-deleted recipe.
+Future<Recipe> restoreRecipe(int id) async {
+  final res = await http.post(_u('/recipes/$id/restore'), headers: _headers());
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  return Recipe.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+}
+
+/// Permanently deletes a recipe from trash.
+Future<void> permanentDeleteRecipe(int id) async {
+  final res = await http.delete(_u('/recipes/$id/permanent'), headers: _headers());
+  if (res.statusCode != 200 && res.statusCode != 204) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+}
+
 /// Fetches a shared recipe by token (no auth required).
 Future<Recipe> fetchSharedRecipe(String token) async {
   final res = await http.get(_u('/api/share/$token'));
