@@ -27,10 +27,12 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
   final _importUrl = TextEditingController();
   bool _importing = false;
+  int _importStep = 0; // 0=not started, 1-5=progress steps
 
   // image import state (up to 3 photos)
   final List<(String, Uint8List)> _importImages = []; // (filename, bytes)
   bool _importingImages = false;
+  int _importImageStep = 0; // 0=not started, 1-4=progress steps
 
   XFile? _picked; // selected file (manual entry cover image)
   Uint8List? _preview; // preview bytes (web or when Android only returns URI)
@@ -75,13 +77,23 @@ class _AddRecipePageState extends State<AddRecipePage> {
       );
       return;
     }
-    setState(() => _importing = true);
+    setState(() {
+      _importing = true;
+      _importStep = 1;
+    });
+
+    // Animate through steps while waiting for the API
+    _animateImportSteps();
+
     try {
       // Get user's selected model
       final prefs = await SharedPreferences.getInstance();
       final model = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
-      
+
       final created = await importRecipeFromUrl(url: url, model: model);
+      if (!mounted) return;
+      setState(() => _importStep = 5); // Complete
+      await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -93,8 +105,29 @@ class _AddRecipePageState extends State<AddRecipePage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
-      if (mounted) setState(() => _importing = false);
+      if (mounted) setState(() {
+        _importing = false;
+        _importStep = 0;
+      });
     }
+  }
+
+  void _animateImportSteps() async {
+    // Animate through steps with realistic timing
+    // Step 1: Fetching page (already set)
+    await Future.delayed(const Duration(milliseconds: 1500));
+    if (!mounted || !_importing) return;
+    setState(() => _importStep = 2); // Extracting recipe
+
+    await Future.delayed(const Duration(milliseconds: 3000));
+    if (!mounted || !_importing) return;
+    setState(() => _importStep = 3); // Structuring ingredients
+
+    await Future.delayed(const Duration(milliseconds: 3000));
+    if (!mounted || !_importing) return;
+    setState(() => _importStep = 4); // Converting units
+
+    // Step 5 (Saving) will be set when the API completes
   }
 
   Future<void> _submit() async {
@@ -251,6 +284,31 @@ class _AddRecipePageState extends State<AddRecipePage> {
             ),
           ),
         ),
+        if (_importing) ...[
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final (step, label) in [
+                    (1, 'Fetching page...'),
+                    (2, 'Extracting recipe...'),
+                    (3, 'Structuring ingredients...'),
+                    (4, 'Converting to metric...'),
+                    (5, 'Saving recipe...'),
+                  ])
+                    _ImportStepTile(
+                      label: label,
+                      isActive: _importStep == step,
+                      isComplete: _importStep > step,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -269,13 +327,23 @@ class _AddRecipePageState extends State<AddRecipePage> {
 
   Future<void> _submitImportImages() async {
     if (_importImages.isEmpty) return;
-    setState(() => _importingImages = true);
+    setState(() {
+      _importingImages = true;
+      _importImageStep = 1;
+    });
+
+    // Animate through steps while waiting for the API
+    _animateImageImportSteps();
+
     try {
       final created = await importRecipeFromImages(
         _importImages
             .map((e) => (e.$1, e.$2.toList()))
             .toList(),
       );
+      if (!mounted) return;
+      setState(() => _importImageStep = 4); // Complete
+      await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Imported: ${created.title}')),
@@ -287,8 +355,24 @@ class _AddRecipePageState extends State<AddRecipePage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
-      if (mounted) setState(() => _importingImages = false);
+      if (mounted) setState(() {
+        _importingImages = false;
+        _importImageStep = 0;
+      });
     }
+  }
+
+  void _animateImageImportSteps() async {
+    // Step 1: Uploading images (already set)
+    await Future.delayed(const Duration(milliseconds: 2000));
+    if (!mounted || !_importingImages) return;
+    setState(() => _importImageStep = 2); // Analyzing images
+
+    await Future.delayed(const Duration(milliseconds: 4000));
+    if (!mounted || !_importingImages) return;
+    setState(() => _importImageStep = 3); // Extracting recipe
+
+    // Step 4 (Saving) will be set when the API completes
   }
 
   Widget _buildImportImageScreen() {
@@ -392,6 +476,30 @@ class _AddRecipePageState extends State<AddRecipePage> {
             ),
           ),
         ),
+        if (_importingImages) ...[
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final (step, label) in [
+                    (1, 'Uploading images...'),
+                    (2, 'Analyzing images...'),
+                    (3, 'Extracting recipe...'),
+                    (4, 'Saving recipe...'),
+                  ])
+                    _ImportStepTile(
+                      label: label,
+                      isActive: _importImageStep == step,
+                      isComplete: _importImageStep > step,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -559,6 +667,51 @@ class _AddRecipePageState extends State<AddRecipePage> {
           AddRecipeMode.importImage => _buildImportImageScreen(),
           AddRecipeMode.manual => _buildManualScreen(),
         },
+      ),
+    );
+  }
+}
+
+class _ImportStepTile extends StatelessWidget {
+  final String label;
+  final bool isActive;
+  final bool isComplete;
+
+  const _ImportStepTile({
+    required this.label,
+    required this.isActive,
+    required this.isComplete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: isComplete
+                ? Icon(Icons.check_circle, color: theme.colorScheme.primary, size: 20)
+                : isActive
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.circle_outlined, color: theme.disabledColor, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(
+              color: isComplete || isActive ? null : theme.disabledColor,
+              fontWeight: isActive ? FontWeight.bold : null,
+            ),
+          ),
+        ],
       ),
     );
   }
