@@ -426,6 +426,17 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                         }
                                       },
                                       onEdit: () => _editItem(context, rows[i]),
+                                      onDelete: () async {
+                                        final item = rows[i];
+                                        _applyLocalUpdate(
+                                          (list) => list.where((x) => x.id != item.id).toList(),
+                                        );
+                                        try {
+                                          await deleteShoppingItem(item.id);
+                                        } finally {
+                                          await refresh();
+                                        }
+                                      },
                                     ),
                               ],
                             ),
@@ -755,12 +766,14 @@ class _RowTile extends StatelessWidget {
   final bool isLastInCategory;
   final ValueChanged<bool?> onChanged;
   final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   const _RowTile({
     required this.item,
     required this.isLastInCategory,
     required this.onChanged,
     required this.onEdit,
+    required this.onDelete,
   });
 
   @override
@@ -768,47 +781,107 @@ class _RowTile extends StatelessWidget {
     final c = Theme.of(context).colorScheme;
     return Column(
       children: [
-        Container(
-          decoration: BoxDecoration(
-            // Slight translucency so the global background peeks through.
-            color: c.surface.withValues(alpha: 0.65),
-          ),
-          child: ListTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            minVerticalPadding: 0,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-            onTap: onEdit,
-            leading: Checkbox(
-              value: false, // only active items are shown
-              onChanged: onChanged,
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            title: Row(
+        Dismissible(
+          key: ValueKey(item.id),
+          background: Container(
+            color: Colors.green,
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.only(left: 20),
+            child: const Row(
               children: [
-                Expanded(
-                  child: Text(
-                    _formatItemText(item.text),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                Icon(Icons.check, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Done', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          secondaryBackground: Container(
+            color: Colors.red,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text('Delete', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                SizedBox(width: 8),
+                Icon(Icons.delete, color: Colors.white),
+              ],
+            ),
+          ),
+          confirmDismiss: (direction) async {
+            if (direction == DismissDirection.startToEnd) {
+              // Swipe right = mark as done
+              onChanged(true);
+              return false; // Don't actually dismiss, let onChanged handle it
+            } else {
+              // Swipe left = delete (confirm first)
+              return await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Delete item?'),
+                  content: Text('Remove "${_formatItemText(item.text)}" from the list?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                      child: const Text('Delete'),
+                    ),
+                  ],
                 ),
-                if (item.notes.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  Flexible(
+              ) ?? false;
+            }
+          },
+          onDismissed: (direction) {
+            if (direction == DismissDirection.endToStart) {
+              onDelete();
+            }
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              // Slight translucency so the global background peeks through.
+              color: c.surface.withValues(alpha: 0.65),
+            ),
+            child: ListTile(
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              minVerticalPadding: 0,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+              onTap: onEdit,
+              leading: Checkbox(
+                value: false, // only active items are shown
+                onChanged: onChanged,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              title: Row(
+                children: [
+                  Expanded(
                     child: Text(
-                      item.notes,
-                      maxLines: 1,
+                      _formatItemText(item.text),
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45),
-                      ),
                     ),
                   ),
+                  if (item.notes.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        item.notes,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
