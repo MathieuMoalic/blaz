@@ -65,7 +65,16 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   void _startTimer() {
     if (_timerRunning) return;
     setState(() => _timerRunning = true);
-    _startTimerInternal();
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_timerSeconds > 0) {
+        setState(() => _timerSeconds--);
+        if (_timerSeconds == 0) {
+          _stopTimer();
+          _onTimerComplete();
+        }
+      }
+    });
   }
 
   void _stopTimer() {
@@ -107,37 +116,20 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   void _showTimerSheet() {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => _TimerSheetStateful(
-        initialSeconds: _timerSeconds,
-        initialRunning: _timerRunning,
-        onStateChanged: (seconds, running) {
-          setState(() {
-            _timerSeconds = seconds;
-            _timerRunning = running;
-          });
-          // Sync timer
-          if (running && !_timerRunning) {
-            _startTimerInternal();
-          } else if (!running && _timerRunning) {
-            _stopTimer();
-          }
+      builder: (ctx) => _TimerSheet(
+        seconds: _timerSeconds,
+        running: _timerRunning,
+        formatTime: _formatTime,
+        onStart: () {
+          _startTimer();
+          Navigator.pop(ctx);
         },
-        onTimerComplete: _onTimerComplete,
+        onStop: _stopTimer,
+        onReset: _resetTimer,
+        onSetTime: _setTimer,
+        onAddTime: (secs) => setState(() => _timerSeconds += secs),
       ),
     );
-  }
-
-  void _startTimerInternal() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_timerSeconds > 0) {
-        setState(() => _timerSeconds--);
-        if (_timerSeconds == 0) {
-          _stopTimer();
-          _onTimerComplete();
-        }
-      }
-    });
   }
 
   // ---- Helpers --------------------------------------------------------------
@@ -1873,101 +1865,28 @@ class _RenameDialogState extends State<_RenameDialog> {
 }
 
 // ---------------------------------------------------------------------------
-// Timer bottom sheet (stateful to update in real-time)
+// Timer bottom sheet
 
-class _TimerSheetStateful extends StatefulWidget {
-  final int initialSeconds;
-  final bool initialRunning;
-  final void Function(int seconds, bool running) onStateChanged;
-  final VoidCallback onTimerComplete;
+class _TimerSheet extends StatelessWidget {
+  final int seconds;
+  final bool running;
+  final String Function(int) formatTime;
+  final VoidCallback onStart;
+  final VoidCallback onStop;
+  final VoidCallback onReset;
+  final ValueChanged<int> onSetTime;
+  final ValueChanged<int> onAddTime;
 
-  const _TimerSheetStateful({
-    required this.initialSeconds,
-    required this.initialRunning,
-    required this.onStateChanged,
-    required this.onTimerComplete,
+  const _TimerSheet({
+    required this.seconds,
+    required this.running,
+    required this.formatTime,
+    required this.onStart,
+    required this.onStop,
+    required this.onReset,
+    required this.onSetTime,
+    required this.onAddTime,
   });
-
-  @override
-  State<_TimerSheetStateful> createState() => _TimerSheetStatefulState();
-}
-
-class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
-  late int _seconds;
-  late bool _running;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _seconds = widget.initialSeconds;
-    _running = widget.initialRunning;
-    if (_running) {
-      _startTimer();
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  void _startTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_seconds > 0) {
-        setState(() => _seconds--);
-        widget.onStateChanged(_seconds, _running);
-        if (_seconds == 0) {
-          _stopTimer();
-          widget.onTimerComplete();
-        }
-      }
-    });
-  }
-
-  void _stopTimer() {
-    _timer?.cancel();
-    setState(() => _running = false);
-    widget.onStateChanged(_seconds, false);
-  }
-
-  void _toggleRunning() {
-    if (_running) {
-      _stopTimer();
-    } else {
-      setState(() => _running = true);
-      widget.onStateChanged(_seconds, true);
-      _startTimer();
-    }
-  }
-
-  void _reset() {
-    _stopTimer();
-    setState(() => _seconds = 0);
-    widget.onStateChanged(0, false);
-  }
-
-  void _setTime(int secs) {
-    setState(() => _seconds = secs);
-    widget.onStateChanged(secs, _running);
-  }
-
-  void _addTime(int secs) {
-    setState(() => _seconds += secs);
-    widget.onStateChanged(_seconds, _running);
-  }
-
-  String _formatTime(int totalSeconds) {
-    final hours = totalSeconds ~/ 3600;
-    final minutes = (totalSeconds % 3600) ~/ 60;
-    final seconds = totalSeconds % 60;
-    if (hours > 0) {
-      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1980,11 +1899,11 @@ class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
         children: [
           // Timer display
           Text(
-            _formatTime(_seconds),
+            formatTime(seconds),
             style: theme.textTheme.displayLarge?.copyWith(
               fontWeight: FontWeight.w300,
               fontFeatures: const [FontFeature.tabularFigures()],
-              color: _running ? theme.colorScheme.primary : null,
+              color: running ? theme.colorScheme.primary : null,
             ),
           ),
           const SizedBox(height: 24),
@@ -2005,7 +1924,7 @@ class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
               ])
                 ActionChip(
                   label: Text(label),
-                  onPressed: () => _setTime(secs),
+                  onPressed: () => onSetTime(secs),
                 ),
             ],
           ),
@@ -2017,7 +1936,7 @@ class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
             children: [
               // Reset
               IconButton.filled(
-                onPressed: _seconds > 0 ? _reset : null,
+                onPressed: seconds > 0 ? onReset : null,
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Reset',
                 style: IconButton.styleFrom(
@@ -2028,9 +1947,11 @@ class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
 
               // Play/Pause (larger)
               IconButton.filled(
-                onPressed: _seconds > 0 ? _toggleRunning : null,
-                icon: Icon(_running ? Icons.pause : Icons.play_arrow, size: 32),
-                tooltip: _running ? 'Pause' : 'Start',
+                onPressed: seconds > 0
+                    ? (running ? onStop : onStart)
+                    : null,
+                icon: Icon(running ? Icons.pause : Icons.play_arrow, size: 32),
+                tooltip: running ? 'Pause' : 'Start',
                 style: IconButton.styleFrom(
                   minimumSize: const Size(64, 64),
                   backgroundColor: theme.colorScheme.primary,
@@ -2040,7 +1961,7 @@ class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
 
               // +1 minute
               IconButton.filled(
-                onPressed: () => _addTime(60),
+                onPressed: () => onAddTime(60),
                 icon: const Icon(Icons.add),
                 tooltip: 'Add 1 minute',
                 style: IconButton.styleFrom(
