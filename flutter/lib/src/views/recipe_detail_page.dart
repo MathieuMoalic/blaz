@@ -65,15 +65,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   void _startTimer() {
     if (_timerRunning) return;
     setState(() => _timerRunning = true);
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_timerSeconds > 0) {
-        setState(() => _timerSeconds--);
-        if (_timerSeconds == 0) {
-          _stopTimer();
-          _onTimerComplete();
-        }
-      }
-    });
+    _startTimerInternal();
   }
 
   void _stopTimer() {
@@ -115,16 +107,37 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   void _showTimerSheet() {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => _TimerSheet(
-        seconds: _timerSeconds,
-        running: _timerRunning,
-        formatTime: _formatTime,
-        onStart: _startTimer,
-        onStop: _stopTimer,
-        onReset: _resetTimer,
-        onSetTime: _setTimer,
+      builder: (ctx) => _TimerSheetStateful(
+        initialSeconds: _timerSeconds,
+        initialRunning: _timerRunning,
+        onStateChanged: (seconds, running) {
+          setState(() {
+            _timerSeconds = seconds;
+            _timerRunning = running;
+          });
+          // Sync timer
+          if (running && !_timerRunning) {
+            _startTimerInternal();
+          } else if (!running && _timerRunning) {
+            _stopTimer();
+          }
+        },
+        onTimerComplete: _onTimerComplete,
       ),
     );
+  }
+
+  void _startTimerInternal() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_timerSeconds > 0) {
+        setState(() => _timerSeconds--);
+        if (_timerSeconds == 0) {
+          _stopTimer();
+          _onTimerComplete();
+        }
+      }
+    });
   }
 
   // ---- Helpers --------------------------------------------------------------
@@ -703,23 +716,25 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           ],
         ],
       ),
-      body: FutureBuilder<api.Recipe>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(child: Text('Error: ${snap.error}'));
-          }
-          final r = snap.data!;
-          final small = api.mediaUrl(r.imagePathSmall);
-          final full = api.mediaUrl(r.imagePathFull);
-          final heroTag = 'recipe-image-${r.id}';
+      body: Stack(
+        children: [
+          FutureBuilder<api.Recipe>(
+            future: _future,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snap.hasError) {
+                return Center(child: Text('Error: ${snap.error}'));
+              }
+              final r = snap.data!;
+              final small = api.mediaUrl(r.imagePathSmall);
+              final full = api.mediaUrl(r.imagePathFull);
+              final heroTag = 'recipe-image-${r.id}';
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
+              return RefreshIndicator(
+                onRefresh: _refresh,
+                child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
                 Text(r.title, style: Theme.of(context).textTheme.headlineSmall),
@@ -966,6 +981,64 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           );
         },
       ),
+      // Persistent timer display when timer is running or set
+      if (_timerSeconds > 0 || _timerRunning)
+        Positioned(
+          bottom: 16,
+          left: 16,
+          right: 16,
+          child: GestureDetector(
+            onTap: _showTimerSheet,
+            child: Card(
+              elevation: 8,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _timerRunning ? Icons.timer : Icons.timer_outlined,
+                      color: _timerRunning
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      _formatTime(_timerSeconds),
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        color: _timerRunning
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    if (_timerRunning)
+                      IconButton(
+                        icon: const Icon(Icons.pause),
+                        onPressed: _stopTimer,
+                        tooltip: 'Pause',
+                      )
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.play_arrow),
+                        onPressed: _timerSeconds > 0 ? _startTimer : null,
+                        tooltip: 'Start',
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: _resetTimer,
+                      tooltip: 'Reset',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
     );
   }
 }
@@ -1800,26 +1873,101 @@ class _RenameDialogState extends State<_RenameDialog> {
 }
 
 // ---------------------------------------------------------------------------
-// Timer bottom sheet
+// Timer bottom sheet (stateful to update in real-time)
 
-class _TimerSheet extends StatelessWidget {
-  final int seconds;
-  final bool running;
-  final String Function(int) formatTime;
-  final VoidCallback onStart;
-  final VoidCallback onStop;
-  final VoidCallback onReset;
-  final ValueChanged<int> onSetTime;
+class _TimerSheetStateful extends StatefulWidget {
+  final int initialSeconds;
+  final bool initialRunning;
+  final void Function(int seconds, bool running) onStateChanged;
+  final VoidCallback onTimerComplete;
 
-  const _TimerSheet({
-    required this.seconds,
-    required this.running,
-    required this.formatTime,
-    required this.onStart,
-    required this.onStop,
-    required this.onReset,
-    required this.onSetTime,
+  const _TimerSheetStateful({
+    required this.initialSeconds,
+    required this.initialRunning,
+    required this.onStateChanged,
+    required this.onTimerComplete,
   });
+
+  @override
+  State<_TimerSheetStateful> createState() => _TimerSheetStatefulState();
+}
+
+class _TimerSheetStatefulState extends State<_TimerSheetStateful> {
+  late int _seconds;
+  late bool _running;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.initialSeconds;
+    _running = widget.initialRunning;
+    if (_running) {
+      _startTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_seconds > 0) {
+        setState(() => _seconds--);
+        widget.onStateChanged(_seconds, _running);
+        if (_seconds == 0) {
+          _stopTimer();
+          widget.onTimerComplete();
+        }
+      }
+    });
+  }
+
+  void _stopTimer() {
+    _timer?.cancel();
+    setState(() => _running = false);
+    widget.onStateChanged(_seconds, false);
+  }
+
+  void _toggleRunning() {
+    if (_running) {
+      _stopTimer();
+    } else {
+      setState(() => _running = true);
+      widget.onStateChanged(_seconds, true);
+      _startTimer();
+    }
+  }
+
+  void _reset() {
+    _stopTimer();
+    setState(() => _seconds = 0);
+    widget.onStateChanged(0, false);
+  }
+
+  void _setTime(int secs) {
+    setState(() => _seconds = secs);
+    widget.onStateChanged(secs, _running);
+  }
+
+  void _addTime(int secs) {
+    setState(() => _seconds += secs);
+    widget.onStateChanged(_seconds, _running);
+  }
+
+  String _formatTime(int totalSeconds) {
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1832,10 +1980,11 @@ class _TimerSheet extends StatelessWidget {
         children: [
           // Timer display
           Text(
-            formatTime(seconds),
+            _formatTime(_seconds),
             style: theme.textTheme.displayLarge?.copyWith(
               fontWeight: FontWeight.w300,
               fontFeatures: const [FontFeature.tabularFigures()],
+              color: _running ? theme.colorScheme.primary : null,
             ),
           ),
           const SizedBox(height: 24),
@@ -1856,10 +2005,7 @@ class _TimerSheet extends StatelessWidget {
               ])
                 ActionChip(
                   label: Text(label),
-                  onPressed: () {
-                    onSetTime(secs);
-                    Navigator.pop(context);
-                  },
+                  onPressed: () => _setTime(secs),
                 ),
             ],
           ),
@@ -1871,10 +2017,7 @@ class _TimerSheet extends StatelessWidget {
             children: [
               // Reset
               IconButton.filled(
-                onPressed: seconds > 0 ? () {
-                  onReset();
-                  Navigator.pop(context);
-                } : null,
+                onPressed: _seconds > 0 ? _reset : null,
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Reset',
                 style: IconButton.styleFrom(
@@ -1885,16 +2028,9 @@ class _TimerSheet extends StatelessWidget {
 
               // Play/Pause (larger)
               IconButton.filled(
-                onPressed: seconds > 0 ? () {
-                  if (running) {
-                    onStop();
-                  } else {
-                    onStart();
-                  }
-                  Navigator.pop(context);
-                } : null,
-                icon: Icon(running ? Icons.pause : Icons.play_arrow, size: 32),
-                tooltip: running ? 'Pause' : 'Start',
+                onPressed: _seconds > 0 ? _toggleRunning : null,
+                icon: Icon(_running ? Icons.pause : Icons.play_arrow, size: 32),
+                tooltip: _running ? 'Pause' : 'Start',
                 style: IconButton.styleFrom(
                   minimumSize: const Size(64, 64),
                   backgroundColor: theme.colorScheme.primary,
@@ -1904,10 +2040,7 @@ class _TimerSheet extends StatelessWidget {
 
               // +1 minute
               IconButton.filled(
-                onPressed: () {
-                  onSetTime(seconds + 60);
-                  Navigator.pop(context);
-                },
+                onPressed: () => _addTime(60),
                 icon: const Icon(Icons.add),
                 tooltip: 'Add 1 minute',
                 style: IconButton.styleFrom(
