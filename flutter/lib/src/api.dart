@@ -869,6 +869,47 @@ Future<void> permanentDeleteRecipe(int id) async {
   }
 }
 
+/// Duplicate match returned by checkDuplicate
+class DuplicateMatch {
+  final int id;
+  final String title;
+  final String source;
+  final String matchType; // "url" or "title"
+
+  DuplicateMatch({
+    required this.id,
+    required this.title,
+    required this.source,
+    required this.matchType,
+  });
+
+  factory DuplicateMatch.fromJson(Map<String, dynamic> json) {
+    return DuplicateMatch(
+      id: (json['id'] as num).toInt(),
+      title: json['title'] as String,
+      source: json['source'] as String? ?? '',
+      matchType: json['match_type'] as String,
+    );
+  }
+}
+
+/// Check if a recipe with the same URL or similar title already exists.
+Future<List<DuplicateMatch>> checkDuplicate({String? url, String? title}) async {
+  final res = await http.post(
+    _u('/recipes/check-duplicate'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'url': url, 'title': title}),
+  );
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final data = jsonDecode(res.body) as Map<String, dynamic>;
+  final List<dynamic> duplicates = data['duplicates'] as List<dynamic>;
+  return duplicates
+      .map((e) => DuplicateMatch.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
 /// Fetches a shared recipe by token (no auth required).
 Future<Recipe> fetchSharedRecipe(String token) async {
   final res = await http.get(_u('/api/share/$token'));

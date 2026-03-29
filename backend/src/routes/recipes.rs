@@ -4,7 +4,7 @@ use axum::{
     extract::{Multipart, Path, State, rejection::JsonRejection},
     http::StatusCode,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Arguments;
 use sqlx::sqlite::SqliteArguments;
 use std::fmt::Write as _;
@@ -166,6 +166,107 @@ pub async fn list_deleted(State(state): State<AppState>) -> AppResult<Json<Vec<R
         })?;
 
     Ok(Json(rows.into_iter().map(Recipe::from).collect()))
+}
+
+#[derive(Deserialize)]
+pub struct CheckDuplicateReq {
+    pub url: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct DuplicateMatch {
+    pub id: i64,
+    pub title: String,
+    pub source: String,
+    pub match_type: String, // "url" or "title"
+}
+
+#[derive(Serialize)]
+pub struct CheckDuplicateResp {
+    pub duplicates: Vec<DuplicateMatch>,
+}
+
+/// Check if a recipe with the same URL or similar title already exists
+pub async fn check_duplicate(
+    State(state): State<AppState>,
+    Json(req): Json<CheckDuplicateReq>,
+) -> AppResult<Json<CheckDuplicateResp>> {
+    let mut duplicates = Vec::new();
+
+    // Check for exact URL match
+    if let Some(url) = &req.url {
+        let url_trimmed = url.trim();
+        if !url_trimmed.is_empty() {
+            let rows: Vec<(i64, String, String)> = sqlx::query_as(
+                "SELECT id, title, source FROM recipes WHERE source = ? AND deleted_at IS NULL"
+            )
+            .bind(url_trimmed)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+
+            for (id, title, source) in rows {
+                duplicates.push(DuplicateMatch {
+                    id,
+                    title,
+                    source,
+                    match_type: "url".to_string(),
+                });
+            }
+        }
+    }
+
+    // Check for similar title (if no URL match found)
+    if duplicates.is_empty()
+        && let Some(title) = &req.title
+    {
+        let title_lower = title.trim().to_lowercase();
+        if !title_lower.is_empty() {
+            // Get all recipe titles and check similarity
+            let rows: Vec<(i64, String, String)> = sqlx::query_as(
+                "SELECT id, title, source FROM recipes WHERE deleted_at IS NULL"
+            )
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+
+            for (id, existing_title, source) in rows {
+                let existing_lower = existing_title.to_lowercase();
+                // Check for high similarity (exact match or very close)
+                if existing_lower == title_lower ||
+                   title_similarity(&title_lower, &existing_lower) > 0.85 {
+                    duplicates.push(DuplicateMatch {
+                        id,
+                        title: existing_title,
+                        source,
+                        match_type: "title".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(Json(CheckDuplicateResp { duplicates }))
+}
+
+/// Simple title similarity using Jaccard index on words
+#[allow(clippy::cast_precision_loss)] // Word counts won't exceed f64 precision
+fn title_similarity(a: &str, b: &str) -> f64 {
+    let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
+    let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
+
+    if words_a.is_empty() && words_b.is_empty() {
+        return 1.0;
+    }
+    if words_a.is_empty() || words_b.is_empty() {
+        return 0.0;
+    }
+
+    let intersection = words_a.intersection(&words_b).count();
+    let union = words_a.union(&words_b).count();
+
+    intersection as f64 / union as f64
 }
 
 /// # Errors

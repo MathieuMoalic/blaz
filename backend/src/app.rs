@@ -74,6 +74,7 @@ pub fn build_app(state: AppState) -> Router {
     let protected_routes = Router::new()
         .route("/recipes", post(recipes::create))
         .route("/recipes/deleted", get(recipes::list_deleted))
+        .route("/recipes/check-duplicate", post(recipes::check_duplicate))
         .route(
             "/recipes/{id}",
             delete(recipes::delete)

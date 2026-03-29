@@ -3,7 +3,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:path/path.dart' as p;
 import 'dart:io' show File;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
@@ -69,7 +69,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
     });
   }
 
-  Future<void> _importFromUrl() async {
+  Future<void> _importFromUrl({bool skipDuplicateCheck = false}) async {
     final url = _importUrl.text.trim();
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -77,6 +77,21 @@ class _AddRecipePageState extends State<AddRecipePage> {
       );
       return;
     }
+
+    // Check for duplicates first (unless skipped)
+    if (!skipDuplicateCheck) {
+      try {
+        final duplicates = await checkDuplicate(url: url);
+        if (duplicates.isNotEmpty && mounted) {
+          final proceed = await _showDuplicateWarning(duplicates);
+          if (proceed != true) return;
+        }
+      } catch (e) {
+        // If duplicate check fails, proceed with import anyway
+        debugPrint('Duplicate check failed: $e');
+      }
+    }
+
     setState(() {
       _importing = true;
       _importStep = 1;
@@ -110,6 +125,66 @@ class _AddRecipePageState extends State<AddRecipePage> {
         _importStep = 0;
       });
     }
+  }
+
+  Future<bool?> _showDuplicateWarning(List<DuplicateMatch> duplicates) {
+    final dup = duplicates.first;
+    final matchType = dup.matchType == 'url' ? 'URL' : 'similar title';
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Possible duplicate'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('A recipe with the same $matchType already exists:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    dup.title,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  if (dup.source.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      dup.source,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('Do you want to import anyway?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Import anyway'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _animateImportSteps() async {
