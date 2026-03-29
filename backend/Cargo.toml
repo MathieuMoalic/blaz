@@ -1,6 +1,6 @@
 [package]
 name = "blaz"
-version = "2.5.2"
+version = "2.7.0"
 edition = "2024"
 license = "GPLv3"
 authors = ["Mathieu Moalic <blaz@matmoa.eu>"]
