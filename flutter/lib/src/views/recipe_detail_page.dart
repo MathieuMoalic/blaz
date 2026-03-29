@@ -117,17 +117,19 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     showModalBottomSheet(
       context: context,
       builder: (ctx) => _TimerSheet(
-        seconds: _timerSeconds,
+        initialSeconds: _timerSeconds,
         running: _timerRunning,
         formatTime: _formatTime,
-        onStart: () {
+        onStart: (seconds) {
+          _setTimer(seconds);
           _startTimer();
           Navigator.pop(ctx);
         },
         onStop: _stopTimer,
-        onReset: _resetTimer,
-        onSetTime: _setTimer,
-        onAddTime: (secs) => setState(() => _timerSeconds += secs),
+        onReset: () {
+          _resetTimer();
+          Navigator.pop(ctx);
+        },
       ),
     );
   }
@@ -1867,26 +1869,35 @@ class _RenameDialogState extends State<_RenameDialog> {
 // ---------------------------------------------------------------------------
 // Timer bottom sheet
 
-class _TimerSheet extends StatelessWidget {
-  final int seconds;
+class _TimerSheet extends StatefulWidget {
+  final int initialSeconds;
   final bool running;
   final String Function(int) formatTime;
-  final VoidCallback onStart;
+  final void Function(int seconds) onStart;
   final VoidCallback onStop;
   final VoidCallback onReset;
-  final ValueChanged<int> onSetTime;
-  final ValueChanged<int> onAddTime;
 
   const _TimerSheet({
-    required this.seconds,
+    required this.initialSeconds,
     required this.running,
     required this.formatTime,
     required this.onStart,
     required this.onStop,
     required this.onReset,
-    required this.onSetTime,
-    required this.onAddTime,
   });
+
+  @override
+  State<_TimerSheet> createState() => _TimerSheetState();
+}
+
+class _TimerSheetState extends State<_TimerSheet> {
+  late int _seconds;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.initialSeconds;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1899,11 +1910,11 @@ class _TimerSheet extends StatelessWidget {
         children: [
           // Timer display
           Text(
-            formatTime(seconds),
+            widget.formatTime(_seconds),
             style: theme.textTheme.displayLarge?.copyWith(
               fontWeight: FontWeight.w300,
               fontFeatures: const [FontFeature.tabularFigures()],
-              color: running ? theme.colorScheme.primary : null,
+              color: widget.running ? theme.colorScheme.primary : null,
             ),
           ),
           const SizedBox(height: 24),
@@ -1924,7 +1935,7 @@ class _TimerSheet extends StatelessWidget {
               ])
                 ActionChip(
                   label: Text(label),
-                  onPressed: () => onSetTime(secs),
+                  onPressed: () => setState(() => _seconds = secs),
                 ),
             ],
           ),
@@ -1936,7 +1947,7 @@ class _TimerSheet extends StatelessWidget {
             children: [
               // Reset
               IconButton.filled(
-                onPressed: seconds > 0 ? onReset : null,
+                onPressed: _seconds > 0 ? widget.onReset : null,
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Reset',
                 style: IconButton.styleFrom(
@@ -1947,11 +1958,11 @@ class _TimerSheet extends StatelessWidget {
 
               // Play/Pause (larger)
               IconButton.filled(
-                onPressed: seconds > 0
-                    ? (running ? onStop : onStart)
+                onPressed: _seconds > 0
+                    ? (widget.running ? widget.onStop : () => widget.onStart(_seconds))
                     : null,
-                icon: Icon(running ? Icons.pause : Icons.play_arrow, size: 32),
-                tooltip: running ? 'Pause' : 'Start',
+                icon: Icon(widget.running ? Icons.pause : Icons.play_arrow, size: 32),
+                tooltip: widget.running ? 'Pause' : 'Start',
                 style: IconButton.styleFrom(
                   minimumSize: const Size(64, 64),
                   backgroundColor: theme.colorScheme.primary,
@@ -1961,7 +1972,7 @@ class _TimerSheet extends StatelessWidget {
 
               // +1 minute
               IconButton.filled(
-                onPressed: () => onAddTime(60),
+                onPressed: () => setState(() => _seconds += 60),
                 icon: const Icon(Icons.add),
                 tooltip: 'Add 1 minute',
                 style: IconButton.styleFrom(
