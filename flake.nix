@@ -14,7 +14,7 @@
 
     androidSdk =
       (pkgs.androidenv.composeAndroidPackages {
-        platformVersions = ["35" "34"];
+        platformVersions = ["36" "35" "34"];
         buildToolsVersions = ["35.0.0" "34.0.0"];
 
         ndkVersions = ["27.0.12077973"];

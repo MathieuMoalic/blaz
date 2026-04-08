@@ -30,6 +30,9 @@ class _VersionCheckerState extends State<VersionChecker> {
       final packageInfo = await PackageInfo.fromPlatform();
       final appVersion = packageInfo.version;
 
+      // Small delay to ensure backend is ready
+      await Future.delayed(const Duration(milliseconds: 500));
+
       // Get backend version
       final backendVersion = await api.fetchBackendVersion();
 
@@ -39,7 +42,7 @@ class _VersionCheckerState extends State<VersionChecker> {
         _showVersionMismatchDialog(appVersion, backendVersion);
       }
     } catch (e) {
-      // Silently fail if version check fails (e.g., offline)
+      // Silently fail if version check fails (e.g., offline, cache cleared)
       debugPrint('Version check failed: $e');
     }
   }

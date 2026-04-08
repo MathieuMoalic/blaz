@@ -9,14 +9,26 @@ import 'src/platform_io.dart'
 import 'src/notifications.dart';
 
 import 'src/views/shared_recipe_page.dart';
+import 'src/views/login_page.dart';
 import 'src/auth.dart';
 import 'src/home_shell.dart';
 import 'src/widgets/version_checker.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await api.initApi();
   await Auth.init();
+  
+  // Set up 401 handler to navigate to login
+  api.setOn401Callback(() async {
+    await Auth.logout();
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
+  });
   
   // Initialize notifications (Android only)
   await initNotifications();
@@ -64,6 +76,7 @@ class BlazApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Blaz',
       themeMode: ThemeMode.dark,
       theme: _theme(

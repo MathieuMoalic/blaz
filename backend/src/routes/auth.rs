@@ -54,7 +54,7 @@ pub async fn login(
         return Err(StatusCode::UNAUTHORIZED.into());
     }
 
-    let exp = now_ts() + 7 * 24 * 3600; // 7 days
+    let exp = now_ts() + 7 * 365 * 24 * 3600; // 7 years
     let token = encode(
         &Header::new(Algorithm::HS256),
         &Claims { sub: 1, exp },

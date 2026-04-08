@@ -94,7 +94,9 @@ class MealPlanPageState extends State<MealPlanPage> {
           _recipeIndex[r.id] = r;
         }
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Failed to warm recipe index: $e');
+    }
   }
 
   Future<void> _loadReminders() async {
@@ -104,8 +106,8 @@ class MealPlanPageState extends State<MealPlanPage> {
       setState(() {
         _reminders = reminders;
       });
-    } catch (_) {
-      // ignore: no-op on error
+    } catch (e) {
+      debugPrint('Failed to load reminders: $e');
     }
   }
 
@@ -215,12 +217,45 @@ class MealPlanPageState extends State<MealPlanPage> {
                           );
                         },
                         onUnassign: (meal) async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          
                           await unassignRecipeFromDay(
                             day: meal.day,
                             recipeId: meal.recipeId,
                           );
+                          
+                          // Get recipe name for better feedback
+                          final recipeName = _recipeIndex[meal.recipeId]?.title ?? 'Recipe';
+                          
                           // Keep targeted reload if you like:
                           await _reloadDay(dayIso);
+                          
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text('Removed "$recipeName" from meal plan'),
+                              duration: const Duration(seconds: 4),
+                              action: SnackBarAction(
+                                label: 'Undo',
+                                onPressed: () async {
+                                  messenger.hideCurrentSnackBar();
+                                  try {
+                                    await assignRecipeToDay(
+                                      day: meal.day,
+                                      recipeId: meal.recipeId,
+                                    );
+                                    await _reloadDay(dayIso);
+                                    messenger.showSnackBar(
+                                      SnackBar(content: Text('Restored "$recipeName"')),
+                                    );
+                                  } catch (e) {
+                                    messenger.showSnackBar(
+                                      SnackBar(content: Text('Failed to restore: $e')),
+                                    );
+                                  }
+                                },
+                              ),
+                            ),
+                          );
                         },
                         onMoveMeal: (meal) async {
                           final messenger = ScaffoldMessenger.of(context);

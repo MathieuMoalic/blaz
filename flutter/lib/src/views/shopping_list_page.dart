@@ -237,11 +237,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
       unawaited(refresh());
     } catch (e) {
       _applyLocalUpdate((list) => list.where((x) => x.id != tempId).toList());
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Could not add item: $e')));
-      }
+      rethrow;
     }
   }
 
@@ -283,7 +279,27 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 
                     if (all.isEmpty) {
                       if (snap.hasError) {
-                        return Center(child: Text('Error: ${snap.error}'));
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
+                                const SizedBox(height: 16),
+                                const Text('Failed to load shopping list', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 8),
+                                Text('${snap.error}', style: const TextStyle(fontSize: 12)),
+                                const SizedBox(height: 16),
+                                FilledButton.icon(
+                                  onPressed: refresh,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
                       }
                       if (snap.connectionState != ConnectionState.done) {
                         return const Center(child: CircularProgressIndicator());
@@ -409,10 +425,14 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                       item: rows[i],
                                       isLastInCategory: i == rows.length - 1,
                                       onChanged: (v) async {
-                                        setState(() => _hidden.add(rows[i].id));
+                                        final item = rows[i];
+                                        final wasDone = item.done;
+                                        final messenger = ScaffoldMessenger.of(context);
+                                        setState(() => _hidden.add(item.id));
+                                        
                                         try {
                                           final updated = await toggleShoppingItem(
-                                            id: rows[i].id,
+                                            id: item.id,
                                             done: v ?? false,
                                           );
                                           _applyLocalUpdate(
@@ -420,6 +440,32 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                                 .where((x) => x.id != updated.id)
                                                 .toList(),
                                           );
+                                          
+                                          if (mounted && v == true) {
+                                            messenger.showSnackBar(
+                                              SnackBar(
+                                                content: Text('Marked "${item.text}" as done'),
+                                                duration: const Duration(seconds: 4),
+                                                action: SnackBarAction(
+                                                  label: 'Undo',
+                                                  onPressed: () async {
+                                                    messenger.hideCurrentSnackBar();
+                                                    try {
+                                                      await toggleShoppingItem(
+                                                        id: item.id,
+                                                        done: wasDone,
+                                                      );
+                                                      await refresh();
+                                                    } catch (e) {
+                                                      messenger.showSnackBar(
+                                                        SnackBar(content: Text('Failed to undo: $e')),
+                                                      );
+                                                    }
+                                                  },
+                                                ),
+                                              ),
+                                            );
+                                          }
                                         } finally {
                                           // Keep state consistent; still no flicker.
                                           await refresh();
@@ -485,14 +531,12 @@ class ShoppingListPageState extends State<ShoppingListPage> {
     if (!mounted) return;
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) {
         return _AddItemDialog(
           controller: _ctrl,
           allItemTexts: allItemTexts,
-          onAdd: (text) {
-            Navigator.pop(ctx);
-            _add(text);
-          },
+          onAdd: _add,
         );
       },
     );
@@ -733,7 +777,7 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                       final qty = double.tryParse(
                           _qtyCtrl.text.trim().replaceAll(',', '.'));
                       final unit = _unitCtrl.text.trim().isEmpty
-                          ? null
+                          ? ''
                           : _unitCtrl.text.trim();
                       final newCat = _cat == 'Other' ? '' : _cat;
 
@@ -895,7 +939,7 @@ class _RowTile extends StatelessWidget {
 class _AddItemDialog extends StatefulWidget {
   final TextEditingController controller;
   final List<String> allItemTexts;
-  final ValueChanged<String> onAdd;
+  final Future<void> Function(String) onAdd;
 
   const _AddItemDialog({
     required this.controller,
@@ -909,6 +953,8 @@ class _AddItemDialog extends StatefulWidget {
 
 class _AddItemDialogState extends State<_AddItemDialog> {
   List<String> _suggestions = [];
+  bool _saving = false;
+  String? _error;
   
   @override
   void initState() {
@@ -1004,10 +1050,25 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     return score * matchRatio * lengthRatio;
   }
   
-  void _submitText() {
+  Future<void> _submitText() async {
     final text = widget.controller.text.trim();
-    if (text.isNotEmpty) {
-      widget.onAdd(text);
+    if (text.isEmpty || _saving) return;
+    
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    
+    try {
+      await widget.onAdd(text);
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Could not add item: $e';
+      });
     }
   }
   
@@ -1015,62 +1076,76 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add item'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: widget.controller,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
-                hintText: 'e.g. 2 kg apples',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (v) => _submitText(),
-            ),
-            // Fixed height container for suggestions to prevent dialog resizing
-            if (_suggestions.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Text(
-                'Suggestions:',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                height: 240,
-                child: ListView.builder(
-                  itemCount: _suggestions.length,
-                  itemBuilder: (context, index) {
-                    final suggestion = _suggestions[index];
-                    return ListTile(
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                      title: Text(_formatItemText(suggestion)),
-                      trailing: const Icon(Icons.arrow_forward, size: 16),
-                      onTap: () {
-                        widget.controller.text = suggestion;
-                        _submitText();
-                      },
-                    );
-                  },
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.4,
+          minWidth: 280,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: widget.controller,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. 2 kg apples',
+                  border: OutlineInputBorder(),
                 ),
+                onSubmitted: (v) => _submitText(),
               ),
+              if (_suggestions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Suggestions:',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                ...List.generate(_suggestions.length, (index) {
+                  final suggestion = _suggestions[index];
+                  return ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: Text(_formatItemText(suggestion)),
+                    trailing: const Icon(Icons.arrow_forward, size: 16),
+                    onTap: () {
+                      widget.controller.text = suggestion;
+                      _submitText();
+                    },
+                  );
+                }),
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: _saving ? null : () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _submitText,
-          child: const Text('Add'),
+          onPressed: _saving ? null : _submitText,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Add'),
         ),
       ],
     );

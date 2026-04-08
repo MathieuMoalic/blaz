@@ -26,7 +26,7 @@ class RecipesPageState extends State<RecipesPage> {
   String _query = '';
   bool _searchVisible = false;
   Timer? _debounce;
-  _RecipeSort _sort = _RecipeSort.nameAsc;
+  _RecipeSort _sort = _RecipeSort.random;
   int _randomSeed = 0;
 
   static const _kvSort = 'recipes_sort';
@@ -343,7 +343,27 @@ class RecipesPageState extends State<RecipesPage> {
 
                     if (items.isEmpty) {
                       if (snap.hasError) {
-                        return Center(child: Text('Error: ${snap.error}'));
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
+                                const SizedBox(height: 16),
+                                const Text('Failed to load recipes', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 8),
+                                Text('${snap.error}', style: const TextStyle(fontSize: 12)),
+                                const SizedBox(height: 16),
+                                FilledButton.icon(
+                                  onPressed: refresh,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
                       }
                       if (snap.connectionState != ConnectionState.done) {
                         return const Center(child: CircularProgressIndicator());
@@ -434,17 +454,14 @@ class RecipesPageState extends State<RecipesPage> {
                 right: 16,
                 bottom: 160,
                 child: MenuAnchor(
-                  builder: (context, controller, _) => Badge(
-                    isLabelVisible: _sort != _RecipeSort.nameAsc,
-                    child: FloatingActionButton(
-                      heroTag: 'sort',
-                      onPressed:
-                          controller.isOpen
-                              ? controller.close
-                              : controller.open,
-                      tooltip: 'Sort',
-                      child: const Icon(Icons.sort),
-                    ),
+                  builder: (context, controller, _) => FloatingActionButton(
+                    heroTag: 'sort',
+                    onPressed:
+                        controller.isOpen
+                            ? controller.close
+                            : controller.open,
+                    tooltip: 'Sort',
+                    child: const Icon(Icons.sort),
                   ),
                   menuChildren: [
                     for (final (sort, label) in [

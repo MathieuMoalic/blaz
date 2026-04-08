@@ -7,6 +7,9 @@ import 'package:path/path.dart' as p;
 
 import './platform/kv_store.dart' as kv;
 
+/// Callback invoked when a 401 response is received
+void Function()? _on401;
+
 /// Default (build-time) base URL. Can be overridden at runtime & persisted.
 const String _defaultBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -35,12 +38,17 @@ Future<void> initApi() async {
 
 /// Fetch backend version
 Future<String> fetchBackendVersion() async {
-  final res = await http.get(_u('/version'));
-  if (res.statusCode != 200) {
-    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  try {
+    final res = await http.get(_u('/version'));
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return data['version'] as String;
+  } catch (e) {
+    // Re-throw with more context for better error messages
+    throw Exception('Failed to fetch backend version: $e');
   }
-  final data = jsonDecode(res.body) as Map<String, dynamic>;
-  return data['version'] as String;
 }
 
 class CategoryOption {
@@ -109,6 +117,10 @@ String? _authToken;
 
 void setAuthToken(String? t) {
   _authToken = t;
+}
+
+void setOn401Callback(void Function() callback) {
+  _on401 = callback;
 }
 
 Map<String, String> _headers([Map<String, String>? extra, bool includeAuth = true]) {
@@ -197,8 +209,12 @@ String? mediaUrl(String? rel) {
   return '$base/media/$path';
 }
 
-Never _throw(http.Response r) =>
-    throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
+Never _throw(http.Response r) {
+  if (r.statusCode == 401 && _on401 != null) {
+    _on401!();
+  }
+  throw Exception('HTTP ${r.statusCode} ${r.request?.url}: ${r.body}');
+}
 
 /* =========================
  * Models

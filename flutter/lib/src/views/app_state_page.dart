@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart' as api;
 import '../auth.dart';
@@ -21,6 +22,8 @@ class _AppStatePageState extends State<AppStatePage> {
   String? _error;
   bool _notificationsEnabled = false;
   String _selectedModel = 'anthropic/claude-3.5-sonnet';
+  String? _appVersion;
+  String? _backendVersion;
   
   // Popular OpenRouter models for recipe parsing
   final List<Map<String, String>> _models = [
@@ -37,6 +40,28 @@ class _AppStatePageState extends State<AppStatePage> {
     _load();
     _loadNotificationSetting();
     _loadModelSetting();
+    _loadVersions();
+  }
+
+  Future<void> _loadVersions() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final backendVer = await api.fetchBackendVersion();
+      if (mounted) {
+        setState(() {
+          _appVersion = packageInfo.version;
+          _backendVersion = backendVer;
+        });
+      }
+    } catch (e) {
+      // Silently fail - versions are optional info
+      if (mounted) {
+        setState(() {
+          _appVersion = 'Unknown';
+          _backendVersion = 'Unknown';
+        });
+      }
+    }
   }
 
   Future<void> _loadNotificationSetting() async {
@@ -121,169 +146,183 @@ class _AppStatePageState extends State<AppStatePage> {
     final colorScheme = Theme.of(context).colorScheme;
     final isAuthenticated = Auth.token != null;
 
-    Widget body;
-    if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
-    } else if (_error != null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(_error!, style: TextStyle(color: colorScheme.error)),
-        ),
-      );
-    } else if (_credits != null) {
-      final c = _credits!;
-      final usageStr = '\$${c.usage.toStringAsFixed(4)}';
-      final limitStr =
-          c.limit != null ? '\$${c.limit!.toStringAsFixed(2)}' : '∞';
-      final remaining = c.limit != null ? c.limit! - c.usage : null;
-      final remainingStr =
-          remaining != null ? '\$${remaining.toStringAsFixed(4)}' : null;
-
-      body = Padding(
-        padding: const EdgeInsets.all(16),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'OpenRouter Credits',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(child: _stat('Used', usageStr)),
-                    Expanded(child: _stat('Limit', limitStr)),
-                    if (remainingStr != null)
-                      Expanded(child: _stat('Remaining', remainingStr)),
-                  ],
-                ),
-                if (c.isFreeTier)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      'Free tier',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colorScheme.secondary,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      );
-    } else {
-      body = const SizedBox.shrink();
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
         automaticallyImplyLeading: false,
       ),
-      body: Column(
+      body: ListView(
+        padding: const EdgeInsets.all(16),
         children: [
-          body,
-          if (isAuthenticated)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Recipe Import Settings',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        decoration: const InputDecoration(
-                          labelText: 'LLM Model',
-                          helperText: 'Model used for recipe parsing',
-                          border: OutlineInputBorder(),
+          if (_loading)
+            const Center(child: CircularProgressIndicator())
+          else if (_error != null)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(_error!, style: TextStyle(color: colorScheme.error)),
+              ),
+            )
+          else if (_credits != null) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'OpenRouter Credits',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(child: _stat('Used', '\$${_credits!.usage.toStringAsFixed(4)}')),
+                        Expanded(child: _stat('Limit', _credits!.limit != null ? '\$${_credits!.limit!.toStringAsFixed(2)}' : '∞')),
+                        if (_credits!.limit != null)
+                          Expanded(child: _stat('Remaining', '\$${(_credits!.limit! - _credits!.usage).toStringAsFixed(4)}')),
+                      ],
+                    ),
+                    if (_credits!.isFreeTier)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Free tier',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.secondary,
+                          ),
                         ),
-                        value: _selectedModel,
-                        items: _models.map((model) {
-                          return DropdownMenuItem(
-                            value: model['id'],
-                            child: Text(model['name']!),
-                          );
-                        }).toList(),
-                        onChanged: _setModel,
                       ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
             ),
-          if (!kIsWeb && Platform.isAndroid && isAuthenticated)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Card(
-                child: SwitchListTile(
-                  title: const Text('Prep reminder notifications'),
-                  subtitle: const Text('Check every 6 hours for upcoming prep tasks'),
-                  value: _notificationsEnabled,
-                  onChanged: _toggleNotifications,
-                ),
-              ),
-            ),
-          if (isAuthenticated)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Card(
-                child: ListTile(
-                  leading: const Icon(Icons.delete_outline),
-                  title: const Text('Recently Deleted'),
-                  subtitle: const Text('View and restore deleted recipes'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const DeletedRecipesPage(),
+            const SizedBox(height: 12),
+          ],
+          if (isAuthenticated) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Recipe Import Settings',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: 'LLM Model',
+                        helperText: 'Model used for recipe parsing',
+                        border: OutlineInputBorder(),
                       ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: isAuthenticated
-                ? FilledButton.icon(
-                    onPressed: () async {
-                      await Auth.logout();
-                      setState(() {
-                        _credits = null;
-                        _error = null;
-                      });
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Logged out')),
+                      value: _selectedModel,
+                      items: _models.map((model) {
+                        return DropdownMenuItem(
+                          value: model['id'],
+                          child: Text(model['name']!),
                         );
-                      }
-                    },
-                    icon: const Icon(Icons.logout),
-                    label: const Text('Logout'),
-                  )
-                : FilledButton.icon(
-                    onPressed: () async {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const LoginPage()),
-                      );
-                      setState(() => _load());
-                    },
-                    icon: const Icon(Icons.login),
-                    label: const Text('Login'),
-                  ),
+                      }).toList(),
+                      onChanged: _setModel,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (!kIsWeb && Platform.isAndroid && isAuthenticated) ...[
+            Card(
+              child: SwitchListTile(
+                title: const Text('Prep reminder notifications'),
+                subtitle: const Text('Check every 6 hours for upcoming prep tasks'),
+                value: _notificationsEnabled,
+                onChanged: _toggleNotifications,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (isAuthenticated) ...[
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Recently Deleted'),
+                subtitle: const Text('View and restore deleted recipes'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const DeletedRecipesPage(),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (_appVersion != null || _backendVersion != null) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Version',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    if (_appVersion != null)
+                      Row(
+                        children: [
+                          const Icon(Icons.phone_android, size: 16),
+                          const SizedBox(width: 8),
+                          Text('App: $_appVersion', style: const TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    if (_appVersion != null && _backendVersion != null)
+                      const SizedBox(height: 8),
+                    if (_backendVersion != null)
+                      Row(
+                        children: [
+                          const Icon(Icons.dns, size: 16),
+                          const SizedBox(width: 8),
+                          Text('Server: $_backendVersion', style: const TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Card(
+            child: ListTile(
+              leading: Icon(isAuthenticated ? Icons.logout : Icons.login),
+              title: Text(isAuthenticated ? 'Logout' : 'Login'),
+              onTap: () async {
+                if (isAuthenticated) {
+                  await Auth.logout();
+                  setState(() {
+                    _credits = null;
+                    _error = null;
+                  });
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Logged out')),
+                    );
+                  }
+                } else {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LoginPage()),
+                  );
+                  setState(() => _load());
+                }
+              },
+            ),
           ),
         ],
       ),

@@ -120,7 +120,18 @@ class _DayTimelineBoxState extends State<DayTimelineBox> {
                       if (snap.hasError) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: Text('Error: ${snap.error}'),
+                          child: Row(
+                            children: [
+                              Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Failed to load recipes for this day',
+                                  style: TextStyle(fontSize: 12, color: theme.colorScheme.error),
+                                ),
+                              ),
+                            ],
+                          ),
                         );
                       }
 

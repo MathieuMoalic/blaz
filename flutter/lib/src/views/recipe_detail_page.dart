@@ -533,7 +533,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     List<api.MealPlanEntry> upcoming = [];
     try {
       upcoming = await api.fetchMealPlanForRecipe(r.id);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Failed to check meal plan entries: $e');
       // If the check fails, proceed with the generic confirmation.
     }
 
@@ -571,9 +572,30 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         await api.deleteRecipe(r.id);
         if (!mounted) return;
         Navigator.of(context).pop(true);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Deleted "${r.title}"')));
+        
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Deleted "${r.title}"'),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () async {
+                messenger.hideCurrentSnackBar();
+                try {
+                  await api.restoreRecipe(r.id);
+                  messenger.showSnackBar(
+                    SnackBar(content: Text('Restored "${r.title}"')),
+                  );
+                } catch (e) {
+                  messenger.showSnackBar(
+                    SnackBar(content: Text('Failed to restore: $e')),
+                  );
+                }
+              },
+            ),
+          ),
+        );
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(
@@ -627,19 +649,20 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   _timerRunning ? Icons.timer : Icons.timer_outlined,
                   color: _timerRunning ? Theme.of(context).colorScheme.primary : null,
                 ),
+                visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
                 onPressed: _showTimerSheet,
               ),
               if (_timerSeconds > 0)
                 Positioned(
-                  right: 4,
-                  top: 4,
+                  right: 6,
+                  top: 6,
                   child: Container(
                     padding: const EdgeInsets.all(2),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primary,
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    constraints: const BoxConstraints(minWidth: 12, minHeight: 12),
+                    constraints: const BoxConstraints(minWidth: 10, minHeight: 10),
                   ),
                 ),
             ],
@@ -654,6 +677,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 return IconButton(
                   tooltip: 'Re-import from URL',
                   icon: const Icon(Icons.refresh),
+                  visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
                   onPressed: () => _reimportFromUrl(snap.data!),
                 );
               },
@@ -661,6 +685,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             IconButton(
               tooltip: 'Share',
               icon: const Icon(Icons.share_outlined),
+              visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
               onPressed: () async {
                 final r = await _future;
                 if (!mounted) return;
@@ -670,6 +695,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             IconButton(
               tooltip: 'Add to meal plan',
               icon: const Icon(Icons.event_outlined),
+              visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
               onPressed: () async {
                 final r = await _future;
                 if (!mounted) return;
@@ -679,6 +705,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             IconButton(
               tooltip: 'Add ingredients to shopping list',
               icon: const Icon(Icons.shopping_cart_outlined),
+              visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
               onPressed: () async {
                 final r = await _future;
                 if (!mounted) return;
@@ -688,6 +715,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             IconButton(
               tooltip: 'Edit',
               icon: const Icon(Icons.edit_outlined),
+              visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
               onPressed: () async {
                 final r = await _future;
                 if (!context.mounted) return;
@@ -704,6 +732,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             IconButton(
               tooltip: 'Delete',
               icon: const Icon(Icons.delete_outline),
+              visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
               onPressed: () async {
                 final r = await _future;
                 if (!mounted) return;
@@ -722,7 +751,27 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (snap.hasError) {
-                return Center(child: Text('Error: ${snap.error}'));
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
+                        const SizedBox(height: 16),
+                        const Text('Failed to load recipe', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text('${snap.error}', style: const TextStyle(fontSize: 12)),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _refresh,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
               }
               final r = snap.data!;
               final small = api.mediaUrl(r.imagePathSmall);
@@ -1702,7 +1751,7 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
   @override
   void initState() {
     super.initState();
-    _selected = List.filled(widget.items.length, true);
+    _selected = List.filled(widget.items.length, false);
   }
 
   bool get _anySelected => _selected.any((v) => v);
