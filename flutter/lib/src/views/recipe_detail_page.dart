@@ -571,36 +571,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       try {
         await api.deleteRecipe(r.id);
         if (!mounted) return;
-        Navigator.of(context).pop(true);
-        
-        final messenger = ScaffoldMessenger.of(context);
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Deleted "${r.title}"'),
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: () async {
-                messenger.hideCurrentSnackBar();
-                try {
-                  await api.restoreRecipe(r.id);
-                  messenger.showSnackBar(
-                    SnackBar(content: Text('Restored "${r.title}"')),
-                  );
-                } catch (e) {
-                  messenger.showSnackBar(
-                    SnackBar(content: Text('Failed to restore: $e')),
-                  );
-                }
-              },
-            ),
-          ),
-        );
+        // Return recipe info so parent can show snackbar with undo action
+        Navigator.of(context).pop({'deleted': true, 'id': r.id, 'title': r.title});
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete: $e')),
+        );
       }
     }
   }

@@ -315,19 +315,21 @@ async fn stage2_structure_ingredients(
     
     tracing::debug!("Stage 2 LLM response: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
 
-    let ingredients = json.as_array().map_or_else(
-        || {
-            json.get("ingredients")
-                .and_then(|v| v.as_array())
-                .map_or_else(Vec::new, |_arr| {
-                    normalize_ingredients(
-                        json.get("ingredients").cloned().unwrap_or(JsonValue::Null),
-                    )
-                })
-        },
-        |_arr| normalize_ingredients(json.clone()),
-    );
-    
+    let ingredients = if json.is_array() {
+        // Direct array of ingredients
+        normalize_ingredients(json)
+    } else if let Some(arr) = json.get("ingredients").and_then(|v| v.as_array()) {
+        // Object with "ingredients" key containing array
+        normalize_ingredients(JsonValue::Array(arr.clone()))
+    } else if json.is_object() && json.get("name").is_some() {
+        // Single ingredient object - wrap in array
+        tracing::warn!("Stage 2: LLM returned single object instead of array, wrapping");
+        normalize_ingredients(JsonValue::Array(vec![json]))
+    } else {
+        tracing::warn!("Stage 2: Unexpected response format");
+        Vec::new()
+    };
+
     tracing::debug!("Stage 2 after normalize: {} ingredients", ingredients.len());
 
     validate_stage2(&ingredients);
