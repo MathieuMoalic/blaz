@@ -94,19 +94,22 @@ pub async fn update(
         return Err(StatusCode::NOT_FOUND.into());
     };
 
+    // Track if name is changing (need to update shopping_items too)
+    let old_name = existing.name.clone();
+    let new_name = req.name.as_ref().map(|n| n.trim().to_string());
+
     // Build dynamic update
     let mut updates = Vec::new();
     let mut binds: Vec<String> = Vec::new();
 
-    if let Some(name) = &req.name {
-        let name = name.trim();
+    if let Some(ref name) = new_name {
         if name.is_empty() {
             return Err(
                 (StatusCode::BAD_REQUEST, "Category name cannot be empty".to_string()).into(),
             );
         }
         updates.push("name = ?");
-        binds.push(name.to_string());
+        binds.push(name.clone());
     }
 
     if let Some(order) = req.sort_order {
@@ -142,6 +145,17 @@ pub async fn update(
             }
             return Err(e.into());
         }
+    }
+
+    // If name changed, update all shopping_items using the old category name
+    if let Some(ref name) = new_name
+        && name != &old_name
+    {
+        sqlx::query(r"UPDATE shopping_items SET category = ? WHERE category = ?")
+            .bind(name)
+            .bind(&old_name)
+            .execute(&state.pool)
+            .await?;
     }
 
     // Fetch updated
