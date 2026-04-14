@@ -603,6 +603,11 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
   late final TextEditingController _notesCtrl;
   late String _cat;
 
+  /// Get the list of category names to use (dynamic or fallback to hardcoded)
+  List<String> get _categoryNames => widget.categories.isNotEmpty
+      ? widget.categories.map((c) => c.name).toList()
+      : kShoppingCategoryValues;
+
   @override
   void initState() {
     super.initState();
@@ -620,10 +625,8 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
 
     // Ensure category is valid (exists in the list)
     final catVal = _catValue(widget.item.category);
-    final validCats = widget.categories.isNotEmpty
-        ? widget.categories.map((c) => c.name).toSet()
-        : kShoppingCategoryValues.toSet();
-    _cat = validCats.contains(catVal) ? catVal : 'Other';
+    final validCats = _categoryNames.toSet();
+    _cat = validCats.contains(catVal) ? catVal : (_categoryNames.isNotEmpty ? _categoryNames.first : 'Other');
   }
 
   @override
@@ -716,24 +719,15 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                     const SizedBox(width: 12),
                     DropdownButton<String>(
                       value: _cat,
-                      onChanged: (v) => setState(() => _cat = v ?? 'Other'),
-                      items: widget.categories.isNotEmpty
-                          ? widget.categories
-                              .map(
-                                (c) => DropdownMenuItem(
-                                  value: c.name,
-                                  child: Text(c.name),
-                                ),
-                              )
-                              .toList()
-                          : kShoppingCategoryOptions
-                              .map(
-                                (o) => DropdownMenuItem(
-                                  value: o.value,
-                                  child: Text(o.label),
-                                ),
-                              )
-                              .toList(),
+                      onChanged: (v) => setState(() => _cat = v ?? _categoryNames.first),
+                      items: _categoryNames
+                          .map(
+                            (name) => DropdownMenuItem(
+                              value: name,
+                              child: Text(name),
+                            ),
+                          )
+                          .toList(),
                     ),
                     const Spacer(),
                     IconButton(
