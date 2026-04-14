@@ -180,3 +180,29 @@ pub struct ShoppingItemView {
 pub struct NewItem {
     pub text: String,
 }
+
+/* ---------- Shopping categories ---------- */
+
+#[derive(Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct ShoppingCategory {
+    pub id: i64,
+    pub name: String,
+    pub sort_order: i64,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct NewCategory {
+    pub name: String,
+}
+
+#[derive(Deserialize, Default)]
+pub struct UpdateCategory {
+    pub name: Option<String>,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct ReorderCategories {
+    pub order: Vec<i64>,
+}

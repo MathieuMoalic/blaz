@@ -1,4 +1,4 @@
-use crate::categories::{Category, guess_category};
+use crate::categories::{Category, guess_category, validate_category};
 use crate::error::AppError;
 use axum::http::StatusCode;
 use axum::{
@@ -498,9 +498,10 @@ fn apply_notes_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, notes: Op
     }
 }
 
-fn apply_category_update(
-    qb: &mut QueryBuilder<Sqlite>,
+async fn apply_category_update(
+    qb: &mut QueryBuilder<'_, Sqlite>,
     wrote: &mut bool,
+    state: &AppState,
     category: Option<String>,
 ) -> AppResult<()> {
     let Some(mut cat) = category else {
@@ -515,7 +516,7 @@ fn apply_category_update(
         return Ok(());
     }
 
-    if Category::from_str(&cat).is_none() {
+    if !validate_category(state, &cat).await {
         return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
     }
 
@@ -683,7 +684,7 @@ pub async fn patch_shopping_item(
     let mut wrote = false;
 
     apply_done_update(&mut qb, &mut wrote, payload.done);
-    apply_category_update(&mut qb, &mut wrote, payload.category.clone())?;
+    apply_category_update(&mut qb, &mut wrote, &state, payload.category.clone()).await?;
     apply_notes_update(&mut qb, &mut wrote, payload.notes.clone());
 
     // `text` takes priority over structured fields.
@@ -759,7 +760,7 @@ pub async fn merge_items(
         });
 
         let chosen_cat = if let Some(c) = chosen_cat {
-            if Category::from_str(&c).is_none() {
+            if !validate_category(&state, &c).await {
                 return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
             }
             Some(c)

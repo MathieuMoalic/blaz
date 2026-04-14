@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod categories;
 pub mod import_recipe_images;
 pub mod import_recipesage;
 pub mod llm_credits;

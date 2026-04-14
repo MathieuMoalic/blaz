@@ -5,7 +5,7 @@ use crate::{
     embedded_web::serve_embedded_web,
     logging::{access_log, log_payloads},
     models::AppState,
-    routes::{import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, share_recipe, shopping},
+    routes::{categories, import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, share_recipe, shopping},
 };
 
 use axum::extract::DefaultBodyLimit;
@@ -109,6 +109,9 @@ pub fn build_app(state: AppState) -> Router {
             patch(shopping::patch_shopping_item).delete(shopping::delete),
         )
         .route("/shopping/merge", post(shopping::merge_items))
+        .route("/categories", get(categories::list).post(categories::create))
+        .route("/categories/{id}", patch(categories::update).delete(categories::delete))
+        .route("/categories/reorder", post(categories::reorder))
         .route("/llm/credits", get(llm_credits::get))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

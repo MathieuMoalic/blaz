@@ -414,6 +414,27 @@ class ShoppingItem {
   }
 }
 
+class ShoppingCategory {
+  final int id;
+  final String name;
+  final int sortOrder;
+  final String createdAt;
+
+  ShoppingCategory({
+    required this.id,
+    required this.name,
+    required this.sortOrder,
+    required this.createdAt,
+  });
+
+  factory ShoppingCategory.fromJson(Map<String, dynamic> j) => ShoppingCategory(
+    id: (j['id'] as num).toInt(),
+    name: j['name'] as String,
+    sortOrder: (j['sort_order'] as num).toInt(),
+    createdAt: j['created_at'] as String,
+  );
+}
+
 class Ingredient {
   final double? quantity;
   final String? unit;
@@ -1093,6 +1114,59 @@ Future<ShoppingItem> toggleShoppingItem({
 Future<void> deleteShoppingItem(int id) async {
   final r = await http.delete(_u('/shopping/$id'), headers: _headers());
   if (r.statusCode != 200) _throw(r);
+}
+
+// ── Shopping Categories ───────────────────────────────────────────────────────
+
+Future<List<ShoppingCategory>> fetchCategories() async {
+  final r = await http.get(_u('/categories'), headers: _headers());
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .map((e) => ShoppingCategory.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
+Future<ShoppingCategory> createCategory(String name) async {
+  final r = await http.post(
+    _u('/categories'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'name': name}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return ShoppingCategory.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+
+Future<ShoppingCategory> updateCategory(int id, {String? name, int? sortOrder}) async {
+  final body = <String, dynamic>{
+    if (name != null) 'name': name,
+    if (sortOrder != null) 'sort_order': sortOrder,
+  };
+  final r = await http.patch(
+    _u('/categories/$id'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode(body),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return ShoppingCategory.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+
+Future<void> deleteCategory(int id) async {
+  final r = await http.delete(_u('/categories/$id'), headers: _headers());
+  if (r.statusCode != 200 && r.statusCode != 204) _throw(r);
+}
+
+Future<List<ShoppingCategory>> reorderCategories(List<int> orderedIds) async {
+  final r = await http.post(
+    _u('/categories/reorder'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'order': orderedIds}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .map((e) => ShoppingCategory.fromJson(e as Map<String, dynamic>))
+      .toList();
 }
 
 // ── LLM Credits ───────────────────────────────────────────────────────────────

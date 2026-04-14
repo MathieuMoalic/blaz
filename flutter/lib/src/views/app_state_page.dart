@@ -8,6 +8,7 @@ import '../auth.dart';
 import '../notifications.dart';
 import 'login_page.dart';
 import 'deleted_recipes_page.dart';
+import 'categories_page.dart';
 
 class AppStatePage extends StatefulWidget {
   const AppStatePage({super.key});
@@ -268,6 +269,22 @@ class _AppStatePageState extends State<AppStatePage> {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => const DeletedRecipesPage(),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.category),
+                title: const Text('Shopping Categories'),
+                subtitle: const Text('Add, edit, or reorder categories'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const CategoriesPage(),
                     ),
                   );
                 },

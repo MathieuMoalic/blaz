@@ -110,6 +110,9 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   /// User-defined category display order (persisted).
   List<String> _categoryOrder = kShoppingCategoryValues;
 
+  /// Dynamic categories loaded from API.
+  List<ShoppingCategory> _categories = [];
+
   // NEW: soft loading flag
   bool _refreshing = false;
 
@@ -130,6 +133,24 @@ class ShoppingListPageState extends State<ShoppingListPage> {
     final prefs = await SharedPreferences.getInstance();
     final collapsed = prefs.getStringList('shopping_collapsed_categories') ?? [];
     final savedOrder = prefs.getStringList('shopping_category_order');
+
+    // Load dynamic categories from API
+    try {
+      final cats = await fetchCategories();
+      if (mounted) {
+        setState(() => _categories = cats);
+      }
+    } catch (_) {
+      // Fallback to empty - will use hardcoded if needed
+    }
+
+    if (!mounted) return;
+
+    // Build category names from dynamic categories or fallback to hardcoded
+    final categoryNames = _categories.isNotEmpty
+        ? _categories.map((c) => c.name).toList()
+        : kShoppingCategoryValues;
+
     setState(() {
       _collapsedCategories = collapsed.toSet();
       if (savedOrder != null && savedOrder.isNotEmpty) {
@@ -137,8 +158,10 @@ class ShoppingListPageState extends State<ShoppingListPage> {
         final known = savedOrder.toSet();
         _categoryOrder = [
           ...savedOrder,
-          ...kShoppingCategoryValues.where((c) => !known.contains(c)),
+          ...categoryNames.where((c) => !known.contains(c)),
         ];
+      } else {
+        _categoryOrder = categoryNames;
       }
     });
   }
@@ -548,7 +571,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (ctx) => _EditShoppingItemSheet(item: it),
+      builder: (ctx) => _EditShoppingItemSheet(item: it, categories: _categories),
     );
 
     if (result != null) {
@@ -566,7 +589,8 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 /// Owns its own TextEditingControllers to avoid disposed-controller crashes.
 class _EditShoppingItemSheet extends StatefulWidget {
   final ShoppingItem item;
-  const _EditShoppingItemSheet({required this.item});
+  final List<ShoppingCategory> categories;
+  const _EditShoppingItemSheet({required this.item, required this.categories});
 
   @override
   State<_EditShoppingItemSheet> createState() => _EditShoppingItemSheetState();
@@ -593,7 +617,13 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
     _unitCtrl = TextEditingController(text: parsed.unit ?? '');
     _nameCtrl = TextEditingController(text: parsed.name);
     _notesCtrl = TextEditingController(text: widget.item.notes);
-    _cat = _catValue(widget.item.category);
+
+    // Ensure category is valid (exists in the list)
+    final catVal = _catValue(widget.item.category);
+    final validCats = widget.categories.isNotEmpty
+        ? widget.categories.map((c) => c.name).toSet()
+        : kShoppingCategoryValues.toSet();
+    _cat = validCats.contains(catVal) ? catVal : 'Other';
   }
 
   @override
@@ -687,14 +717,23 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                     DropdownButton<String>(
                       value: _cat,
                       onChanged: (v) => setState(() => _cat = v ?? 'Other'),
-                      items: kShoppingCategoryOptions
-                          .map(
-                            (o) => DropdownMenuItem(
-                              value: o.value,
-                              child: Text(o.label),
-                            ),
-                          )
-                          .toList(),
+                      items: widget.categories.isNotEmpty
+                          ? widget.categories
+                              .map(
+                                (c) => DropdownMenuItem(
+                                  value: c.name,
+                                  child: Text(c.name),
+                                ),
+                              )
+                              .toList()
+                          : kShoppingCategoryOptions
+                              .map(
+                                (o) => DropdownMenuItem(
+                                  value: o.value,
+                                  child: Text(o.label),
+                                ),
+                              )
+                              .toList(),
                     ),
                     const Spacer(),
                     IconButton(

@@ -104,12 +104,32 @@ impl Category {
  * LLM category classifier
  * ========================= */
 
-fn build_llm_system_prompt() -> String {
-    let cats = Category::ALL
-        .iter()
-        .map(|c| c.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
+/// Fetch all category names from the database.
+async fn fetch_category_names(state: &AppState) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        r"SELECT name FROM shopping_categories ORDER BY sort_order",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_else(|_| {
+        // Fallback to hardcoded categories if DB fails
+        Category::ALL.iter().map(|c| c.as_str().to_string()).collect()
+    })
+}
+
+/// Check if a category name exists in the database.
+pub async fn validate_category(state: &AppState, name: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(r"SELECT 1 FROM shopping_categories WHERE name = ?")
+        .bind(name)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+async fn build_llm_system_prompt(state: &AppState) -> String {
+    let cats = fetch_category_names(state).await.join(", ");
 
     format!(
         "You are a strict shopping-item category classifier.\n\
@@ -131,18 +151,18 @@ struct LlmCatOut {
 }
 
 pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
-    let fallback = || Category::Other.as_str().to_string();
+    let fallback = "Other".to_string();
 
     let token = state.config.llm_api_key.clone().unwrap_or_default();
     if token.trim().is_empty() {
-        return fallback();
+        return fallback;
     }
 
     let Ok(http) = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
     else {
-        return fallback();
+        return fallback;
     };
 
     let llm = LlmClient::new(
@@ -150,7 +170,7 @@ pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
         token,
         state.config.llm_model.clone(),
     );
-    let system = build_llm_system_prompt();
+    let system = build_llm_system_prompt(state).await;
 
     let user = format!(
         "Item: {raw}\nNormalized: {norm}\n\nChoose one allowed category.",
@@ -169,18 +189,20 @@ pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
         )
         .await
     else {
-        return fallback();
+        return fallback;
     };
 
     let parsed: LlmCatOut = match serde_json::from_value(val) {
         Ok(p) => p,
-        Err(_) => return fallback(),
+        Err(_) => return fallback,
     };
 
-    Category::from_str(&parsed.category)
-        .unwrap_or(Category::Other)
-        .as_str()
-        .to_string()
+    // Validate that the returned category exists in DB
+    if validate_category(state, &parsed.category).await {
+        parsed.category
+    } else {
+        fallback
+    }
 }
 
 #[cfg(test)]
