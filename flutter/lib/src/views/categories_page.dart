@@ -26,7 +26,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   void _refresh() {
     final future = _load();
-    setState(() => _future = future);
+    setState(() { _future = future; });
   }
 
   Future<void> _addCategory() async {
