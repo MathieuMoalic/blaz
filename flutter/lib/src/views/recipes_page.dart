@@ -422,41 +422,13 @@ class RecipesPageState extends State<RecipesPage> {
                               title: r.title,
                               imageUrl: thumb,
                               onOpen: () async {
-                                final result = await Navigator.of(context).push<dynamic>(
+                                await Navigator.of(context).push(
                                   MaterialPageRoute(
                                     builder: (_) =>
                                         RecipeDetailPage(recipeId: r.id),
                                   ),
                                 );
                                 await refresh();
-                                // Show snackbar with undo if recipe was deleted
-                                if (result is Map && result['deleted'] == true && mounted) {
-                                  final title = result['title'] as String?;
-                                  final id = result['id'] as int?;
-                                  if (title != null && id != null) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Deleted "$title"'),
-                                        duration: const Duration(seconds: 4),
-                                        action: SnackBarAction(
-                                          label: 'Undo',
-                                          onPressed: () async {
-                                            try {
-                                              await restoreRecipe(id);
-                                              await refresh();
-                                            } catch (e) {
-                                              if (mounted) {
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  SnackBar(content: Text('Failed to restore: $e')),
-                                                );
-                                              }
-                                            }
-                                          },
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                }
                               },
                               onAssign: isAuthenticated ? () => _assignRecipe(r) : null,
                             );
