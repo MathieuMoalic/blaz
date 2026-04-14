@@ -68,7 +68,7 @@ const kCategoryOptions = <CategoryOption>[
   CategoryOption('Seasoning', 'Seasoning'),
   CategoryOption('Canned', 'Canned'),
   CategoryOption('Pantry', 'Pantry'),
-  CategoryOption('Non-food', 'Non-Food'),
+  CategoryOption('Non-Food', 'Non-Food'),
   CategoryOption('Pharmacy', 'Pharmacy'),
   CategoryOption('Online', 'Online'),
   CategoryOption('Online Alcohol', 'Online Alcohol'),
