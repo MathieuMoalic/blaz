@@ -195,10 +195,17 @@ class ShoppingListPageState extends State<ShoppingListPage> {
     setState(() => _refreshing = true);
 
     try {
-      final list = await _loadFromServer();
+      // Reload both items and categories in parallel
+      final results = await Future.wait([
+        _loadFromServer(),
+        fetchCategories(),
+      ]);
       if (!mounted) return;
+      final list = results[0] as List<ShoppingItem>;
+      final cats = results[1] as List<ShoppingCategory>;
       setState(() {
         _hidden.clear();
+        _categories = cats;
         _future = Future<List<ShoppingItem>>.value(list);
       });
     } finally {
