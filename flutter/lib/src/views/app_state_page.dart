@@ -21,18 +21,10 @@ class _AppStatePageState extends State<AppStatePage> {
   bool _loading = false;
   String? _error;
   bool _notificationsEnabled = false;
-  String _selectedModel = 'anthropic/claude-3.5-sonnet';
   String? _appVersion;
   String? _backendVersion;
-  
-  // Popular OpenRouter models for recipe parsing
-  final List<Map<String, String>> _models = [
-    {'id': 'anthropic/claude-3.5-sonnet', 'name': 'Claude 3.5 Sonnet'},
-    {'id': 'google/gemini-2.0-flash-exp:free', 'name': 'Gemini 2.0 Flash (Free)'},
-    {'id': 'openai/gpt-4o', 'name': 'GPT-4o'},
-    {'id': 'deepseek/deepseek-chat', 'name': 'DeepSeek Chat'},
-    {'id': 'meta-llama/llama-3.3-70b-instruct', 'name': 'Llama 3.3 70B'},
-  ];
+
+  final _modelController = TextEditingController();
 
   @override
   void initState() {
@@ -41,6 +33,12 @@ class _AppStatePageState extends State<AppStatePage> {
     _loadNotificationSetting();
     _loadModelSetting();
     _loadVersions();
+  }
+
+  @override
+  void dispose() {
+    _modelController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadVersions() async {
@@ -77,26 +75,18 @@ class _AppStatePageState extends State<AppStatePage> {
   Future<void> _loadModelSetting() async {
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
-      setState(() {
-        _selectedModel = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
-      });
+      _modelController.text = prefs.getString('llm_model') ?? '';
     }
   }
 
-  Future<void> _setModel(String? model) async {
-    if (model == null) return;
+  Future<void> _saveModel() async {
+    final model = _modelController.text.trim();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('llm_model', model);
-    
-    setState(() => _selectedModel = model);
-    
+
     if (mounted) {
-      final modelName = _models.firstWhere(
-        (m) => m['id'] == model, 
-        orElse: () => {'name': model}
-      )['name'];
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Model set to $modelName')),
+        SnackBar(content: Text(model.isEmpty ? 'Model cleared (using server default)' : 'Model saved')),
       );
     }
   }
@@ -212,21 +202,24 @@ class _AppStatePageState extends State<AppStatePage> {
                       'Recipe Import Settings',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _modelController,
                       decoration: const InputDecoration(
                         labelText: 'LLM Model',
-                        helperText: 'Model used for recipe parsing',
+                        hintText: 'e.g. anthropic/claude-3.5-sonnet',
+                        helperText: 'OpenRouter model ID for recipe parsing',
                         border: OutlineInputBorder(),
                       ),
-                      value: _selectedModel,
-                      items: _models.map((model) {
-                        return DropdownMenuItem(
-                          value: model['id'],
-                          child: Text(model['name']!),
-                        );
-                      }).toList(),
-                      onChanged: _setModel,
+                      onEditingComplete: _saveModel,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _saveModel,
+                        child: const Text('Save'),
+                      ),
                     ),
                   ],
                 ),

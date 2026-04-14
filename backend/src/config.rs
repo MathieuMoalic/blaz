@@ -62,8 +62,8 @@ pub struct Config {
     #[arg(long, env = "BLAZ_LLM_API_KEY")]
     pub llm_api_key: Option<String>,
 
-    /// LLM model to use
-    #[arg(long, env = "BLAZ_LLM_MODEL", default_value = "deepseek/deepseek-chat")]
+    /// Default LLM model (used when client doesn't specify one)
+    #[arg(skip = String::from("deepseek/deepseek-chat"))]
     pub llm_model: String,
 
     /// LLM vision model to use for image-based recipe import

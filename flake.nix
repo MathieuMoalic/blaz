@@ -224,12 +224,6 @@
           description = "Path to file containing LLM API key (for use with sops-nix)";
         };
 
-        llmModel = lib.mkOption {
-          type = lib.types.str;
-          default = "deepseek/deepseek-chat";
-          description = "LLM model to use";
-        };
-
         llmApiUrl = lib.mkOption {
           type = lib.types.str;
           default = "https://openrouter.ai/api/v1";
@@ -302,7 +296,6 @@
               BLAZ_DATABASE_PATH = cfg.databasePath;
               BLAZ_MEDIA_DIR = cfg.mediaDir;
               BLAZ_LOG_FILE = cfg.logFile;
-              BLAZ_LLM_MODEL = cfg.llmModel;
               BLAZ_LLM_API_URL = cfg.llmApiUrl;
             }
             // lib.optionalAttrs (cfg.corsOrigin != null) {
