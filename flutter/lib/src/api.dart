@@ -645,11 +645,18 @@ Future<Recipe> importRecipeFromUrl({required String url, String? model, bool dry
 }
 
 /// Import a recipe from 1–3 images. Each entry is `(filename, bytes)`.
-Future<Recipe> importRecipeFromImages(List<(String, List<int>)> images) async {
+/// Optionally pass a [model] to override the server's default vision model.
+Future<Recipe> importRecipeFromImages(
+  List<(String, List<int>)> images, {
+  String? model,
+}) async {
   final uri = Uri.parse('$baseUrl/recipes/import/images');
   final req = http.MultipartRequest('POST', uri);
   if (_authToken != null && _authToken!.isNotEmpty) {
     req.headers['Authorization'] = 'Bearer $_authToken';
+  }
+  if (model != null && model.isNotEmpty) {
+    req.fields['model'] = model;
   }
   for (final (name, bytes) in images) {
     final ct = lookupMimeType(name) ?? 'image/jpeg';

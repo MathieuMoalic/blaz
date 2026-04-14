@@ -411,10 +411,13 @@ class _AddRecipePageState extends State<AddRecipePage> {
     _animateImageImportSteps();
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final visionModel = prefs.getString('llm_vision_model');
       final created = await importRecipeFromImages(
         _importImages
             .map((e) => (e.$1, e.$2.toList()))
             .toList(),
+        model: visionModel,
       );
       if (!mounted) return;
       setState(() => _importImageStep = 4); // Complete

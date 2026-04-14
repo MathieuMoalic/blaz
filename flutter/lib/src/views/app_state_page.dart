@@ -25,19 +25,21 @@ class _AppStatePageState extends State<AppStatePage> {
   String? _backendVersion;
 
   final _modelController = TextEditingController();
+  final _visionModelController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _load();
     _loadNotificationSetting();
-    _loadModelSetting();
+    _loadModelSettings();
     _loadVersions();
   }
 
   @override
   void dispose() {
     _modelController.dispose();
+    _visionModelController.dispose();
     super.dispose();
   }
 
@@ -72,21 +74,24 @@ class _AppStatePageState extends State<AppStatePage> {
     }
   }
 
-  Future<void> _loadModelSetting() async {
+  Future<void> _loadModelSettings() async {
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       _modelController.text = prefs.getString('llm_model') ?? '';
+      _visionModelController.text = prefs.getString('llm_vision_model') ?? '';
     }
   }
 
-  Future<void> _saveModel() async {
+  Future<void> _saveModels() async {
     final model = _modelController.text.trim();
+    final visionModel = _visionModelController.text.trim();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('llm_model', model);
+    await prefs.setString('llm_vision_model', visionModel);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(model.isEmpty ? 'Model cleared (using server default)' : 'Model saved')),
+        const SnackBar(content: Text('Model settings saved')),
       );
     }
   }
@@ -199,25 +204,39 @@ class _AppStatePageState extends State<AppStatePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Recipe Import Settings',
+                      'AI Models',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 4),
+                    Text(
+                      'OpenRouter model IDs (leave empty for server default)',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 16),
                     TextField(
                       controller: _modelController,
                       decoration: const InputDecoration(
-                        labelText: 'LLM Model',
+                        labelText: 'Text Model',
                         hintText: 'e.g. anthropic/claude-3.5-sonnet',
-                        helperText: 'OpenRouter model ID for recipe parsing',
+                        helperText: 'For URL import, macros, etc.',
                         border: OutlineInputBorder(),
                       ),
-                      onEditingComplete: _saveModel,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _visionModelController,
+                      decoration: const InputDecoration(
+                        labelText: 'Vision Model',
+                        hintText: 'e.g. google/gemini-2.0-flash-001',
+                        helperText: 'For image-based recipe import',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Align(
                       alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: _saveModel,
+                      child: FilledButton(
+                        onPressed: _saveModels,
                         child: const Text('Save'),
                       ),
                     ),

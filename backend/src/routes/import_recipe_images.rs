@@ -13,7 +13,9 @@ const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024; // 10 MB per image
 
 /// Import a recipe from up to 3 photos using the configured vision LLM.
 ///
-/// Accepts a multipart form with fields named `image` (repeat up to 3×).
+/// Accepts a multipart form with:
+/// - `image` fields (repeat up to 3×)
+/// - Optional `model` field to override the vision model
 ///
 /// # Errors
 ///
@@ -32,14 +34,29 @@ pub async fn import_from_images(
             .into());
     }
 
-    // Collect up to MAX_IMAGES images from the multipart body
+    // Collect images and optional model override from the multipart body
     let mut images: Vec<(String, String)> = Vec::new(); // (mime, base64)
+    let mut model_override: Option<String> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         (StatusCode::BAD_REQUEST, format!("multipart error: {e}"))
     })? {
+        let name = field.name().unwrap_or_default().to_string();
+
+        if name == "model" {
+            // Text field for model override
+            let text = field.text().await.map_err(|e| {
+                (StatusCode::BAD_REQUEST, format!("read model field error: {e}"))
+            })?;
+            if !text.trim().is_empty() {
+                model_override = Some(text.trim().to_string());
+            }
+            continue;
+        }
+
+        // Otherwise treat as image
         if images.len() >= MAX_IMAGES {
-            break;
+            continue;
         }
 
         let mime = field
@@ -65,7 +82,9 @@ pub async fn import_from_images(
         return Err((StatusCode::BAD_REQUEST, "no images provided".into()).into());
     }
 
-    let model = &state.config.llm_vision_model;
+    let model = model_override
+        .as_deref()
+        .unwrap_or(&state.config.llm_vision_model);
     let base = state.config.llm_api_url.as_str();
     let system = state.config.system_prompt_import.as_str();
     let prompt = "Extract the recipe from the image(s). \
@@ -73,7 +92,7 @@ pub async fn import_from_images(
                   Return the combined recipe as JSON.";
 
     let http = reqwest::Client::new();
-    let llm = LlmClient::new(base.to_string(), token, model.clone());
+    let llm = LlmClient::new(base.to_string(), token, model.to_string());
 
     let llm_json = llm
         .chat_json_images(ImageChatRequest {
