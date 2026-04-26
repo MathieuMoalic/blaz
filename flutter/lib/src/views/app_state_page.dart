@@ -122,16 +122,45 @@ class _AppStatePageState extends State<AppStatePage> {
     }
     
     setState(() => _notificationsEnabled = enabled);
-    
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            enabled 
-                ? 'Prep reminder notifications enabled' 
+            enabled
+                ? 'Prep reminder notifications enabled'
                 : 'Prep reminder notifications disabled'
           ),
         ),
+      );
+    }
+  }
+
+  Future<void> _testNotification() async {
+    final success = await sendTestNotification();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? 'Test notification sent!'
+                : 'Failed to send notification. Check permissions.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _checkRemindersNow() async {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Checking for reminders...')),
+      );
+    }
+    await checkRemindersNow();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reminder check complete')),
       );
     }
   }
@@ -263,11 +292,34 @@ class _AppStatePageState extends State<AppStatePage> {
           ],
           if (!kIsWeb && Platform.isAndroid && isAuthenticated) ...[
             Card(
-              child: SwitchListTile(
-                title: const Text('Prep reminder notifications'),
-                subtitle: const Text('Check every 6 hours for upcoming prep tasks'),
-                value: _notificationsEnabled,
-                onChanged: _toggleNotifications,
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    title: const Text('Prep reminder notifications'),
+                    subtitle: const Text('Check every 6 hours for upcoming prep tasks'),
+                    value: _notificationsEnabled,
+                    onChanged: _toggleNotifications,
+                  ),
+                  if (_notificationsEnabled)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
+                      child: Row(
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _testNotification,
+                            icon: const Icon(Icons.notifications_active, size: 18),
+                            label: const Text('Test'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: _checkRemindersNow,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Check Now'),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(height: 12),

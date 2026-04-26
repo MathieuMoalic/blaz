@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart' as api;
@@ -16,10 +17,19 @@ final FlutterLocalNotificationsPlugin _notifications =
 Future<void> initNotifications() async {
   if (kIsWeb || !Platform.isAndroid) return;
 
-  // Check if notifications are enabled
+  // Check if notifications are enabled in app settings
   final prefs = await SharedPreferences.getInstance();
   final enabled = prefs.getBool('notifications_enabled') ?? true;
   if (!enabled) return;
+
+  // Request notification permission (required on Android 13+)
+  final status = await Permission.notification.status;
+  if (!status.isGranted) {
+    final result = await Permission.notification.request();
+    if (!result.isGranted) {
+      return; // User denied permission
+    }
+  }
 
   // Initialize flutter_local_notifications
   const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -141,4 +151,37 @@ Future<void> _showNotification({
   );
   const details = NotificationDetails(android: androidDetails);
   await _notifications.show(id, title, body, details);
+}
+
+/// Send a test notification to verify the system is working
+Future<bool> sendTestNotification() async {
+  if (kIsWeb || !Platform.isAndroid) return false;
+
+  try {
+    // Check permission
+    final status = await Permission.notification.status;
+    if (!status.isGranted) {
+      return false;
+    }
+
+    // Initialize if needed
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidSettings);
+    await _notifications.initialize(initSettings);
+
+    await _showNotification(
+      id: 999,
+      title: 'Test Notification',
+      body: 'Prep reminders are working!',
+    );
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/// Manually trigger reminder check (for testing/debugging)
+Future<void> checkRemindersNow() async {
+  if (kIsWeb || !Platform.isAndroid) return;
+  await _checkAndNotifyReminders();
 }
