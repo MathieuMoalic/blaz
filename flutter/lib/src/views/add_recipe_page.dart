@@ -103,7 +103,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
     try {
       // Get user's selected model
       final prefs = await SharedPreferences.getInstance();
-      final model = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
+      final model = prefs.getString('llm_model');
 
       final created = await importRecipeFromUrl(url: url, model: model);
       if (!mounted) return;

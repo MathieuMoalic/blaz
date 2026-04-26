@@ -232,7 +232,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     try {
       // Get user's selected model
       final prefs = await SharedPreferences.getInstance();
-      final model = prefs.getString('llm_model') ?? 'anthropic/claude-3.5-sonnet';
+      final model = prefs.getString('llm_model');
       
       final imported = await api.importRecipeFromUrl(url: r.source, model: model, dryRun: true);
       await api.updateRecipe(
