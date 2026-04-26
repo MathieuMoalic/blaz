@@ -249,6 +249,7 @@ async fn stage1_extract(
     let json = call_llm_with_retry(
         llm,
         http,
+        &state.config.llm_fallback_model,
         &state.config.system_prompt_extract,
         &user,
         0.1,
@@ -305,6 +306,7 @@ async fn stage2_structure_ingredients(
     let json = call_llm_with_retry(
         llm,
         http,
+        &state.config.llm_fallback_model,
         &state.config.system_prompt_structure,
         &input_json,
         0.1,
@@ -370,6 +372,7 @@ async fn stage3_convert_to_metric(
     let json = call_llm_with_retry(
         llm,
         http,
+        &state.config.llm_fallback_model,
         &state.config.system_prompt_convert,
         &input_json,
         0.1,
@@ -400,24 +403,20 @@ async fn stage3_convert_to_metric(
  * Retry wrapper
  * ========================= */
 
+#[allow(clippy::too_many_arguments)]
 async fn call_llm_with_retry(
     llm: &LlmClient,
     http: &reqwest::Client,
+    fallback_model: &str,
     system: &str,
     user: &str,
     temperature: f32,
     timeout: Duration,
     max_tokens: Option<u32>,
 ) -> anyhow::Result<JsonValue> {
-    // Try once
-    match llm.chat_json(http, system, user, temperature, timeout, max_tokens).await {
-        Ok(json) => Ok(json),
-        Err(e) => {
-            tracing::warn!("LLM call failed, retrying once: {}", e);
-            // Retry once
-            llm.chat_json(http, system, user, temperature, timeout, max_tokens).await
-        }
-    }
+    // Try primary model with fallback
+    llm.chat_json_with_fallback(http, fallback_model, system, user, temperature, timeout, max_tokens)
+        .await
 }
 
 /* =========================

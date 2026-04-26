@@ -673,7 +673,15 @@ pub async fn reparse_ingredients(
     );
 
     let json = llm
-        .chat_json(&http, REPARSE_SYSTEM, &user, 0.1, std::time::Duration::from_secs(60), Some(2000))
+        .chat_json_with_fallback(
+            &http,
+            &state.config.llm_fallback_model,
+            REPARSE_SYSTEM,
+            &user,
+            0.1,
+            std::time::Duration::from_secs(60),
+            Some(2000),
+        )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("LLM failed: {e}")))?;
 
@@ -808,8 +816,9 @@ async fn call_and_parse_macros_llm(
     let llm = LlmClient::new(base.clone(), token.clone(), model.clone());
 
     let val = llm
-        .chat_json(
+        .chat_json_with_fallback(
             client,
+            &config.llm_fallback_model,
             sys,
             user,
             0.1,
@@ -932,8 +941,9 @@ async fn extract_and_save_prep_reminders(state: AppState, recipe_id: i64) {
     );
 
     let val = match llm
-        .chat_json(
+        .chat_json_with_fallback(
             &client,
+            &state.config.llm_fallback_model,
             &state.config.system_prompt_prep_reminders,
             &user,
             0.1,

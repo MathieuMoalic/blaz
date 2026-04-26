@@ -16,6 +16,75 @@ impl LlmClient {
         Self { base, token, model }
     }
 
+    /// Creates a new client with a different model (for fallback scenarios)
+    #[must_use]
+    pub fn with_model(&self, model: String) -> Self {
+        Self {
+            base: self.base.clone(),
+            token: self.token.clone(),
+            model,
+        }
+    }
+
+    /// Try primary model first, then fallback if it fails.
+    /// Returns the result and which model succeeded.
+    ///
+    /// # Errors
+    ///
+    /// Returns error only if both primary and fallback fail.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn chat_json_with_fallback(
+        &self,
+        http: &reqwest::Client,
+        fallback_model: &str,
+        system: &str,
+        user: &str,
+        temperature: f32,
+        timeout: Duration,
+        max_tokens: Option<u32>,
+    ) -> anyhow::Result<JsonValue> {
+        // Try primary model
+        match self
+            .chat_json(http, system, user, temperature, timeout, max_tokens)
+            .await
+        {
+            Ok(result) => {
+                tracing::debug!("Primary model '{}' succeeded", self.model);
+                Ok(result)
+            }
+            Err(primary_err) => {
+                tracing::warn!(
+                    "Primary model '{}' failed: {}. Trying fallback '{}'",
+                    self.model,
+                    primary_err,
+                    fallback_model
+                );
+
+                let fallback_client = self.with_model(fallback_model.to_string());
+                match fallback_client
+                    .chat_json(http, system, user, temperature, timeout, max_tokens)
+                    .await
+                {
+                    Ok(result) => {
+                        tracing::info!("Fallback model '{}' succeeded", fallback_model);
+                        Ok(result)
+                    }
+                    Err(fallback_err) => {
+                        tracing::error!(
+                            "Both models failed. Primary '{}': {}. Fallback '{}': {}",
+                            self.model,
+                            primary_err,
+                            fallback_model,
+                            fallback_err
+                        );
+                        // Return the primary error as it's more relevant
+                        Err(primary_err)
+                    }
+                }
+            }
+        }
+    }
+
     /// # Errors
     ///
     /// Will return err if the request fails or if the response can't be serialized as json
@@ -122,6 +191,7 @@ impl LlmClient {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ImageChatRequest<'a> {
     pub http: &'a reqwest::Client,
     pub system: &'a str,
@@ -206,6 +276,51 @@ impl LlmClient {
             "Vision LLM did not return valid JSON. Preview: {}",
             &content_str.chars().take(500).collect::<String>()
         )
+    }
+
+    /// Try primary vision model first, then fallback if it fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns error only if both primary and fallback fail.
+    pub async fn chat_json_images_with_fallback(
+        &self,
+        fallback_model: &str,
+        req: ImageChatRequest<'_>,
+    ) -> anyhow::Result<JsonValue> {
+        // Try primary model
+        match self.chat_json_images(req).await {
+            Ok(result) => {
+                tracing::debug!("Primary vision model '{}' succeeded", self.model);
+                Ok(result)
+            }
+            Err(primary_err) => {
+                tracing::warn!(
+                    "Primary vision model '{}' failed: {}. Trying fallback '{}'",
+                    self.model,
+                    primary_err,
+                    fallback_model
+                );
+
+                let fallback_client = self.with_model(fallback_model.to_string());
+                match fallback_client.chat_json_images(req).await {
+                    Ok(result) => {
+                        tracing::info!("Fallback vision model '{}' succeeded", fallback_model);
+                        Ok(result)
+                    }
+                    Err(fallback_err) => {
+                        tracing::error!(
+                            "Both vision models failed. Primary '{}': {}. Fallback '{}': {}",
+                            self.model,
+                            primary_err,
+                            fallback_model,
+                            fallback_err
+                        );
+                        Err(primary_err)
+                    }
+                }
+            }
+        }
     }
 }
 /// Extract JSON object from a ```json ... ``` fenced block.

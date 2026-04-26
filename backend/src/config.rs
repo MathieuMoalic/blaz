@@ -66,9 +66,17 @@ pub struct Config {
     #[arg(long, env = "BLAZ_LLM_MODEL", default_value = "deepseek/deepseek-chat")]
     pub llm_model: String,
 
+    /// Fallback LLM model (used when primary model fails)
+    #[arg(long, env = "BLAZ_LLM_FALLBACK_MODEL", default_value = "google/gemini-2.0-flash-001")]
+    pub llm_fallback_model: String,
+
     /// LLM vision model to use for image-based recipe import
     #[arg(long, env = "BLAZ_LLM_VISION_MODEL", default_value = "google/gemini-2.0-flash-001")]
     pub llm_vision_model: String,
+
+    /// Fallback vision model (used when primary vision model fails)
+    #[arg(long, env = "BLAZ_LLM_VISION_FALLBACK_MODEL", default_value = "openai/gpt-4o-mini")]
+    pub llm_vision_fallback_model: String,
 
     /// LLM API URL
     #[arg(long, env = "BLAZ_LLM_API_URL", default_value = "https://openrouter.ai/api/v1")]

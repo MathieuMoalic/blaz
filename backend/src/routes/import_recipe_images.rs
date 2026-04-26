@@ -95,15 +95,18 @@ pub async fn import_from_images(
     let llm = LlmClient::new(base.to_string(), token, model.to_string());
 
     let llm_json = llm
-        .chat_json_images(ImageChatRequest {
-            http: &http,
-            system,
-            text_prompt: prompt,
-            images: &images,
-            temperature: 0.1,
-            timeout: Duration::from_secs(120),
-            max_tokens: Some(5000),
-        })
+        .chat_json_images_with_fallback(
+            &state.config.llm_vision_fallback_model,
+            ImageChatRequest {
+                http: &http,
+                system,
+                text_prompt: prompt,
+                images: &images,
+                temperature: 0.1,
+                timeout: Duration::from_secs(120),
+                max_tokens: Some(5000),
+            },
+        )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("vision LLM failed: {e}")))?;
 
