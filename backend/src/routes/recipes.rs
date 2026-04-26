@@ -1,4 +1,5 @@
 use crate::llm::LlmClient;
+use crate::routes::settings::LlmSettings;
 use axum::{
     Json,
     extract::{Multipart, Path, State, rejection::JsonRejection},
@@ -594,7 +595,10 @@ pub async fn estimate_macros(
     let client = macros_http_client()?;
     let sys = &state.config.system_prompt_macros;
 
-    let macros = call_and_parse_macros_llm(&client, &state.config, sys, &user, basis).await?;
+    // Load LLM settings from database
+    let llm_settings = LlmSettings::load(&state.pool).await;
+
+    let macros = call_and_parse_macros_llm(&client, &state.config, &llm_settings, sys, &user, basis).await?;
 
     save_macros(&state, id, &macros).await?;
 
@@ -666,16 +670,19 @@ pub async fn reparse_ingredients(
         .build()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Load LLM settings from database
+    let llm_settings = LlmSettings::load(&state.pool).await;
+
     let llm = LlmClient::new(
         state.config.llm_api_url.clone(),
         token,
-        state.config.llm_model.clone(),
+        llm_settings.model.clone(),
     );
 
     let json = llm
         .chat_json_with_fallback(
             &http,
-            &state.config.llm_fallback_model,
+            &llm_settings.fallback_model,
             REPARSE_SYSTEM,
             &user,
             0.1,
@@ -790,6 +797,7 @@ fn macros_http_client() -> Result<reqwest::Client, StatusCode> {
 async fn call_and_parse_macros_llm(
     client: &reqwest::Client,
     config: &crate::config::Config,
+    llm_settings: &LlmSettings,
     sys: &str,
     user: &str,
     basis: &'static str,
@@ -803,22 +811,21 @@ async fn call_and_parse_macros_llm(
         carbs_g: f64,
         skip: bool,
     }
-    
+
     #[derive(Deserialize)]
     struct LlmOut {
         ingredients: Vec<LlmIngredient>,
     }
-    
+
     let base = &config.llm_api_url;
     let token = config.llm_api_key.clone().unwrap_or_default();
-    let model = &config.llm_model;
 
-    let llm = LlmClient::new(base.clone(), token.clone(), model.clone());
+    let llm = LlmClient::new(base.clone(), token.clone(), llm_settings.model.clone());
 
     let val = llm
         .chat_json_with_fallback(
             client,
-            &config.llm_fallback_model,
+            &llm_settings.fallback_model,
             sys,
             user,
             0.1,
@@ -934,16 +941,19 @@ async fn extract_and_save_prep_reminders(state: AppState, recipe_id: i64) {
         .timeout(std::time::Duration::from_secs(20))
         .build() else { return };
 
+    // Load LLM settings from database
+    let llm_settings = LlmSettings::load(&state.pool).await;
+
     let llm = LlmClient::new(
         state.config.llm_api_url.clone(),
         state.config.llm_api_key.clone().unwrap_or_default(),
-        state.config.llm_model.clone(),
+        llm_settings.model.clone(),
     );
 
     let val = match llm
         .chat_json_with_fallback(
             &client,
-            &state.config.llm_fallback_model,
+            &llm_settings.fallback_model,
             &state.config.system_prompt_prep_reminders,
             &user,
             0.1,

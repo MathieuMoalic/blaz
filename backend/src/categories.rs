@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::llm::LlmClient;
 use crate::models::AppState;
+use crate::routes::settings::LlmSettings;
 use crate::units::normalize_name;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,10 +166,13 @@ pub async fn guess_category(state: &AppState, name_raw: &str) -> String {
         return fallback;
     };
 
+    // Load LLM settings from database
+    let llm_settings = LlmSettings::load(&state.pool).await;
+
     let llm = LlmClient::new(
         state.config.llm_api_url.clone(),
         token,
-        state.config.llm_model.clone(),
+        llm_settings.model.clone(),
     );
     let system = build_llm_system_prompt(state).await;
 

@@ -93,8 +93,8 @@ async fn main() -> anyhow::Result<()> {
             "<not set>"
         }
     );
-    tracing::info!("LLM model (fallback): {}", config.llm_model);
     tracing::info!("LLM API URL: {}", config.llm_api_url);
+    tracing::info!("LLM models: configured via /settings API (database)");
     tracing::info!(
         "System prompt import: {} chars",
         config.system_prompt_import.len()

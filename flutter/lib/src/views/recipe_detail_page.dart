@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../api.dart' as api;
 import '../auth.dart';
@@ -230,11 +229,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
 
     try {
-      // Get user's selected model
-      final prefs = await SharedPreferences.getInstance();
-      final model = prefs.getString('llm_model');
-      
-      final imported = await api.importRecipeFromUrl(url: r.source, model: model, dryRun: true);
+      // Server uses model from database settings
+      final imported = await api.importRecipeFromUrl(url: r.source, dryRun: true);
       await api.updateRecipe(
         id: r.id,
         title: imported.title,

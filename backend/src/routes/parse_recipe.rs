@@ -2,6 +2,7 @@ use crate::error::AppResult;
 use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
 use crate::llm::LlmClient;
 use crate::models::Ingredient;
+use crate::routes::settings::LlmSettings;
 use crate::{
     models::{AppState, NewRecipe, Recipe},
     routes::{parse_recipe_image::extract_main_image_url, recipes},
@@ -60,7 +61,9 @@ pub async fn import_from_url(
             .into());
     }
 
-    let model = req.model.as_deref().unwrap_or(&state.config.llm_model);
+    // Load LLM settings from database
+    let llm_settings = LlmSettings::load(&state.pool).await;
+    let model = req.model.as_deref().unwrap_or(&llm_settings.model);
     let base = state.config.llm_api_url.as_str();
 
     let excerpt = if text.len() > MAX_CHARS {
@@ -73,22 +76,22 @@ pub async fn import_from_url(
     let llm = LlmClient::new(base.to_string(), token.clone(), model.to_string());
 
     // TRY SCHEMA.ORG EXTRACTION FIRST
-    let (title, ingredient_strings, instruction_strings) = 
+    let (title, ingredient_strings, instruction_strings) =
         if let Some(schema) = crate::schema_org::extract_schema_recipe(&html) {
             tracing::info!("Using schema.org data: {} ingredients", schema.ingredients.len());
             (schema.name, schema.ingredients, schema.instructions)
         } else {
             // FALLBACK: STAGE 1 LLM extraction
             tracing::info!("No schema.org found, using Stage 1 LLM extraction");
-            let result = stage1_extract(&llm, &http, &state, excerpt, &req.url, &title_guess)
+            let result = stage1_extract(&llm, &http, &state, &llm_settings, excerpt, &req.url, &title_guess)
                 .await
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 1 (extract) failed: {e}")))?;
-            
-            tracing::info!("Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings", 
+
+            tracing::info!("Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings",
                 result.0, result.1.len(), result.2.len());
             result
         };
-    
+
     for (i, ing) in ingredient_strings.iter().enumerate() {
         tracing::debug!("  Ingredient {}: {}", i, ing);
     }
@@ -96,20 +99,20 @@ pub async fn import_from_url(
     // STAGE 2: Structure ingredients
     tracing::info!("Stage 2: Structuring {} ingredients", ingredient_strings.len());
     let mut structured_ingredients =
-        stage2_structure_ingredients(&llm, &http, &state, &ingredient_strings)
+        stage2_structure_ingredients(&llm, &http, &state, &llm_settings, &ingredient_strings)
             .await
             .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 2 (structure) failed: {e}")))?;
-    
+
     tracing::info!("Stage 2 complete: {} structured ingredients", structured_ingredients.len());
     for (i, ing) in structured_ingredients.iter().enumerate() {
-        tracing::debug!("  Structured {}: qty={:?}, unit={:?}, name={}, prep={:?}", 
+        tracing::debug!("  Structured {}: qty={:?}, unit={:?}, name={}, prep={:?}",
             i, ing.quantity, ing.unit, ing.name, ing.prep);
     }
 
     // STAGE 3: Convert to metric
     tracing::info!("Stage 3: Converting to metric");
     structured_ingredients =
-        stage3_convert_to_metric(&llm, &http, &state, &structured_ingredients)
+        stage3_convert_to_metric(&llm, &http, &state, &llm_settings, &structured_ingredients)
             .await
             .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 3 (convert) failed: {e}")))?;
     
@@ -238,6 +241,7 @@ async fn stage1_extract(
     llm: &LlmClient,
     http: &reqwest::Client,
     state: &AppState,
+    llm_settings: &LlmSettings,
     content: &str,
     url: &str,
     title_guess: &str,
@@ -249,7 +253,7 @@ async fn stage1_extract(
     let json = call_llm_with_retry(
         llm,
         http,
-        &state.config.llm_fallback_model,
+        &llm_settings.fallback_model,
         &state.config.system_prompt_extract,
         &user,
         0.1,
@@ -299,14 +303,15 @@ async fn stage2_structure_ingredients(
     llm: &LlmClient,
     http: &reqwest::Client,
     state: &AppState,
+    llm_settings: &LlmSettings,
     ingredient_strings: &[String],
 ) -> anyhow::Result<Vec<Ingredient>> {
     let input_json = serde_json::to_string(ingredient_strings)?;
-    
+
     let json = call_llm_with_retry(
         llm,
         http,
-        &state.config.llm_fallback_model,
+        &llm_settings.fallback_model,
         &state.config.system_prompt_structure,
         &input_json,
         0.1,
@@ -347,6 +352,7 @@ async fn stage3_convert_to_metric(
     llm: &LlmClient,
     http: &reqwest::Client,
     state: &AppState,
+    llm_settings: &LlmSettings,
     ingredients: &[Ingredient],
 ) -> anyhow::Result<Vec<Ingredient>> {
     // Serialize current ingredients as JSON
@@ -372,7 +378,7 @@ async fn stage3_convert_to_metric(
     let json = call_llm_with_retry(
         llm,
         http,
-        &state.config.llm_fallback_model,
+        &llm_settings.fallback_model,
         &state.config.system_prompt_convert,
         &input_json,
         0.1,

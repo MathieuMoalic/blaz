@@ -4,7 +4,6 @@ import 'package:path/path.dart' as p;
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
-import 'package:shared_preferences/shared_preferences.dart';
 import '../api.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -101,11 +100,8 @@ class _AddRecipePageState extends State<AddRecipePage> {
     _animateImportSteps();
 
     try {
-      // Get user's selected model
-      final prefs = await SharedPreferences.getInstance();
-      final model = prefs.getString('llm_model');
-
-      final created = await importRecipeFromUrl(url: url, model: model);
+      // Server uses model from database settings
+      final created = await importRecipeFromUrl(url: url);
       if (!mounted) return;
       setState(() => _importStep = 5); // Complete
       await Future.delayed(const Duration(milliseconds: 300));
@@ -411,13 +407,11 @@ class _AddRecipePageState extends State<AddRecipePage> {
     _animateImageImportSteps();
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final visionModel = prefs.getString('llm_vision_model');
+      // Server uses model from database settings
       final created = await importRecipeFromImages(
         _importImages
             .map((e) => (e.$1, e.$2.toList()))
             .toList(),
-        model: visionModel,
       );
       if (!mounted) return;
       setState(() => _importImageStep = 4); // Complete

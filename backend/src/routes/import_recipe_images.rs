@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::error::AppResult;
 use crate::llm::{ImageChatRequest, LlmClient};
 use crate::models::{AppState, NewRecipe, Recipe};
+use crate::routes::settings::LlmSettings;
 use crate::routes::{parse_recipe::ExtractRaw, recipes};
 
 const MAX_IMAGES: usize = 3;
@@ -82,9 +83,11 @@ pub async fn import_from_images(
         return Err((StatusCode::BAD_REQUEST, "no images provided".into()).into());
     }
 
+    // Load LLM settings from database
+    let llm_settings = LlmSettings::load(&state.pool).await;
     let model = model_override
         .as_deref()
-        .unwrap_or(&state.config.llm_vision_model);
+        .unwrap_or(&llm_settings.vision_model);
     let base = state.config.llm_api_url.as_str();
     let system = state.config.system_prompt_import.as_str();
     let prompt = "Extract the recipe from the image(s). \
@@ -96,7 +99,7 @@ pub async fn import_from_images(
 
     let llm_json = llm
         .chat_json_images_with_fallback(
-            &state.config.llm_vision_fallback_model,
+            &llm_settings.vision_fallback_model,
             ImageChatRequest {
                 http: &http,
                 system,

@@ -1195,3 +1195,22 @@ Future<LlmCredits> fetchLlmCredits() async {
   return LlmCredits.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+/// Fetch all settings from the server
+Future<Map<String, String>> fetchSettings() async {
+  final r = await http.get(_u('/settings'), headers: _headers());
+  if (r.statusCode != 200) _throw(r);
+  final data = jsonDecode(r.body) as Map<String, dynamic>;
+  return data.map((k, v) => MapEntry(k, v.toString()));
+}
+
+/// Update settings on the server
+Future<void> updateSettings(Map<String, String> settings) async {
+  final r = await http.patch(
+    _u('/settings'),
+    headers: _headers({'Content-Type': 'application/json'}),
+    body: jsonEncode({'settings': settings}),
+  );
+  if (r.statusCode != 200) _throw(r);
+}

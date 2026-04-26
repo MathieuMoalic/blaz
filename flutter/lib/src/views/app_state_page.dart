@@ -76,24 +76,38 @@ class _AppStatePageState extends State<AppStatePage> {
   }
 
   Future<void> _loadModelSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      _modelController.text = prefs.getString('llm_model') ?? '';
-      _visionModelController.text = prefs.getString('llm_vision_model') ?? '';
+    try {
+      final settings = await api.fetchSettings();
+      if (mounted) {
+        _modelController.text = settings['llm_model'] ?? '';
+        _visionModelController.text = settings['llm_vision_model'] ?? '';
+      }
+    } catch (e) {
+      // Silently fail - settings will show empty, user can set them
     }
   }
 
   Future<void> _saveModels() async {
     final model = _modelController.text.trim();
     final visionModel = _visionModelController.text.trim();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('llm_model', model);
-    await prefs.setString('llm_vision_model', visionModel);
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Model settings saved')),
-      );
+    try {
+      await api.updateSettings({
+        'llm_model': model,
+        'llm_vision_model': visionModel,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Model settings saved')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save settings: $e')),
+        );
+      }
     }
   }
 
