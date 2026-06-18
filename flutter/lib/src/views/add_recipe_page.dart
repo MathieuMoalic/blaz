@@ -5,6 +5,7 @@ import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import '../api.dart';
+import 'edit_recipe_page.dart';
 
 class AddRecipePage extends StatefulWidget {
   const AddRecipePage({super.key});
@@ -106,20 +107,18 @@ class _AddRecipePageState extends State<AddRecipePage> {
       setState(() => _importStep = 5); // Complete
       await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Imported: ${created.title}')));
-      Navigator.pop(context, true); // trigger refresh in caller
+      await _openEditView(created);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
-      if (mounted) setState(() {
-        _importing = false;
-        _importStep = 0;
-      });
+      if (mounted)
+        setState(() {
+          _importing = false;
+          _importStep = 0;
+        });
     }
   }
 
@@ -183,6 +182,16 @@ class _AddRecipePageState extends State<AddRecipePage> {
     );
   }
 
+  Future<void> _openEditView(Recipe recipe) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => EditRecipePage(recipe: recipe)),
+    );
+    if (!mounted) return;
+    if (saved == true) {
+      Navigator.pop(context, true);
+    }
+  }
+
   void _animateImportSteps() async {
     // Animate through steps with realistic timing
     // Step 1: Fetching page (already set)
@@ -208,9 +217,9 @@ class _AddRecipePageState extends State<AddRecipePage> {
     final source = _source.text.trim();
     final yieldText = _yieldText.text.trim();
     final notes = _notes.text.trim();
-    final ingredients = splitLines(_ingredientsRaw.text)
-        .map((line) => Ingredient(name: line.trim(), raw: true))
-        .toList();
+    final ingredients = splitLines(
+      _ingredientsRaw.text,
+    ).map((line) => Ingredient(name: line.trim(), raw: true)).toList();
     final instructions = splitLines(_instructionsRaw.text);
 
     setState(() => _busy = true);
@@ -276,9 +285,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
               onPressed: () => setState(() => _mode = AddRecipeMode.importUrl),
               icon: const Icon(Icons.link),
               label: const Text('Import from URL'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.all(20),
-              ),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.all(20)),
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
@@ -286,18 +293,14 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   setState(() => _mode = AddRecipeMode.importImage),
               icon: const Icon(Icons.photo_camera),
               label: const Text('Import from Image'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.all(20),
-              ),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.all(20)),
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: () => setState(() => _mode = AddRecipeMode.manual),
               icon: const Icon(Icons.edit),
               label: const Text('Enter Manually'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.all(20),
-              ),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.all(20)),
             ),
           ],
         ),
@@ -341,9 +344,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                       ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.download),
                   label: const Text('Import'),
@@ -409,28 +410,24 @@ class _AddRecipePageState extends State<AddRecipePage> {
     try {
       // Server uses model from database settings
       final created = await importRecipeFromImages(
-        _importImages
-            .map((e) => (e.$1, e.$2.toList()))
-            .toList(),
+        _importImages.map((e) => (e.$1, e.$2.toList())).toList(),
       );
       if (!mounted) return;
       setState(() => _importImageStep = 4); // Complete
       await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported: ${created.title}')),
-      );
-      Navigator.pop(context, true);
+      await _openEditView(created);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
-      if (mounted) setState(() {
-        _importingImages = false;
-        _importImageStep = 0;
-      });
+      if (mounted)
+        setState(() {
+          _importingImages = false;
+          _importImageStep = 0;
+        });
     }
   }
 
@@ -517,13 +514,10 @@ class _AddRecipePageState extends State<AddRecipePage> {
                   children: [
                     if (_importImages.length < 3)
                       OutlinedButton.icon(
-                        onPressed:
-                            _importingImages ? null : _addImportImage,
+                        onPressed: _importingImages ? null : _addImportImage,
                         icon: const Icon(Icons.add_photo_alternate_outlined),
                         label: Text(
-                          _importImages.isEmpty
-                              ? 'Add photo'
-                              : 'Add another',
+                          _importImages.isEmpty ? 'Add photo' : 'Add another',
                         ),
                       ),
                     const Spacer(),
@@ -535,9 +529,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
                           ? const SizedBox(
                               width: 16,
                               height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.download),
                       label: const Text('Import'),
@@ -657,8 +649,7 @@ class _AddRecipePageState extends State<AddRecipePage> {
             controller: _instructionsRaw,
             decoration: const InputDecoration(
               labelText: 'Instructions (one step per line)',
-              hintText:
-                  'e.g.\nMince the garlic.\nFold in flour.\nBake 20 min.',
+              hintText: 'e.g.\nMince the garlic.\nFold in flour.\nBake 20 min.',
               border: OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
@@ -766,14 +757,22 @@ class _ImportStepTile extends StatelessWidget {
             width: 24,
             height: 24,
             child: isComplete
-                ? Icon(Icons.check_circle, color: theme.colorScheme.primary, size: 20)
+                ? Icon(
+                    Icons.check_circle,
+                    color: theme.colorScheme.primary,
+                    size: 20,
+                  )
                 : isActive
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(Icons.circle_outlined, color: theme.disabledColor, size: 18),
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    Icons.circle_outlined,
+                    color: theme.disabledColor,
+                    size: 18,
+                  ),
           ),
           const SizedBox(width: 12),
           Text(
