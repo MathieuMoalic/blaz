@@ -20,6 +20,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
   late final TextEditingController _instructionsRaw;
 
   late List<Ingredient> _ingredients;
+  late List<String> _ingredientKeys;
+  int _ingredientKeySeq = 0;
   bool _busy = false;
 
   @override
@@ -32,6 +34,10 @@ class _EditRecipePageState extends State<EditRecipePage> {
     _notes = TextEditingController(text: r.notes);
     _instructionsRaw = TextEditingController(text: r.instructions.join('\n'));
     _ingredients = List.from(r.ingredients);
+    _ingredientKeys = List.generate(
+      _ingredients.length,
+      (_) => _newIngredientKey(),
+    );
   }
 
   @override
@@ -43,6 +49,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
     _instructionsRaw.dispose();
     super.dispose();
   }
+
+  String _newIngredientKey() => 'ingredient_${_ingredientKeySeq++}';
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
@@ -60,7 +68,9 @@ class _EditRecipePageState extends State<EditRecipePage> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -77,12 +87,18 @@ class _EditRecipePageState extends State<EditRecipePage> {
     setState(() => _busy = true);
     try {
       final bytes = await file.readAsBytes();
-      await uploadRecipeImage(id: widget.recipe.id, filename: file.name, bytes: bytes);
+      await uploadRecipeImage(
+        id: widget.recipe.id,
+        filename: file.name,
+        bytes: bytes,
+      );
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Image failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Image failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -112,9 +128,27 @@ class _EditRecipePageState extends State<EditRecipePage> {
           _ingredients[index] = result;
         } else {
           _ingredients.add(result);
+          _ingredientKeys.add(_newIngredientKey());
         }
       });
     }
+  }
+
+  void _removeIngredientAt(int index) {
+    setState(() {
+      _ingredients.removeAt(index);
+      _ingredientKeys.removeAt(index);
+    });
+  }
+
+  void _moveIngredient(int oldIndex, int newIndex) {
+    if (newIndex > oldIndex) newIndex -= 1;
+    setState(() {
+      final ingredient = _ingredients.removeAt(oldIndex);
+      final key = _ingredientKeys.removeAt(oldIndex);
+      _ingredients.insert(newIndex, ingredient);
+      _ingredientKeys.insert(newIndex, key);
+    });
   }
 
   Future<void> _renameSection(int index) async {
@@ -131,7 +165,11 @@ class _EditRecipePageState extends State<EditRecipePage> {
             labelText: 'Section name',
             border: OutlineInputBorder(),
           ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          onSubmitted: (v) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (ctx.mounted) Navigator.pop(ctx, v.trim());
+            });
+          },
         ),
         actions: [
           TextButton(
@@ -165,7 +203,11 @@ class _EditRecipePageState extends State<EditRecipePage> {
             hintText: 'e.g. Sauce, Topping…',
             border: OutlineInputBorder(),
           ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          onSubmitted: (v) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (ctx.mounted) Navigator.pop(ctx, v.trim());
+            });
+          },
         ),
         actions: [
           TextButton(
@@ -198,9 +240,9 @@ class _EditRecipePageState extends State<EditRecipePage> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('AI re-parse failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('AI re-parse failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -308,14 +350,25 @@ class _EditRecipePageState extends State<EditRecipePage> {
               Card(
                 child: Column(
                   children: [
-                    for (int i = 0; i < _ingredients.length; i++)
-                      _IngredientTile(
+                    ReorderableListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      buildDefaultDragHandles: false,
+                      onReorder: (oldIndex, newIndex) {
+                        if (_busy) return;
+                        _moveIngredient(oldIndex, newIndex);
+                      },
+                      itemCount: _ingredients.length,
+                      itemBuilder: (context, i) => _IngredientTile(
+                        key: ValueKey(_ingredientKeys[i]),
+                        index: i,
                         ingredient: _ingredients[i],
+                        canReorder: !_busy,
                         onTap: _busy ? null : () => _editIngredient(i),
-                        onDelete: _busy
-                            ? null
-                            : () => setState(() => _ingredients.removeAt(i)),
+                        onDelete: _busy ? null : () => _removeIngredientAt(i),
                       ),
+                    ),
+                    const Divider(height: 1),
                     ListTile(
                       leading: const Icon(Icons.add),
                       title: const Text('Add ingredient'),
@@ -336,7 +389,8 @@ class _EditRecipePageState extends State<EditRecipePage> {
                 controller: _instructionsRaw,
                 decoration: const InputDecoration(
                   labelText: 'Instructions (one step per line)',
-                  hintText: 'e.g.\n## Section name\nFold in flour.\nBake 20 min.',
+                  hintText:
+                      'e.g.\n## Section name\nFold in flour.\nBake 20 min.',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
@@ -410,11 +464,20 @@ String _fmtQty(double v) {
 // Ingredient tile
 
 class _IngredientTile extends StatelessWidget {
+  final int index;
   final Ingredient ingredient;
+  final bool canReorder;
   final VoidCallback? onTap;
   final VoidCallback? onDelete;
 
-  const _IngredientTile({required this.ingredient, this.onTap, this.onDelete});
+  const _IngredientTile({
+    super.key,
+    required this.index,
+    required this.ingredient,
+    required this.canReorder,
+    this.onTap,
+    this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -448,6 +511,18 @@ class _IngredientTile extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               tooltip: 'Remove section',
             ),
+            canReorder
+                ? ReorderableDragStartListener(
+                    index: index,
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.drag_handle, size: 18),
+                    ),
+                  )
+                : const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.drag_handle, size: 18),
+                  ),
           ],
         ),
       );
@@ -458,11 +533,11 @@ class _IngredientTile extends StatelessWidget {
     final qtyLabel = isRaw
         ? '?'
         : ingredient.quantity != null
-            ? [
-                _fmtQty(ingredient.quantity!),
-                if (ingredient.unit != null) ingredient.unit!,
-              ].join('\u00a0') // non-breaking space
-            : '—';
+        ? [
+            _fmtQty(ingredient.quantity!),
+            if (ingredient.unit != null) ingredient.unit!,
+          ].join('\u00a0') // non-breaking space
+        : '—';
 
     return ListTile(
       dense: true,
@@ -482,13 +557,32 @@ class _IngredientTile extends StatelessWidget {
         style: isRaw ? TextStyle(color: muted) : null,
       ),
       subtitle: (ingredient.prep != null && ingredient.prep!.isNotEmpty)
-          ? Text(ingredient.prep!,
-              style: theme.textTheme.bodySmall?.copyWith(color: muted))
+          ? Text(
+              ingredient.prep!,
+              style: theme.textTheme.bodySmall?.copyWith(color: muted),
+            )
           : null,
-      trailing: IconButton(
-        icon: const Icon(Icons.close, size: 18),
-        onPressed: onDelete,
-        visualDensity: VisualDensity.compact,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: onDelete,
+            visualDensity: VisualDensity.compact,
+          ),
+          canReorder
+              ? ReorderableDragStartListener(
+                  index: index,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.drag_handle, size: 18),
+                  ),
+                )
+              : const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(Icons.drag_handle, size: 18),
+                ),
+        ],
       ),
       onTap: onTap,
     );
@@ -518,7 +612,9 @@ class _IngredientDialogState extends State<_IngredientDialog> {
   void initState() {
     super.initState();
     final i = widget.initial;
-    _qty  = TextEditingController(text: i?.quantity != null ? _fmtQty(i!.quantity!) : '');
+    _qty = TextEditingController(
+      text: i?.quantity != null ? _fmtQty(i!.quantity!) : '',
+    );
     _unit = TextEditingController(text: i?.unit ?? '');
     _name = TextEditingController(text: i?.name ?? '');
     _prep = TextEditingController(text: i?.prep ?? '');
@@ -567,7 +663,9 @@ class _IngredientDialogState extends State<_IngredientDialog> {
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -615,10 +713,7 @@ class _IngredientDialogState extends State<_IngredientDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: _submit,
-          child: const Text('Save'),
-        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
       ],
     );
   }
@@ -648,6 +743,7 @@ class ParseIngredientDialog extends StatefulWidget {
   final List<String> knownNames;
   final int current;
   final int total;
+
   /// Optional LLM-proposed parse to pre-fill instead of the local parser.
   final Ingredient? prefill;
 
@@ -674,7 +770,9 @@ class _ParseIngredientDialogState extends State<ParseIngredientDialog> {
   void initState() {
     super.initState();
     final p = widget.prefill ?? parseIngredientLine(widget.rawText);
-    _qty  = TextEditingController(text: p.quantity != null ? _fmtQty(p.quantity!) : '');
+    _qty = TextEditingController(
+      text: p.quantity != null ? _fmtQty(p.quantity!) : '',
+    );
     _unit = TextEditingController(text: p.unit ?? '');
     _name = TextEditingController(text: p.name);
     _prep = TextEditingController(text: p.prep ?? '');
@@ -724,7 +822,9 @@ class _ParseIngredientDialogState extends State<ParseIngredientDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          Expanded(child: Text('Parse ingredient ${widget.current}/${widget.total}')),
+          Expanded(
+            child: Text('Parse ingredient ${widget.current}/${widget.total}'),
+          ),
         ],
       ),
       content: SingleChildScrollView(
@@ -755,8 +855,9 @@ class _ParseIngredientDialogState extends State<ParseIngredientDialog> {
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),

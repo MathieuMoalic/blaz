@@ -173,7 +173,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<bool> _checkAuth(String action) async {
     if (Auth.token != null) return true;
-    
+
     final shouldLogin = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -193,9 +193,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
 
     if (shouldLogin == true && mounted) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const LoginPage()),
-      );
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const LoginPage()));
       return Auth.token != null;
     }
     return false;
@@ -205,7 +205,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _reimportFromUrl(api.Recipe r) async {
     if (!await _checkAuth('re-import recipes')) return;
-    
+
     final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -216,8 +216,14 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           'Notes, images, and the source URL will be kept.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Re-import')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Re-import'),
+          ),
         ],
       ),
     );
@@ -225,12 +231,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     if (!mounted) return;
 
     messenger.showSnackBar(
-      const SnackBar(content: Text('Re-importing…'), duration: Duration(seconds: 30)),
+      const SnackBar(
+        content: Text('Re-importing…'),
+        duration: Duration(seconds: 30),
+      ),
     );
 
     try {
       // Server uses model from database settings
-      final imported = await api.importRecipeFromUrl(url: r.source, dryRun: true);
+      final imported = await api.importRecipeFromUrl(
+        url: r.source,
+        dryRun: true,
+      );
       await api.updateRecipe(
         id: r.id,
         title: imported.title,
@@ -241,7 +253,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       _refresh();
       messenger
         ..clearSnackBars()
-        ..showSnackBar(const SnackBar(content: Text('Re-imported successfully')));
+        ..showSnackBar(
+          const SnackBar(content: Text('Re-imported successfully')),
+        );
     } catch (e) {
       messenger
         ..clearSnackBars()
@@ -278,9 +292,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 const SizedBox(width: 16),
-                Text(
-                  'Parsing ${toParseIndices.length} ingredient(s) with AI…',
-                ),
+                Text('Parsing ${toParseIndices.length} ingredient(s) with AI…'),
               ],
             ),
           ),
@@ -291,9 +303,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     } catch (e) {
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('AI parse failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('AI parse failed: $e')));
       }
       return null;
     }
@@ -316,9 +328,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to save: $e')));
       }
       return null;
     }
@@ -326,11 +338,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     if (!mounted) return null;
 
     // Step 3: open edit page so the user can review and adjust parsed ingredients.
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => EditRecipePage(recipe: updated),
-      ),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => EditRecipePage(recipe: updated)));
     if (mounted) {
       _future = api.fetchRecipe(widget.recipeId);
       setState(() {});
@@ -341,12 +351,12 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _addIngredients(api.Recipe r) async {
     if (!await _checkAuth('add ingredients to shopping list')) return;
-    
+
     if (r.ingredients.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No ingredients to add')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No ingredients to add')));
       return;
     }
 
@@ -396,15 +406,15 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to add: $e')));
     }
   }
 
   Future<void> _assignToMealPlan(api.Recipe r) async {
     if (!await _checkAuth('add recipes to meal plan')) return;
-    
+
     final day = await showDayPickerSheet(
       context: context,
       recipeTitle: r.title,
@@ -414,10 +424,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     if (day == null) return;
 
     try {
-      final entry = await api.assignRecipeToDay(
-        day: day,
-        recipeId: r.id,
-      );
+      final entry = await api.assignRecipeToDay(day: day, recipeId: r.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Assigned “${r.title}” to ${entry.day}')),
@@ -432,7 +439,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _estimateMacros() async {
     if (!await _checkAuth('estimate macros')) return;
-    
+
     if (_estimatingMacros) return;
     // Never mark this callback async inside setState.
     setState(() {
@@ -465,7 +472,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _shareRecipe(api.Recipe r) async {
     if (!await _checkAuth('share recipes')) return;
-    
+
     try {
       final token = await api.shareRecipe(r.id);
       // Build share URL from the current base URL
@@ -505,9 +512,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: link));
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Link copied')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('Link copied')));
               },
             ),
           ],
@@ -524,7 +531,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _confirmDelete(api.Recipe r) async {
     if (!await _checkAuth('delete recipes')) return;
-    
+
     // Check for upcoming meal plan entries before showing the dialog.
     List<api.MealPlanEntry> upcoming = [];
     try {
@@ -541,7 +548,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       dialogContent = 'Are you sure you want to delete "${r.title}"?';
     } else {
       final dates = upcoming.map((e) => e.day).join(', ');
-      dialogContent = '"${r.title}" is scheduled on your meal plan ($dates). '
+      dialogContent =
+          '"${r.title}" is scheduled on your meal plan ($dates). '
           'Deleting it will also remove those entries.';
     }
 
@@ -568,12 +576,14 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         await api.deleteRecipe(r.id);
         if (!mounted) return;
         // Return recipe info so parent can show snackbar with undo action
-        Navigator.of(context).pop({'deleted': true, 'id': r.id, 'title': r.title});
+        Navigator.of(
+          context,
+        ).pop({'deleted': true, 'id': r.id, 'title': r.title});
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
       }
     }
   }
@@ -608,7 +618,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   @override
   Widget build(BuildContext context) {
     final isAuthenticated = Auth.token != null;
-    
+
     return Scaffold(
       appBar: AppBar(
         actions: [
@@ -620,9 +630,14 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 tooltip: 'Timer',
                 icon: Icon(
                   _timerRunning ? Icons.timer : Icons.timer_outlined,
-                  color: _timerRunning ? Theme.of(context).colorScheme.primary : null,
+                  color: _timerRunning
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
                 ),
-                visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+                visualDensity: const VisualDensity(
+                  horizontal: -3,
+                  vertical: -3,
+                ),
                 onPressed: _showTimerSheet,
               ),
               if (_timerSeconds > 0)
@@ -635,7 +650,10 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                       color: Theme.of(context).colorScheme.primary,
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    constraints: const BoxConstraints(minWidth: 10, minHeight: 10),
+                    constraints: const BoxConstraints(
+                      minWidth: 10,
+                      minHeight: 10,
+                    ),
                   ),
                 ),
             ],
@@ -644,13 +662,16 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
             FutureBuilder<api.Recipe>(
               future: _future,
               builder: (context, snap) {
-                final isUrl = snap.hasData &&
-                    snap.data!.source.startsWith('http');
+                final isUrl =
+                    snap.hasData && snap.data!.source.startsWith('http');
                 if (!isUrl) return const SizedBox.shrink();
                 return IconButton(
                   tooltip: 'Re-import from URL',
                   icon: const Icon(Icons.refresh),
-                  visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+                  visualDensity: const VisualDensity(
+                    horizontal: -3,
+                    vertical: -3,
+                  ),
                   onPressed: () => _reimportFromUrl(snap.data!),
                 );
               },
@@ -730,11 +751,24 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
+                        Icon(
+                          Icons.error_outline,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                         const SizedBox(height: 16),
-                        const Text('Failed to load recipe', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const Text(
+                          'Failed to load recipe',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         const SizedBox(height: 8),
-                        Text('${snap.error}', style: const TextStyle(fontSize: 12)),
+                        Text(
+                          '${snap.error}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                         const SizedBox(height: 16),
                         FilledButton.icon(
                           onPressed: _refresh,
@@ -754,310 +788,372 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               return RefreshIndicator(
                 onRefresh: _refresh,
                 child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(r.title, style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: 8),
-                if (small != null) ...[
-                  Hero(
-                    tag: heroTag,
-                    child: Material(
-                      borderRadius: BorderRadius.circular(10),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: () => _openImageViewer(
-                          fullUrl: full ?? small,
-                          heroTag: heroTag,
-                        ),
-                        child: Ink.image(
-                          image: NetworkImage(small),
-                          fit: BoxFit.cover,
-                          height: 250,
-                          width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Text(
+                      r.title,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    if (small != null) ...[
+                      Hero(
+                        tag: heroTag,
+                        child: Material(
+                          borderRadius: BorderRadius.circular(10),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            onTap: () => _openImageViewer(
+                              fullUrl: full ?? small,
+                              heroTag: heroTag,
+                            ),
+                            child: Ink.image(
+                              image: NetworkImage(small),
+                              fit: BoxFit.cover,
+                              height: 250,
+                              width: double.infinity,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                      const SizedBox(height: 12),
+                    ],
 
-                // Ingredients + scale
-                Card(
-                  margin: const EdgeInsets.only(top: 4, bottom: 12),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Ingredients',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 8),
-                        if (r.ingredients.any(_looksUnparsed)) ...[
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
+                    // Ingredients + scale
+                    Card(
+                      margin: const EdgeInsets.only(top: 4, bottom: 12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Ingredients',
+                              style: Theme.of(context).textTheme.titleMedium,
                             ),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.secondaryContainer,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.warning_amber_rounded,
-                                  size: 18,
-                                  color: Theme.of(context).colorScheme.onSecondaryContainer,
+                            const SizedBox(height: 8),
+                            if (r.ingredients.any(_looksUnparsed)) ...[
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
                                 ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Some ingredients are not yet parsed',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.secondaryContainer,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.warning_amber_rounded,
+                                      size: 18,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSecondaryContainer,
                                     ),
-                                  ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Some ingredients are not yet parsed',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSecondaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    FilledButton.tonal(
+                                      onPressed: () async {
+                                        final updated = await _parseIngredients(
+                                          r,
+                                        );
+                                        if (updated == null) return;
+                                      },
+                                      style: FilledButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 6,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        'Parse',
+                                        style: TextStyle(fontSize: 13),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            Row(
+                              children: [
+                                Text(
+                                  'Scale',
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                ),
+                                const SizedBox(width: 10),
+                                DropdownButton<double>(
+                                  value: _scale,
+                                  onChanged: (v) =>
+                                      setState(() => _scale = v ?? 1.0),
+                                  items:
+                                      const [
+                                            0.25,
+                                            0.5,
+                                            0.75,
+                                            1.0,
+                                            1.5,
+                                            2.0,
+                                            3.0,
+                                          ]
+                                          .map(
+                                            (v) => DropdownMenuItem(
+                                              value: v,
+                                              child: Text('${v}x'),
+                                            ),
+                                          )
+                                          .toList(),
                                 ),
                                 const SizedBox(width: 8),
-                                FilledButton.tonal(
-                                  onPressed: () async {
-                                    final updated = await _parseIngredients(r);
-                                    if (updated == null) return;
-                                  },
-                                  style: FilledButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                  ),
-                                  child: const Text('Parse', style: TextStyle(fontSize: 13)),
+                                TextButton(
+                                  onPressed: () => setState(() => _scale = 1.0),
+                                  child: const Text('Reset'),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
-                        Row(
-                          children: [
-                            Text(
-                              'Scale',
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                            const SizedBox(width: 10),
-                            DropdownButton<double>(
-                              value: _scale,
-                              onChanged: (v) => setState(() => _scale = v ?? 1.0),
-                              items: const [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
-                                  .map(
-                                    (v) => DropdownMenuItem(
-                                      value: v,
-                                      child: Text('${v}x'),
+                            const SizedBox(height: 8),
+                            if (r.ingredients.isEmpty)
+                              const Text('—')
+                            else
+                              ...r.ingredients.asMap().entries.map((e) {
+                                final idx = e.key;
+                                final ing = e.value;
+                                if (ing.isSection) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 10,
+                                      bottom: 2,
                                     ),
-                                  )
-                                  .toList(),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: () => setState(() => _scale = 1.0),
-                              child: const Text('Reset'),
-                            ),
+                                    child: Text(
+                                      ing.section!,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelLarge
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                            letterSpacing: 0.5,
+                                          ),
+                                    ),
+                                  );
+                                }
+                                final line = ing.toLine(factor: _scale);
+                                final checked = _checkedIngredients.contains(
+                                  idx,
+                                );
+                                return _Bullet(
+                                  text: line,
+                                  checked: checked,
+                                  onTap: () => _toggleIngredient(idx),
+                                );
+                              }),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        if (r.ingredients.isEmpty)
-                          const Text('—')
-                        else
-                          ...r.ingredients.asMap().entries.map((e) {
-                            final idx = e.key;
-                            final ing = e.value;
-                            if (ing.isSection) {
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 10, bottom: 2),
-                                child: Text(
-                                  ing.section!,
-                                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                    color: Theme.of(context).colorScheme.primary,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              );
-                            }
-                            final line = ing.toLine(factor: _scale);
-                            final checked = _checkedIngredients.contains(idx);
-                            return _Bullet(
-                              text: line,
-                              checked: checked,
-                              onTap: () => _toggleIngredient(idx),
-                            );
-                          }),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
 
-                // Instructions
-                Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Instructions',
-                          style: Theme.of(context).textTheme.titleMedium,
+                    // Instructions
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Instructions',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 8),
+                            if (r.instructions.isEmpty)
+                              const Text('—')
+                            else
+                              ...() {
+                                final widgets = <Widget>[];
+                                var stepNum = 0;
+                                for (
+                                  var i = 0;
+                                  i < r.instructions.length;
+                                  i++
+                                ) {
+                                  final text = r.instructions[i];
+                                  if (text.startsWith('## ')) {
+                                    widgets.add(
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          top: 10,
+                                          bottom: 2,
+                                        ),
+                                        child: Text(
+                                          text.substring(3),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelLarge
+                                              ?.copyWith(
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.primary,
+                                                letterSpacing: 0.5,
+                                              ),
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    stepNum++;
+                                    widgets.add(
+                                      _Numbered(
+                                        step: stepNum,
+                                        text: text,
+                                        checked: _checkedSteps.contains(i),
+                                        onTap: () => _toggleStep(i),
+                                      ),
+                                    );
+                                  }
+                                }
+                                return widgets;
+                              }(),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        if (r.instructions.isEmpty)
-                          const Text('—')
-                        else
-                          ...() {
-                            final widgets = <Widget>[];
-                            var stepNum = 0;
-                            for (var i = 0; i < r.instructions.length; i++) {
-                              final text = r.instructions[i];
-                              if (text.startsWith('## ')) {
-                                widgets.add(Padding(
-                                  padding: const EdgeInsets.only(top: 10, bottom: 2),
-                                  child: Text(
-                                    text.substring(3),
-                                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                      color: Theme.of(context).colorScheme.primary,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ));
-                              } else {
-                                stepNum++;
-                                widgets.add(_Numbered(
-                                  step: stepNum,
-                                  text: text,
-                                  checked: _checkedSteps.contains(i),
-                                  onTap: () => _toggleStep(i),
-                                ));
-                              }
-                            }
-                            return widgets;
-                          }(),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Prep Reminders
-                _PrepRemindersSection(
-                  recipe: r,
-                  onChanged: _refresh,
-                ),
-
-                // Notes
-                if (r.notes.isNotEmpty)
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Notes', style: Theme.of(context).textTheme.titleMedium),
-                          const SizedBox(height: 8),
-                          Text(r.notes, style: Theme.of(context).textTheme.bodyLarge),
-                        ],
                       ),
                     ),
-                  ),
 
-                // Meta
-                const SizedBox(height: 16),
-                _MetaRow(
-                  label: 'Source',
-                  value: r.source.isEmpty ? '—' : r.source,
-                ),
-                _MetaRow(
-                  label: 'Yield',
-                  value: r.yieldText.isEmpty ? '—' : r.yieldText,
-                ),
-                _MetaRow(
-                  label: 'Created',
-                  value: r.createdAt.isEmpty ? '—' : _fmtTs(r.createdAt),
-                ),
-                _MetaRow(
-                  label: 'Updated',
-                  value: r.updatedAt.isEmpty ? '—' : _fmtTs(r.updatedAt),
-                ),
+                    // Prep Reminders
+                    _PrepRemindersSection(recipe: r, onChanged: _refresh),
 
-                // Macros & Calories
-                const SizedBox(height: 18),
-                _MacrosSection(
-                  macros: r.macros,
-                  estimating: _estimatingMacros,
-                  onEstimate: _estimateMacros,
-                  calcCalories: _calcCalories,
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-      // Persistent timer display when timer is running or set
-      if (_timerSeconds > 0 || _timerRunning)
-        Positioned(
-          bottom: 16,
-          left: 16,
-          right: 16,
-          child: GestureDetector(
-            onTap: _showTimerSheet,
-            child: Card(
-              elevation: 8,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _timerRunning ? Icons.timer : Icons.timer_outlined,
-                      color: _timerRunning
-                          ? Theme.of(context).colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _formatTime(_timerSeconds),
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                        color: _timerRunning
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
+                    // Notes
+                    if (r.notes.isNotEmpty)
+                      Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Notes',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                r.notes,
+                                style: Theme.of(context).textTheme.bodyLarge,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
+
+                    // Meta
+                    const SizedBox(height: 16),
+                    _MetaRow(
+                      label: 'Source',
+                      value: r.source.isEmpty ? '—' : r.source,
                     ),
-                    const SizedBox(width: 12),
-                    if (_timerRunning)
-                      IconButton(
-                        icon: const Icon(Icons.pause),
-                        onPressed: _stopTimer,
-                        tooltip: 'Pause',
-                      )
-                    else
-                      IconButton(
-                        icon: const Icon(Icons.play_arrow),
-                        onPressed: _timerSeconds > 0 ? _startTimer : null,
-                        tooltip: 'Start',
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: _resetTimer,
-                      tooltip: 'Reset',
+                    _MetaRow(
+                      label: 'Yield',
+                      value: r.yieldText.isEmpty ? '—' : r.yieldText,
+                    ),
+                    _MetaRow(
+                      label: 'Created',
+                      value: r.createdAt.isEmpty ? '—' : _fmtTs(r.createdAt),
+                    ),
+                    _MetaRow(
+                      label: 'Updated',
+                      value: r.updatedAt.isEmpty ? '—' : _fmtTs(r.updatedAt),
+                    ),
+
+                    // Macros & Calories
+                    const SizedBox(height: 18),
+                    _MacrosSection(
+                      macros: r.macros,
+                      estimating: _estimatingMacros,
+                      onEstimate: _estimateMacros,
+                      calcCalories: _calcCalories,
                     ),
                   ],
                 ),
+              );
+            },
+          ),
+          // Persistent timer display when timer is running or set
+          if (_timerSeconds > 0 || _timerRunning)
+            Positioned(
+              bottom: 16,
+              left: 16,
+              right: 16,
+              child: GestureDetector(
+                onTap: _showTimerSheet,
+                child: Card(
+                  elevation: 8,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _timerRunning ? Icons.timer : Icons.timer_outlined,
+                          color: _timerRunning
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          _formatTime(_timerSeconds),
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w500,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                                color: _timerRunning
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                        ),
+                        const SizedBox(width: 12),
+                        if (_timerRunning)
+                          IconButton(
+                            icon: const Icon(Icons.pause),
+                            onPressed: _stopTimer,
+                            tooltip: 'Pause',
+                          )
+                        else
+                          IconButton(
+                            icon: const Icon(Icons.play_arrow),
+                            onPressed: _timerSeconds > 0 ? _startTimer : null,
+                            tooltip: 'Start',
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: _resetTimer,
+                          tooltip: 'Reset',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ],
-    ),
+        ],
+      ),
     );
   }
 }
@@ -1104,10 +1200,14 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
       widget.onChanged();
     } catch (e) {
       if (mounted) {
-        setState(() => _reminders =
-            List<api.PrepReminder>.from(widget.recipe.prepReminders));
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to save: $e')));
+        setState(
+          () => _reminders = List<api.PrepReminder>.from(
+            widget.recipe.prepReminders,
+          ),
+        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to save: $e')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -1139,8 +1239,10 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
                 textCapitalization: TextCapitalization.sentences,
               ),
               const SizedBox(height: 16),
-              Text('How far in advance',
-                  style: Theme.of(ctx).textTheme.labelMedium),
+              Text(
+                'How far in advance',
+                style: Theme.of(ctx).textTheme.labelMedium,
+              ),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -1163,7 +1265,8 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
                   Navigator.pop(ctx);
                 },
                 style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(ctx).colorScheme.error),
+                  foregroundColor: Theme.of(ctx).colorScheme.error,
+                ),
                 child: const Text('Delete'),
               ),
             TextButton(
@@ -1175,7 +1278,9 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
                 final step = stepCtrl.text.trim();
                 if (step.isEmpty) return;
                 Navigator.pop(
-                    ctx, api.PrepReminder(step: step, hoursBefore: hoursBefore));
+                  ctx,
+                  api.PrepReminder(step: step, hoursBefore: hoursBefore),
+                );
               },
               child: const Text('Save'),
             ),
@@ -1201,8 +1306,7 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
     }
   }
 
-  String _hoursLabel(int h) =>
-      h < 24 ? '${h}h before' : '${h ~/ 24}d before';
+  String _hoursLabel(int h) => h < 24 ? '${h}h before' : '${h ~/ 24}d before';
 
   @override
   Widget build(BuildContext context) {
@@ -1222,9 +1326,10 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
                 const Spacer(),
                 if (_saving)
                   const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 else
                   IconButton(
                     icon: const Icon(Icons.add),
@@ -1255,7 +1360,8 @@ class _PrepRemindersSectionState extends State<_PrepRemindersSection> {
                     _hoursLabel(reminders[i].hoursBefore),
                     style: theme.textTheme.bodySmall,
                   ),
-                  onTap: () => _showEditDialog(existing: reminders[i], index: i),
+                  onTap: () =>
+                      _showEditDialog(existing: reminders[i], index: i),
                 ),
           ],
         ),
@@ -1268,22 +1374,23 @@ class _MetaRow extends StatelessWidget {
   final String label;
   final String value;
   const _MetaRow({required this.label, required this.value});
-  
-  bool get _isUrl => value.startsWith('http://') || value.startsWith('https://');
-  
+
+  bool get _isUrl =>
+      value.startsWith('http://') || value.startsWith('https://');
+
   Future<void> _launchUrl() async {
     final uri = Uri.parse(value);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       throw Exception('Could not launch $value');
     }
   }
-  
+
   @override
   Widget build(BuildContext context) {
     final styleLabel = Theme.of(context).textTheme.bodySmall;
     final styleValue = Theme.of(context).textTheme.bodyMedium;
     final colorScheme = Theme.of(context).colorScheme;
-    
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -1321,19 +1428,21 @@ class _Bullet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.bodyLarge;  // Changed from bodyMedium to bodyLarge
+    final base = Theme.of(
+      context,
+    ).textTheme.bodyLarge; // Changed from bodyMedium to bodyLarge
     final style = base?.copyWith(
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
           ? (base.color ?? Colors.black).withValues(alpha: 0.55)
           : base.color,
-      height: 1.3,  // Tighter line height
+      height: 1.3, // Tighter line height
     );
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),  // Reduced from 6
+        padding: const EdgeInsets.symmetric(vertical: 4), // Reduced from 6
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1366,19 +1475,23 @@ class _Numbered extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context).textTheme.bodyLarge;  // Changed from bodyMedium to bodyLarge
+    final base = Theme.of(
+      context,
+    ).textTheme.bodyLarge; // Changed from bodyMedium to bodyLarge
     final style = base?.copyWith(
       decoration: checked ? TextDecoration.lineThrough : null,
       color: checked
           ? (base.color ?? Colors.black).withValues(alpha: 0.55)
           : base.color,
-      height: 1.3,  // Tighter line height
+      height: 1.3, // Tighter line height
     );
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),  // Slightly more padding for steps
+        padding: const EdgeInsets.symmetric(
+          vertical: 6,
+        ), // Slightly more padding for steps
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1436,7 +1549,10 @@ class _MacrosSection extends StatelessWidget {
     final kcal = calcCalories(m).clamp(0, double.infinity);
 
     double calcIngredientCalories(api.IngredientMacros ing) {
-      return (ing.protein * 4.27 + ing.fat * 8.79 + ing.carbs * 3.87).clamp(0, double.infinity);
+      return (ing.protein * 4.27 + ing.fat * 8.79 + ing.carbs * 3.87).clamp(
+        0,
+        double.infinity,
+      );
     }
 
     return Column(
@@ -1468,19 +1584,35 @@ class _MacrosSection extends StatelessWidget {
                         ),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('P (g)', style: t.labelSmall, textAlign: TextAlign.right),
+                          child: Text(
+                            'P (g)',
+                            style: t.labelSmall,
+                            textAlign: TextAlign.right,
+                          ),
                         ),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('F (g)', style: t.labelSmall, textAlign: TextAlign.right),
+                          child: Text(
+                            'F (g)',
+                            style: t.labelSmall,
+                            textAlign: TextAlign.right,
+                          ),
                         ),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('C (g)', style: t.labelSmall, textAlign: TextAlign.right),
+                          child: Text(
+                            'C (g)',
+                            style: t.labelSmall,
+                            textAlign: TextAlign.right,
+                          ),
                         ),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
-                          child: Text('kcal', style: t.labelSmall, textAlign: TextAlign.right),
+                          child: Text(
+                            'kcal',
+                            style: t.labelSmall,
+                            textAlign: TextAlign.right,
+                          ),
                         ),
                       ],
                     ),
@@ -1504,7 +1636,9 @@ class _MacrosSection extends StatelessWidget {
                             m.protein.round().toString(),
                             style: t.bodyMedium?.copyWith(
                               fontWeight: FontWeight.bold,
-                              fontFeatures: [const FontFeature.tabularFigures()],
+                              fontFeatures: [
+                                const FontFeature.tabularFigures(),
+                              ],
                             ),
                             textAlign: TextAlign.right,
                           ),
@@ -1515,7 +1649,9 @@ class _MacrosSection extends StatelessWidget {
                             m.fat.round().toString(),
                             style: t.bodyMedium?.copyWith(
                               fontWeight: FontWeight.bold,
-                              fontFeatures: [const FontFeature.tabularFigures()],
+                              fontFeatures: [
+                                const FontFeature.tabularFigures(),
+                              ],
                             ),
                             textAlign: TextAlign.right,
                           ),
@@ -1526,7 +1662,9 @@ class _MacrosSection extends StatelessWidget {
                             m.carbs.round().toString(),
                             style: t.bodyMedium?.copyWith(
                               fontWeight: FontWeight.bold,
-                              fontFeatures: [const FontFeature.tabularFigures()],
+                              fontFeatures: [
+                                const FontFeature.tabularFigures(),
+                              ],
                             ),
                             textAlign: TextAlign.right,
                           ),
@@ -1537,7 +1675,9 @@ class _MacrosSection extends StatelessWidget {
                             kcal.toStringAsFixed(0),
                             style: t.bodyMedium?.copyWith(
                               fontWeight: FontWeight.bold,
-                              fontFeatures: [const FontFeature.tabularFigures()],
+                              fontFeatures: [
+                                const FontFeature.tabularFigures(),
+                              ],
                             ),
                             textAlign: TextAlign.right,
                           ),
@@ -1557,7 +1697,9 @@ class _MacrosSection extends StatelessWidget {
                             child: Text(
                               ing.protein.round().toString(),
                               style: t.bodySmall?.copyWith(
-                                fontFeatures: [const FontFeature.tabularFigures()],
+                                fontFeatures: [
+                                  const FontFeature.tabularFigures(),
+                                ],
                               ),
                               textAlign: TextAlign.right,
                             ),
@@ -1567,7 +1709,9 @@ class _MacrosSection extends StatelessWidget {
                             child: Text(
                               ing.fat.round().toString(),
                               style: t.bodySmall?.copyWith(
-                                fontFeatures: [const FontFeature.tabularFigures()],
+                                fontFeatures: [
+                                  const FontFeature.tabularFigures(),
+                                ],
                               ),
                               textAlign: TextAlign.right,
                             ),
@@ -1577,7 +1721,9 @@ class _MacrosSection extends StatelessWidget {
                             child: Text(
                               ing.carbs.round().toString(),
                               style: t.bodySmall?.copyWith(
-                                fontFeatures: [const FontFeature.tabularFigures()],
+                                fontFeatures: [
+                                  const FontFeature.tabularFigures(),
+                                ],
                               ),
                               textAlign: TextAlign.right,
                             ),
@@ -1587,7 +1733,9 @@ class _MacrosSection extends StatelessWidget {
                             child: Text(
                               ingKcal.toStringAsFixed(0),
                               style: t.bodySmall?.copyWith(
-                                fontFeatures: [const FontFeature.tabularFigures()],
+                                fontFeatures: [
+                                  const FontFeature.tabularFigures(),
+                                ],
                               ),
                               textAlign: TextAlign.right,
                             ),
@@ -1750,11 +1898,13 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
     for (var i = 0; i < widget.items.length; i++) {
       if (!_selected[i]) continue;
       final ing = widget.items[i];
-      result.add(api.Ingredient(
-        quantity: ing.quantity != null ? ing.quantity! * widget.scale : null,
-        unit: ing.unit,
-        name: ing.name,
-      ));
+      result.add(
+        api.Ingredient(
+          quantity: ing.quantity != null ? ing.quantity! * widget.scale : null,
+          unit: ing.unit,
+          name: ing.name,
+        ),
+      );
     }
     Navigator.pop(context, result);
   }
@@ -1774,7 +1924,10 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text('Add to shopping list', style: theme.textTheme.titleMedium),
+                    child: Text(
+                      'Add to shopping list',
+                      style: theme.textTheme.titleMedium,
+                    ),
                   ),
                   Checkbox(
                     value: _allSelected ? true : (_anySelected ? null : false),
@@ -1877,11 +2030,21 @@ class _RenameDialogState extends State<_RenameDialog> {
       content: TextField(
         controller: _ctrl,
         autofocus: true,
-        decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
-        onSubmitted: (_) => Navigator.pop(context, _ctrl.text.trim()),
+        decoration: const InputDecoration(
+          border: OutlineInputBorder(),
+          isDense: true,
+        ),
+        onSubmitted: (_) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) Navigator.pop(context, _ctrl.text.trim());
+          });
+        },
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _ctrl.text.trim()),
           child: const Text('OK'),
@@ -1984,9 +2147,14 @@ class _TimerSheetState extends State<_TimerSheet> {
               // Play/Pause (larger)
               IconButton.filled(
                 onPressed: _seconds > 0
-                    ? (widget.running ? widget.onStop : () => widget.onStart(_seconds))
+                    ? (widget.running
+                          ? widget.onStop
+                          : () => widget.onStart(_seconds))
                     : null,
-                icon: Icon(widget.running ? Icons.pause : Icons.play_arrow, size: 32),
+                icon: Icon(
+                  widget.running ? Icons.pause : Icons.play_arrow,
+                  size: 32,
+                ),
                 tooltip: widget.running ? 'Pause' : 'Start',
                 style: IconButton.styleFrom(
                   minimumSize: const Size(64, 64),
