@@ -48,6 +48,7 @@
         sqlx-cli
         watchexec
         github-copilot-cli
+        uv
       ];
 
       RUSTFLAGS = "-C link-arg=-fuse-ld=mold";

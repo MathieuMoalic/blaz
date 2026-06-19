@@ -2,7 +2,7 @@ use crate::llm::LlmClient;
 use crate::routes::settings::LlmSettings;
 use axum::{
     Json,
-    extract::{Multipart, Path, State, rejection::JsonRejection},
+    extract::{Multipart, Path, Query, State, rejection::JsonRejection},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,18 @@ use crate::models::{AppState, NewRecipe, Recipe, RecipeRow, UpdateRecipe};
 use crate::error::AppResult;
 
 use std::io;
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
+fn default_limit() -> i64 {
+    100
+}
 
 fn serialize_json_or_empty<T: serde::Serialize>(v: &T) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "[]".into())
@@ -138,9 +150,16 @@ pub async fn upload_image(
 /// # Errors
 ///
 /// Err if querying the db fails
-pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
-    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NULL ORDER BY id");
+pub async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<ListQuery>,
+) -> AppResult<Json<Vec<Recipe>>> {
+    let limit = query.limit.max(1).min(1000);
+    let offset = query.offset.max(0);
+    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?");
     let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&state.pool)
         .await
         .map_err(|e| {
