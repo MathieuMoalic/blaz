@@ -17,11 +17,13 @@ class _EditRecipePageState extends State<EditRecipePage> {
   late final TextEditingController _source;
   late final TextEditingController _yieldText;
   late final TextEditingController _notes;
-  late final TextEditingController _instructionsRaw;
 
   late List<Ingredient> _ingredients;
   late List<String> _ingredientKeys;
   int _ingredientKeySeq = 0;
+  late List<String> _instructions;
+  late List<String> _instructionKeys;
+  int _instructionKeySeq = 0;
   bool _busy = false;
 
   @override
@@ -32,11 +34,15 @@ class _EditRecipePageState extends State<EditRecipePage> {
     _source = TextEditingController(text: r.source);
     _yieldText = TextEditingController(text: r.yieldText);
     _notes = TextEditingController(text: r.notes);
-    _instructionsRaw = TextEditingController(text: r.instructions.join('\n'));
     _ingredients = List.from(r.ingredients);
     _ingredientKeys = List.generate(
       _ingredients.length,
       (_) => _newIngredientKey(),
+    );
+    _instructions = List.from(r.instructions);
+    _instructionKeys = List.generate(
+      _instructions.length,
+      (_) => _newInstructionKey(),
     );
   }
 
@@ -46,11 +52,11 @@ class _EditRecipePageState extends State<EditRecipePage> {
     _source.dispose();
     _yieldText.dispose();
     _notes.dispose();
-    _instructionsRaw.dispose();
     super.dispose();
   }
 
   String _newIngredientKey() => 'ingredient_${_ingredientKeySeq++}';
+  String _newInstructionKey() => 'instruction_${_instructionKeySeq++}';
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
@@ -63,7 +69,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
         yieldText: _yieldText.text.trim(),
         notes: _notes.text.trim(),
         ingredients: _ingredients,
-        instructions: splitLines(_instructionsRaw.text),
+        instructions: _instructions,
       );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -148,6 +154,52 @@ class _EditRecipePageState extends State<EditRecipePage> {
       final key = _ingredientKeys.removeAt(oldIndex);
       _ingredients.insert(newIndex, ingredient);
       _ingredientKeys.insert(newIndex, key);
+    });
+  }
+
+  void _removeInstructionAt(int index) {
+    setState(() {
+      _instructions.removeAt(index);
+      _instructionKeys.removeAt(index);
+    });
+  }
+
+  void _moveInstruction(int oldIndex, int newIndex) {
+    if (newIndex > oldIndex) newIndex -= 1;
+    setState(() {
+      final instruction = _instructions.removeAt(oldIndex);
+      final key = _instructionKeys.removeAt(oldIndex);
+      _instructions.insert(newIndex, instruction);
+      _instructionKeys.insert(newIndex, key);
+    });
+  }
+
+  Future<void> _editInstruction(int index) async {
+    final existing = index >= 0 ? _instructions[index] : '';
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => _InstructionDialog(
+        title: index >= 0 ? 'Edit instruction' : 'Add instruction',
+        initialText: existing,
+      ),
+    );
+
+    if (result == null || result.isEmpty) return;
+
+    setState(() {
+      if (index >= 0) {
+        _instructions.removeAt(index);
+        _instructionKeys.removeAt(index);
+        for (var i = 0; i < result.length; i++) {
+          _instructions.insert(index + i, result[i]);
+          _instructionKeys.insert(index + i, _newInstructionKey());
+        }
+      } else {
+        for (final step in result) {
+          _instructions.add(step);
+          _instructionKeys.add(_newInstructionKey());
+        }
+      }
     });
   }
 
@@ -385,17 +437,37 @@ class _EditRecipePageState extends State<EditRecipePage> {
               gap,
 
               // Instructions
-              TextField(
-                controller: _instructionsRaw,
-                decoration: const InputDecoration(
-                  labelText: 'Instructions (one step per line)',
-                  hintText:
-                      'e.g.\n## Section name\nFold in flour.\nBake 20 min.',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
+              Text('Instructions', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Card(
+                child: Column(
+                  children: [
+                    ReorderableListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      buildDefaultDragHandles: false,
+                      onReorder: (oldIndex, newIndex) {
+                        if (_busy) return;
+                        _moveInstruction(oldIndex, newIndex);
+                      },
+                      itemCount: _instructions.length,
+                      itemBuilder: (context, i) => _InstructionTile(
+                        key: ValueKey(_instructionKeys[i]),
+                        index: i,
+                        text: _instructions[i],
+                        canReorder: !_busy,
+                        onTap: _busy ? null : () => _editInstruction(i),
+                        onDelete: _busy ? null : () => _removeInstructionAt(i),
+                      ),
+                    ),
+                    if (_instructions.isNotEmpty) const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.add),
+                      title: const Text('Add step'),
+                      onTap: _busy ? null : () => _editInstruction(-1),
+                    ),
+                  ],
                 ),
-                minLines: 5,
-                maxLines: null,
               ),
               gap,
 
@@ -590,6 +662,70 @@ class _IngredientTile extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Instruction tile
+
+class _InstructionTile extends StatelessWidget {
+  final int index;
+  final String text;
+  final bool canReorder;
+  final VoidCallback? onTap;
+  final VoidCallback? onDelete;
+
+  const _InstructionTile({
+    super.key,
+    required this.index,
+    required this.text,
+    required this.canReorder,
+    this.onTap,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ListTile(
+      dense: true,
+      leading: CircleAvatar(
+        radius: 13,
+        backgroundColor: theme.colorScheme.primaryContainer,
+        foregroundColor: theme.colorScheme.onPrimaryContainer,
+        child: Text(
+          '${index + 1}',
+          style: theme.textTheme.labelSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      title: Text(text),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: onDelete,
+            visualDensity: VisualDensity.compact,
+          ),
+          canReorder
+              ? ReorderableDragStartListener(
+                  index: index,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.drag_handle, size: 18),
+                  ),
+                )
+              : const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(Icons.drag_handle, size: 18),
+                ),
+        ],
+      ),
+      onTap: onTap,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Ingredient edit dialog
 
 class _IngredientDialog extends StatefulWidget {
@@ -706,6 +842,72 @@ class _IngredientDialogState extends State<_IngredientDialog> {
               onSubmitted: (_) => _submit(),
             ),
           ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Instruction edit dialog
+
+class _InstructionDialog extends StatefulWidget {
+  final String title;
+  final String initialText;
+
+  const _InstructionDialog({required this.title, required this.initialText});
+
+  @override
+  State<_InstructionDialog> createState() => _InstructionDialogState();
+}
+
+class _InstructionDialogState extends State<_InstructionDialog> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final steps = splitLines(_ctrl.text);
+    if (steps.isEmpty) return;
+    Navigator.pop(context, steps);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const gap = SizedBox(height: 12);
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 420,
+        child: TextField(
+          controller: _ctrl,
+          autofocus: true,
+          minLines: 4,
+          maxLines: 8,
+          decoration: const InputDecoration(
+            labelText: 'Instruction',
+            hintText: 'Paste multiple lines to create multiple steps',
+            border: OutlineInputBorder(),
+            alignLabelWithHint: true,
+          ),
+          onSubmitted: (_) => _submit(),
         ),
       ),
       actions: [

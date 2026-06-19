@@ -140,7 +140,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   Future<void> _refresh() async {
     final f = api.fetchRecipe(widget.recipeId);
-    setState(() => _future = f);
+    setState(() {
+      _future = f;
+    });
     await f;
   }
 

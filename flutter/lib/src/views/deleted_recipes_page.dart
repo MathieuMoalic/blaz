@@ -18,22 +18,24 @@ class _DeletedRecipesPageState extends State<DeletedRecipesPage> {
   }
 
   void _refresh() {
-    setState(() => _future = fetchDeletedRecipes());
+    setState(() {
+      _future = fetchDeletedRecipes();
+    });
   }
 
   Future<void> _restore(Recipe recipe) async {
     try {
       await restoreRecipe(recipe.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Restored "${recipe.title}"')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Restored "${recipe.title}"')));
       _refresh();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to restore: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to restore: $e')));
     }
   }
 
@@ -72,18 +74,16 @@ class _DeletedRecipesPageState extends State<DeletedRecipesPage> {
       _refresh();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Recently Deleted'),
-      ),
+      appBar: AppBar(title: const Text('Recently Deleted')),
       body: FutureBuilder<List<Recipe>>(
         future: _future,
         builder: (context, snapshot) {
@@ -98,10 +98,7 @@ class _DeletedRecipesPageState extends State<DeletedRecipesPage> {
                 children: [
                   Text('Error: ${snapshot.error}'),
                   const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: _refresh,
-                    child: const Text('Retry'),
-                  ),
+                  FilledButton(onPressed: _refresh, child: const Text('Retry')),
                 ],
               ),
             );
@@ -148,7 +145,10 @@ class _DeletedRecipesPageState extends State<DeletedRecipesPage> {
                           ? Image.network(thumb, fit: BoxFit.cover)
                           : Container(
                               color: Colors.grey[800],
-                              child: const Icon(Icons.restaurant, color: Colors.grey),
+                              child: const Icon(
+                                Icons.restaurant,
+                                color: Colors.grey,
+                              ),
                             ),
                     ),
                   ),
