@@ -332,6 +332,15 @@ fn merge_recipe_ids_json(existing: &str, incoming: &str) -> String {
     serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string())
 }
 
+fn merge_quantities(existing: Option<f64>, incoming: Option<f64>) -> Option<f64> {
+    match (existing, incoming) {
+        (Some(a), Some(b)) => Some(a + b),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 async fn resolve_patch_values(
     state: &AppState,
     id: i64,
@@ -492,9 +501,21 @@ async fn resolve_patch_conflict(
     payload: &UpdateShoppingItem,
 ) -> AppResult<Json<ShoppingItemView>> {
     let resolved = resolve_patch_values(state, id, payload).await?;
-    let Some((conflict_id, conflict_recipe_ids)) = sqlx::query_as::<_, (i64, String)>(
+    let Some((
+        conflict_id,
+        conflict_quantity,
+        _conflict_done,
+        conflict_category,
+        conflict_notes,
+        conflict_recipe_ids,
+    )) = sqlx::query_as::<_, (i64, Option<f64>, i64, Option<String>, String, String)>(
         r"
-        SELECT id, COALESCE(recipe_ids, '[]') AS recipe_ids
+        SELECT id,
+               quantity,
+               done,
+               category,
+               notes,
+               COALESCE(recipe_ids, '[]') AS recipe_ids
           FROM shopping_items
          WHERE key = ? AND id != ?
         ",
@@ -512,6 +533,14 @@ async fn resolve_patch_conflict(
     };
 
     let merged_recipe_ids = merge_recipe_ids_json(&conflict_recipe_ids, &resolved.recipe_ids);
+    let merged_quantity = merge_quantities(conflict_quantity, resolved.quantity);
+    let merged_done = resolved.done;
+    let merged_category = conflict_category.or(resolved.category);
+    let merged_notes = if resolved.notes.is_empty() {
+        conflict_notes
+    } else {
+        resolved.notes
+    };
 
     sqlx::query(
         r"
@@ -528,10 +557,10 @@ async fn resolve_patch_conflict(
     )
     .bind(&resolved.name)
     .bind(&resolved.unit)
-    .bind(resolved.quantity)
-    .bind(i64::from(resolved.done))
-    .bind(&resolved.category)
-    .bind(&resolved.notes)
+    .bind(merged_quantity)
+    .bind(i64::from(merged_done))
+    .bind(&merged_category)
+    .bind(merged_notes)
     .bind(&merged_recipe_ids)
     .bind(conflict_id)
     .execute(&state.pool)

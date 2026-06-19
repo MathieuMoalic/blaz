@@ -1753,42 +1753,33 @@ async fn shopping_patch_name_conflict_reuses_hidden_item() {
 
     let client = reqwest::Client::new();
 
-    let apples = client
+    let _apples = client
         .post(format!("{base}/shopping"))
         .header("Authorization", format!("Bearer {token}"))
-        .json(&json!({"text": "apples"}))
+        .json(&json!({"text": "2 apples"}))
         .send()
         .await
         .unwrap()
         .json::<serde_json::Value>()
         .await
         .unwrap();
-    let apples_id = apples["id"].as_i64().expect("id");
 
-    client
-        .patch(format!("{base}/shopping/{apples_id}"))
-        .header("Authorization", format!("Bearer {token}"))
-        .json(&json!({"done": true}))
-        .send()
-        .await
-        .unwrap();
-
-    let oranges = client
+    let orange = client
         .post(format!("{base}/shopping"))
         .header("Authorization", format!("Bearer {token}"))
-        .json(&json!({"text": "oranges"}))
+        .json(&json!({"text": "1 orange"}))
         .send()
         .await
         .unwrap()
         .json::<serde_json::Value>()
         .await
         .unwrap();
-    let oranges_id = oranges["id"].as_i64().expect("id");
+    let orange_id = orange["id"].as_i64().expect("id");
 
     let resp = client
-        .patch(format!("{base}/shopping/{oranges_id}"))
+        .patch(format!("{base}/shopping/{orange_id}"))
         .header("Authorization", format!("Bearer {token}"))
-        .json(&json!({"name": "apples"}))
+        .json(&json!({"name": "apples", "quantity": 3}))
         .send()
         .await
         .unwrap();
@@ -1796,6 +1787,10 @@ async fn shopping_patch_name_conflict_reuses_hidden_item() {
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
     let updated = resp.json::<serde_json::Value>().await.unwrap();
+    assert!(
+        updated["text"].as_str().unwrap().contains("5"),
+        "conflict resolution should add quantities together"
+    );
     assert!(
         updated["text"].as_str().unwrap().contains("apples"),
         "conflict resolution should keep the requested name visible"
@@ -1816,6 +1811,10 @@ async fn shopping_patch_name_conflict_reuses_hidden_item() {
         arr.len(),
         1,
         "conflict resolution should leave one visible item"
+    );
+    assert!(
+        arr[0]["text"].as_str().unwrap().contains("5"),
+        "visible item quantity should be merged"
     );
     assert!(
         arr[0]["text"].as_str().unwrap().contains("apples"),
