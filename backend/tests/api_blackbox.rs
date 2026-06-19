@@ -887,11 +887,7 @@ async fn auth_unauthorized_access() {
     let client = reqwest::Client::new();
 
     // GET /recipes is now public - should return 200
-    let resp = client
-        .get(format!("{base}/recipes"))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(format!("{base}/recipes")).send().await.unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
     // POST /recipes requires auth
@@ -903,11 +899,7 @@ async fn auth_unauthorized_access() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
 
-    let resp = client
-        .get(format!("{base}/shopping"))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(format!("{base}/shopping")).send().await.unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
 
     let resp = client
@@ -1032,7 +1024,7 @@ async fn auth_invalid_bearer_token() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    
+
     // But POST /recipes should still reject invalid token
     let resp = client
         .post(format!("{base}/recipes"))
@@ -1060,7 +1052,7 @@ async fn auth_malformed_authorization_header() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    
+
     // But POST /recipes should reject malformed auth
     let resp = client
         .post(format!("{base}/recipes"))
@@ -1473,7 +1465,9 @@ async fn share_recipe_revoke_and_404() {
     let recipe = client
         .post(format!("{base}/recipes"))
         .header("Authorization", format!("Bearer {token}"))
-        .json(&json!({"title": "ToRevoke", "source": "test", "ingredients": [], "instructions": []}))
+        .json(
+            &json!({"title": "ToRevoke", "source": "test", "ingredients": [], "instructions": []}),
+        )
         .send()
         .await
         .unwrap()
@@ -1747,6 +1741,85 @@ async fn shopping_undone_item_reappears() {
     assert!(
         list.as_array().unwrap().iter().any(|x| x["id"] == id),
         "undone item should reappear in shopping list"
+    );
+}
+
+#[tokio::test]
+async fn shopping_patch_name_conflict_reuses_hidden_item() {
+    let srv = TestServer::start();
+    let base = srv.base_url();
+    wait_ready(&base).await;
+    let token = login(&base).await;
+
+    let client = reqwest::Client::new();
+
+    let apples = client
+        .post(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"text": "apples"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let apples_id = apples["id"].as_i64().expect("id");
+
+    client
+        .patch(format!("{base}/shopping/{apples_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"done": true}))
+        .send()
+        .await
+        .unwrap();
+
+    let oranges = client
+        .post(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"text": "oranges"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let oranges_id = oranges["id"].as_i64().expect("id");
+
+    let resp = client
+        .patch(format!("{base}/shopping/{oranges_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"name": "apples"}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    let updated = resp.json::<serde_json::Value>().await.unwrap();
+    assert!(
+        updated["text"].as_str().unwrap().contains("apples"),
+        "conflict resolution should keep the requested name visible"
+    );
+
+    let list = client
+        .get(format!("{base}/shopping"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let arr = list.as_array().unwrap();
+    assert_eq!(
+        arr.len(),
+        1,
+        "conflict resolution should leave one visible item"
+    );
+    assert!(
+        arr[0]["text"].as_str().unwrap().contains("apples"),
+        "visible item should use the requested name"
     );
 }
 
@@ -2229,7 +2302,9 @@ async fn recipes_prep_reminders_round_trip() {
         .await
         .unwrap();
 
-    let reminders = got["prep_reminders"].as_array().expect("prep_reminders array");
+    let reminders = got["prep_reminders"]
+        .as_array()
+        .expect("prep_reminders array");
     assert_eq!(reminders.len(), 1);
     assert_eq!(reminders[0]["step"].as_str(), Some("Marinate chicken"));
     assert_eq!(reminders[0]["hours_before"].as_i64(), Some(24));
@@ -2423,7 +2498,9 @@ async fn meal_plan_for_recipe_returns_upcoming_entries() {
     let recipe = client
         .post(format!("{base}/recipes"))
         .header("Authorization", format!("Bearer {token}"))
-        .json(&json!({"title": "Scheduled", "source": "test", "ingredients": [], "instructions": []}))
+        .json(
+            &json!({"title": "Scheduled", "source": "test", "ingredients": [], "instructions": []}),
+        )
         .send()
         .await
         .unwrap()

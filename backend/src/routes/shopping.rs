@@ -18,13 +18,14 @@ fn internal_err<E: std::error::Error>(err: E) -> AppError {
 
 fn patch_update_err(err: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(db) = &err
-        && db.is_unique_violation() {
-            return (
-                StatusCode::CONFLICT,
-                "shopping item with the same name/unit already exists".into(),
-            )
-                .into();
-        }
+        && db.is_unique_violation()
+    {
+        return (
+            StatusCode::CONFLICT,
+            "shopping item with the same name/unit already exists".into(),
+        )
+            .into();
+    }
     internal_err(err)
 }
 
@@ -214,10 +215,11 @@ fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     let mut unit: Option<String> = None;
 
     if let Some(t1) = tokens.get(idx)
-        && let Some(un) = normalize_unit_token(t1) {
-            unit = Some(un);
-            idx += 1;
-        }
+        && let Some(un) = normalize_unit_token(t1)
+    {
+        unit = Some(un);
+        idx += 1;
+    }
 
     // Optional "of"
     if tokens.get(idx).copied() == Some("of") {
@@ -272,12 +274,23 @@ struct ShoppingItemRow {
     name: String,
     unit: Option<String>,
     quantity: Option<f64>,
+    done: i64,
+    category: Option<String>,
+    notes: String,
+    recipe_ids: String,
 }
 
 async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, sqlx::Error> {
     sqlx::query_as::<_, ShoppingItemRow>(
         r"
-        SELECT name, unit, quantity
+        SELECT
+            name,
+            unit,
+            quantity,
+            done,
+            category,
+            notes,
+            COALESCE(recipe_ids, '[]') AS recipe_ids
           FROM shopping_items
          WHERE id = ?
         ",
@@ -285,6 +298,256 @@ async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, s
     .bind(id)
     .fetch_one(&state.pool)
     .await
+}
+
+#[derive(Debug)]
+struct ResolvedPatch {
+    name: String,
+    unit: Option<String>,
+    quantity: Option<f64>,
+    done: bool,
+    category: Option<String>,
+    notes: String,
+    recipe_ids: String,
+    key: String,
+}
+
+fn merge_recipe_ids_json(existing: &str, incoming: &str) -> String {
+    let mut ids = Vec::<i64>::new();
+    let mut push_ids = |src: &str| {
+        let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(src) else {
+            return;
+        };
+        for v in values {
+            if let Some(id) = v.as_i64()
+                && !ids.contains(&id)
+            {
+                ids.push(id);
+            }
+        }
+    };
+
+    push_ids(existing);
+    push_ids(incoming);
+    serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string())
+}
+
+async fn resolve_patch_values(
+    state: &AppState,
+    id: i64,
+    payload: &UpdateShoppingItem,
+) -> AppResult<ResolvedPatch> {
+    let current = fetch_raw_by_id(state, id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let done = payload.done.unwrap_or(current.done != 0);
+    let notes = payload
+        .notes
+        .clone()
+        .unwrap_or_else(|| current.notes.clone());
+
+    let category = match payload.category.as_ref() {
+        Some(c) => {
+            let c = crate::units::norm_whitespace(c);
+            if c.is_empty() {
+                None
+            } else if validate_category(state, &c).await {
+                Some(c)
+            } else {
+                return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
+            }
+        }
+        None => current.category.clone(),
+    };
+
+    if let Some(t) = payload.text.as_deref() {
+        let parsed =
+            parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
+        let (unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
+        let unit_norm = unit_norm.map(str::to_string);
+        if qty_norm.is_none() {
+            // Keep the canonical key unitless if the quantity vanished.
+            let unit_norm = None::<String>;
+            let key = make_key(&parsed.name_norm, unit_norm.as_deref());
+            let category = if payload.category.is_none() {
+                Some(guess_category(state, &parsed.name_raw).await)
+            } else {
+                category
+            };
+
+            return Ok(ResolvedPatch {
+                name: parsed.name_norm,
+                unit: unit_norm,
+                quantity: qty_norm,
+                done,
+                category,
+                notes,
+                recipe_ids: current.recipe_ids,
+                key,
+            });
+        }
+
+        let key = make_key(&parsed.name_norm, unit_norm.as_deref());
+        let category = if payload.category.is_none() {
+            Some(guess_category(state, &parsed.name_raw).await)
+        } else {
+            category
+        };
+
+        return Ok(ResolvedPatch {
+            name: parsed.name_norm,
+            unit: unit_norm,
+            quantity: qty_norm,
+            done,
+            category,
+            notes,
+            recipe_ids: current.recipe_ids,
+            key,
+        });
+    }
+
+    let has_structured =
+        payload.name.is_some() || payload.unit.is_some() || payload.quantity.is_some();
+    if !has_structured {
+        let key = make_key(&current.name, current.unit.as_deref());
+        return Ok(ResolvedPatch {
+            name: current.name,
+            unit: current.unit,
+            quantity: current.quantity,
+            done,
+            category,
+            notes,
+            recipe_ids: current.recipe_ids,
+            key,
+        });
+    }
+
+    let new_name_raw = if let Some(n) = payload.name.clone() {
+        let n = n.trim().to_string();
+        if n.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "empty name".into()).into());
+        }
+        n
+    } else {
+        current.name.clone()
+    };
+
+    let new_name_norm = normalize_name(&new_name_raw);
+
+    let new_unit_raw = payload.unit.clone().map(|u| u.trim().to_string());
+    let new_unit_raw = match new_unit_raw.as_deref() {
+        Some("") => None,
+        Some(u) => Some(u.to_string()),
+        None => current.unit.clone(),
+    };
+
+    let new_qty = payload.quantity.or(current.quantity);
+
+    let (unit_norm, qty_norm) = to_canonical_qty_unit(new_unit_raw.as_deref(), new_qty);
+    let unit_norm = unit_norm.map(str::to_string);
+    if qty_norm.is_none() {
+        let unit_norm = None::<String>;
+        let key = make_key(&new_name_norm, unit_norm.as_deref());
+        let category = if payload.category.is_none() && payload.name.is_some() {
+            Some(guess_category(state, &new_name_raw).await)
+        } else {
+            category
+        };
+
+        return Ok(ResolvedPatch {
+            name: new_name_norm,
+            unit: unit_norm,
+            quantity: qty_norm,
+            done,
+            category,
+            notes,
+            recipe_ids: current.recipe_ids,
+            key,
+        });
+    }
+
+    let key = make_key(&new_name_norm, unit_norm.as_deref());
+    let category = if payload.category.is_none() && payload.name.is_some() {
+        Some(guess_category(state, &new_name_raw).await)
+    } else {
+        category
+    };
+
+    Ok(ResolvedPatch {
+        name: new_name_norm,
+        unit: unit_norm,
+        quantity: qty_norm,
+        done,
+        category,
+        notes,
+        recipe_ids: current.recipe_ids,
+        key,
+    })
+}
+
+async fn resolve_patch_conflict(
+    state: &AppState,
+    id: i64,
+    payload: &UpdateShoppingItem,
+) -> AppResult<Json<ShoppingItemView>> {
+    let resolved = resolve_patch_values(state, id, payload).await?;
+    let Some((conflict_id, conflict_recipe_ids)) = sqlx::query_as::<_, (i64, String)>(
+        r"
+        SELECT id, COALESCE(recipe_ids, '[]') AS recipe_ids
+          FROM shopping_items
+         WHERE key = ? AND id != ?
+        ",
+    )
+    .bind(&resolved.key)
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    else {
+        return Err((
+            StatusCode::CONFLICT,
+            "shopping item with the same name/unit already exists".into(),
+        )
+            .into());
+    };
+
+    let merged_recipe_ids = merge_recipe_ids_json(&conflict_recipe_ids, &resolved.recipe_ids);
+
+    sqlx::query(
+        r"
+        UPDATE shopping_items
+           SET name = ?,
+               unit = ?,
+               quantity = ?,
+               done = ?,
+               category = ?,
+               notes = ?,
+               recipe_ids = ?
+         WHERE id = ?
+        ",
+    )
+    .bind(&resolved.name)
+    .bind(&resolved.unit)
+    .bind(resolved.quantity)
+    .bind(i64::from(resolved.done))
+    .bind(&resolved.category)
+    .bind(&resolved.notes)
+    .bind(&merged_recipe_ids)
+    .bind(conflict_id)
+    .execute(&state.pool)
+    .await
+    .map_err(internal_err)?;
+
+    sqlx::query("DELETE FROM shopping_items WHERE id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(internal_err)?;
+
+    let dto = fetch_view_by_id(state, conflict_id)
+        .await
+        .map_err(internal_err)?;
+    Ok(Json(dto))
 }
 
 /// Unique key used for merging rows: "<unit>|<name>" with normalized name/unit.
@@ -477,7 +740,7 @@ fn apply_done_update(qb: &mut QueryBuilder<Sqlite>, wrote: &mut bool, done: Opti
         push_sep(qb, wrote);
         qb.push("done = ");
         qb.push_bind(i64::from(d));
-        
+
         // Clear recipe_ids, quantity and notes when marking as done so list resets cleanly
         if d {
             push_sep(qb, wrote);
@@ -703,11 +966,13 @@ pub async fn patch_shopping_item(
     qb.push_bind(id);
     qb.push(" RETURNING id");
 
-    let (rid,): (i64,) = qb
-        .build_query_as()
-        .fetch_one(&state.pool)
-        .await
-        .map_err(patch_update_err)?;
+    let rid = match qb.build_query_as::<(i64,)>().fetch_one(&state.pool).await {
+        Ok((rid,)) => rid,
+        Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+            return resolve_patch_conflict(&state, id, &payload).await;
+        }
+        Err(err) => return Err(patch_update_err(err)),
+    };
 
     let dto = fetch_view_by_id(&state, rid).await.map_err(internal_err)?;
     Ok(Json(dto))
@@ -779,7 +1044,9 @@ pub async fn merge_items(
         };
 
         // Prepare recipe_ids JSON array
-        let recipe_ids_json = req.recipe_id.map_or_else(|| "[]".to_string(), |rid| format!("[{rid}]"));
+        let recipe_ids_json = req
+            .recipe_id
+            .map_or_else(|| "[]".to_string(), |rid| format!("[{rid}]"));
 
         sqlx::query(
             r"
@@ -830,12 +1097,12 @@ mod tests {
         assert_eq!(parse_qty_token("10"), Some(10.0));
         assert_eq!(parse_qty_token("1.5"), Some(1.5));
         assert_eq!(parse_qty_token("1,5"), Some(1.5));
-        
+
         assert_eq!(parse_qty_token("2-3"), Some(2.5));
         assert_eq!(parse_qty_token("2–3"), Some(2.5));
         assert_eq!(parse_qty_token("1.5-2.5"), Some(2.0));
         assert_eq!(parse_qty_token("10–20"), Some(15.0));
-        
+
         assert_eq!(parse_qty_token(""), None);
         assert_eq!(parse_qty_token("  "), None);
         assert_eq!(parse_qty_token("abc"), None);
@@ -849,10 +1116,10 @@ mod tests {
         assert_eq!(normalize_unit_token("L"), Some("L".to_string()));
         assert_eq!(normalize_unit_token("tsp"), Some("tsp".to_string()));
         assert_eq!(normalize_unit_token("tbsp"), Some("tbsp".to_string()));
-        
+
         assert_eq!(normalize_unit_token("gram"), Some("g".to_string()));
         assert_eq!(normalize_unit_token("GRAMS"), Some("g".to_string()));
-        
+
         assert_eq!(normalize_unit_token(""), None);
         assert_eq!(normalize_unit_token("  "), None);
         assert_eq!(normalize_unit_token("cup"), None);
