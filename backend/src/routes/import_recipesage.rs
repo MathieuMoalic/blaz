@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -54,7 +49,9 @@ where
             .into_iter()
             .filter_map(|v| match v {
                 Value::String(s) => Some(s),
-                Value::Array(inner) => inner.into_iter().find_map(|iv| iv.as_str().map(String::from)),
+                Value::Array(inner) => inner
+                    .into_iter()
+                    .find_map(|iv| iv.as_str().map(String::from)),
                 _ => None,
             })
             .collect(),
@@ -69,10 +66,7 @@ struct ImportResponse {
     failed: Vec<String>,
 }
 
-pub async fn import_recipesage(
-    State(state): State<AppState>,
-    body: String,
-) -> impl IntoResponse {
+pub async fn import_recipesage(State(state): State<AppState>, body: String) -> impl IntoResponse {
     // Parse the JSON manually to avoid exposing private types in the signature
     let recipes: Vec<JsonLdRecipe> = match serde_json::from_str(&body) {
         Ok(r) => r,
@@ -117,12 +111,12 @@ pub async fn import_recipesage(
     )
 }
 
-async fn import_single_recipe(
-    state: &AppState,
-    recipe: JsonLdRecipe,
-) -> Result<(), String> {
-    let title = recipe.name.clone().unwrap_or_else(|| "Untitled Recipe".to_string());
-    
+async fn import_single_recipe(state: &AppState, recipe: JsonLdRecipe) -> Result<(), String> {
+    let title = recipe
+        .name
+        .clone()
+        .unwrap_or_else(|| "Untitled Recipe".to_string());
+
     tracing::info!("Importing recipe: {}", title);
 
     // Convert ingredients to structured format
@@ -149,17 +143,16 @@ async fn import_single_recipe(
 
     // Use only the notes field from RecipeSage
     let notes = recipe.notes.unwrap_or_default();
-    
+
     // Prefer isBasedOn over url for source
-    let source = recipe.is_based_on
-        .or(recipe.url)
-        .unwrap_or_default();
-    
+    let source = recipe.is_based_on.or(recipe.url).unwrap_or_default();
+
     if !source.is_empty() {
         tracing::info!("  Source URL: {}", source);
     }
-    
-    let yield_str = recipe.recipe_yield
+
+    let yield_str = recipe
+        .recipe_yield
         .and_then(|y| match y {
             Value::String(s) => Some(s),
             Value::Number(n) => Some(n.to_string()),
@@ -239,7 +232,10 @@ fn parse_instructions(instructions: Option<Value>) -> Vec<String> {
             .into_iter()
             .filter_map(|item| match item {
                 Value::String(s) => Some(s),
-                Value::Object(obj) => obj.get("text").and_then(|v| v.as_str()).map(std::string::ToString::to_string),
+                Value::Object(obj) => obj
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .map(std::string::ToString::to_string),
                 _ => None,
             })
             .collect(),
@@ -259,18 +255,26 @@ async fn import_image_from_url(
         .timeout(std::time::Duration::from_secs(45))
         .send()
         .await?;
-    
+
     if !resp.status().is_success() {
-        return Err(anyhow::anyhow!("HTTP {} fetching {}", resp.status(), source_url));
+        return Err(anyhow::anyhow!(
+            "HTTP {} fetching {}",
+            resp.status(),
+            source_url
+        ));
     }
-    
+
     let html = resp.text().await?;
-    
+
     // Use the same image extraction logic as URL import
-    if let Some(img_url) = crate::routes::parse_recipe_image::extract_main_image_url(&html, source_url) {
-        let (rel_full, rel_small) =
-            crate::routes::recipes::fetch_and_store_recipe_image(&client, &img_url, state, recipe_id).await?;
-        
+    if let Some(img_url) =
+        crate::routes::parse_recipe_image::extract_main_image_url(&html, source_url)
+    {
+        let (rel_full, rel_small) = crate::routes::recipes::fetch_and_store_recipe_image(
+            &client, &img_url, state, recipe_id,
+        )
+        .await?;
+
         sqlx::query(
             r"
             UPDATE recipes
@@ -285,7 +289,7 @@ async fn import_image_from_url(
         .execute(&state.pool)
         .await?;
     }
-    
+
     Ok(())
 }
 
@@ -301,7 +305,7 @@ async fn import_recipe_image(
         if parts.len() != 2 {
             return Err(anyhow::anyhow!("Invalid data URI format"));
         }
-        
+
         // Decode base64
         base64::engine::general_purpose::STANDARD
             .decode(parts[1])
@@ -312,19 +316,23 @@ async fn import_recipe_image(
             .strip_prefix("/api/")
             .or_else(|| image_url.strip_prefix("api/"))
             .unwrap_or(image_url);
-        
-        let image_path = std::path::Path::new("recipeImage").join(path.strip_prefix("recipeImage/").unwrap_or(path));
-        
+
+        let image_path = std::path::Path::new("recipeImage")
+            .join(path.strip_prefix("recipeImage/").unwrap_or(path));
+
         if !image_path.exists() {
-            return Err(anyhow::anyhow!("Image file not found: {}", image_path.display()));
+            return Err(anyhow::anyhow!(
+                "Image file not found: {}",
+                image_path.display()
+            ));
         }
 
         tokio::fs::read(&image_path).await?
     };
-    
+
     // Process and store using the existing image processing logic
     store_recipe_image_bytes(state, recipe_id, bytes).await?;
-    
+
     Ok(())
 }
 
@@ -414,10 +422,7 @@ mod tests {
             {"@type": "HowToSection", "name": "no text key"},
             42
         ]);
-        assert_eq!(
-            parse_instructions(Some(v)),
-            vec!["Step A", "Step B"]
-        );
+        assert_eq!(parse_instructions(Some(v)), vec!["Step A", "Step B"]);
     }
 
     #[test]

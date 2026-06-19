@@ -63,7 +63,11 @@ pub struct Config {
     pub llm_api_key: Option<String>,
 
     /// LLM API URL
-    #[arg(long, env = "BLAZ_LLM_API_URL", default_value = "https://openrouter.ai/api/v1")]
+    #[arg(
+        long,
+        env = "BLAZ_LLM_API_URL",
+        default_value = "https://openrouter.ai/api/v1"
+    )]
     pub llm_api_url: String,
 
     /// System prompt for recipe import

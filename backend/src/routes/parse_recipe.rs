@@ -78,17 +78,37 @@ pub async fn import_from_url(
     // TRY SCHEMA.ORG EXTRACTION FIRST
     let (title, ingredient_strings, instruction_strings) =
         if let Some(schema) = crate::schema_org::extract_schema_recipe(&html) {
-            tracing::info!("Using schema.org data: {} ingredients", schema.ingredients.len());
+            tracing::info!(
+                "Using schema.org data: {} ingredients",
+                schema.ingredients.len()
+            );
             (schema.name, schema.ingredients, schema.instructions)
         } else {
             // FALLBACK: STAGE 1 LLM extraction
             tracing::info!("No schema.org found, using Stage 1 LLM extraction");
-            let result = stage1_extract(&llm, &http, &state, &llm_settings, excerpt, &req.url, &title_guess)
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 1 (extract) failed: {e}")))?;
+            let result = stage1_extract(
+                &llm,
+                &http,
+                &state,
+                &llm_settings,
+                excerpt,
+                &req.url,
+                &title_guess,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Stage 1 (extract) failed: {e}"),
+                )
+            })?;
 
-            tracing::info!("Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings",
-                result.0, result.1.len(), result.2.len());
+            tracing::info!(
+                "Stage 1 complete: title='{}', {} ingredient strings, {} instruction strings",
+                result.0,
+                result.1.len(),
+                result.2.len()
+            );
             result
         };
 
@@ -97,16 +117,33 @@ pub async fn import_from_url(
     }
 
     // STAGE 2: Structure ingredients
-    tracing::info!("Stage 2: Structuring {} ingredients", ingredient_strings.len());
+    tracing::info!(
+        "Stage 2: Structuring {} ingredients",
+        ingredient_strings.len()
+    );
     let mut structured_ingredients =
         stage2_structure_ingredients(&llm, &http, &state, &llm_settings, &ingredient_strings)
             .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 2 (structure) failed: {e}")))?;
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Stage 2 (structure) failed: {e}"),
+                )
+            })?;
 
-    tracing::info!("Stage 2 complete: {} structured ingredients", structured_ingredients.len());
+    tracing::info!(
+        "Stage 2 complete: {} structured ingredients",
+        structured_ingredients.len()
+    );
     for (i, ing) in structured_ingredients.iter().enumerate() {
-        tracing::debug!("  Structured {}: qty={:?}, unit={:?}, name={}, prep={:?}",
-            i, ing.quantity, ing.unit, ing.name, ing.prep);
+        tracing::debug!(
+            "  Structured {}: qty={:?}, unit={:?}, name={}, prep={:?}",
+            i,
+            ing.quantity,
+            ing.unit,
+            ing.name,
+            ing.prep
+        );
     }
 
     // STAGE 3: Convert to metric
@@ -114,12 +151,26 @@ pub async fn import_from_url(
     structured_ingredients =
         stage3_convert_to_metric(&llm, &http, &state, &llm_settings, &structured_ingredients)
             .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Stage 3 (convert) failed: {e}")))?;
-    
-    tracing::info!("Stage 3 complete: {} ingredients after metric conversion", structured_ingredients.len());
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Stage 3 (convert) failed: {e}"),
+                )
+            })?;
+
+    tracing::info!(
+        "Stage 3 complete: {} ingredients after metric conversion",
+        structured_ingredients.len()
+    );
     for (i, ing) in structured_ingredients.iter().enumerate() {
-        tracing::debug!("  Final {}: qty={:?}, unit={:?}, name={}, prep={:?}", 
-            i, ing.quantity, ing.unit, ing.name, ing.prep);
+        tracing::debug!(
+            "  Final {}: qty={:?}, unit={:?}, name={}, prep={:?}",
+            i,
+            ing.quantity,
+            ing.unit,
+            ing.name,
+            ing.prep
+        );
     }
 
     let final_title = if title.trim().is_empty() {
@@ -246,9 +297,7 @@ async fn stage1_extract(
     url: &str,
     title_guess: &str,
 ) -> anyhow::Result<(String, Vec<String>, Vec<String>)> {
-    let user = format!(
-        "URL: {url}\nTITLE: {title_guess}\n\nCONTENT:\n{content}"
-    );
+    let user = format!("URL: {url}\nTITLE: {title_guess}\n\nCONTENT:\n{content}");
 
     let json = call_llm_with_retry(
         llm,
@@ -261,8 +310,11 @@ async fn stage1_extract(
         Some(16_000),
     )
     .await?;
-    
-    tracing::debug!("Stage 1 LLM response: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
+
+    tracing::debug!(
+        "Stage 1 LLM response: {}",
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    );
 
     let title = json
         .get("title")
@@ -291,7 +343,7 @@ async fn stage1_extract(
         });
 
     validate_stage1(&ingredients, &instructions)?;
-    
+
     Ok((title, ingredients, instructions))
 }
 
@@ -319,8 +371,11 @@ async fn stage2_structure_ingredients(
         Some(16_000),
     )
     .await?;
-    
-    tracing::debug!("Stage 2 LLM response: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
+
+    tracing::debug!(
+        "Stage 2 LLM response: {}",
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    );
 
     let ingredients = if json.is_array() {
         // Direct array of ingredients
@@ -340,7 +395,7 @@ async fn stage2_structure_ingredients(
     tracing::debug!("Stage 2 after normalize: {} ingredients", ingredients.len());
 
     validate_stage2(&ingredients);
-    
+
     Ok(ingredients)
 }
 
@@ -401,7 +456,7 @@ async fn stage3_convert_to_metric(
     );
 
     validate_stage3(&converted)?;
-    
+
     Ok(converted)
 }
 
@@ -421,8 +476,16 @@ async fn call_llm_with_retry(
     max_tokens: Option<u32>,
 ) -> anyhow::Result<JsonValue> {
     // Try primary model with fallback
-    llm.chat_json_with_fallback(http, fallback_model, system, user, temperature, timeout, max_tokens)
-        .await
+    llm.chat_json_with_fallback(
+        http,
+        fallback_model,
+        system,
+        user,
+        temperature,
+        timeout,
+        max_tokens,
+    )
+    .await
 }
 
 /* =========================
@@ -438,34 +501,64 @@ fn validate_stage1(ingredients: &[String], instructions: &[String]) -> anyhow::R
     }
     // Check for reasonable counts
     if ingredients.len() > 200 {
-        anyhow::bail!("Stage 1 returned too many ingredients ({})", ingredients.len());
+        anyhow::bail!(
+            "Stage 1 returned too many ingredients ({})",
+            ingredients.len()
+        );
     }
     if instructions.len() > 200 {
-        anyhow::bail!("Stage 1 returned too many instructions ({})", instructions.len());
+        anyhow::bail!(
+            "Stage 1 returned too many instructions ({})",
+            instructions.len()
+        );
     }
     Ok(())
 }
 
-const BANNED_UNITS: &[&str] = &["cup", "cups", "oz", "ounce", "ounces", "fl oz", "fluid ounce", "pound", "lb", "lbs", "pint", "quart", "gallon"];
-const PREP_WORDS: &[&str] = &["sliced", "diced", "minced", "chopped", "grated", "shredded", "softened", "melted"];
+const BANNED_UNITS: &[&str] = &[
+    "cup",
+    "cups",
+    "oz",
+    "ounce",
+    "ounces",
+    "fl oz",
+    "fluid ounce",
+    "pound",
+    "lb",
+    "lbs",
+    "pint",
+    "quart",
+    "gallon",
+];
+const PREP_WORDS: &[&str] = &[
+    "sliced", "diced", "minced", "chopped", "grated", "shredded", "softened", "melted",
+];
 
 fn validate_stage2(ingredients: &[Ingredient]) {
     // Check for banned units (warning only, not fatal)
-    
+
     for ing in ingredients {
         if let Some(unit) = &ing.unit {
             let unit_lower = unit.to_lowercase();
             if BANNED_UNITS.contains(&unit_lower.as_str()) {
-                tracing::warn!("Stage 2 validation: ingredient '{}' has banned unit '{}'", ing.name, unit);
+                tracing::warn!(
+                    "Stage 2 validation: ingredient '{}' has banned unit '{}'",
+                    ing.name,
+                    unit
+                );
             }
         }
-        
+
         // Check name doesn't contain prep words (warning only)
         if !ing.name.is_empty() {
             let name_lower = ing.name.to_lowercase();
             for prep_word in PREP_WORDS {
                 if name_lower.contains(prep_word) {
-                    tracing::warn!("Stage 2 validation: ingredient name '{}' contains prep word '{}'", ing.name, prep_word);
+                    tracing::warn!(
+                        "Stage 2 validation: ingredient name '{}' contains prep word '{}'",
+                        ing.name,
+                        prep_word
+                    );
                 }
             }
         }
@@ -473,13 +566,36 @@ fn validate_stage2(ingredients: &[Ingredient]) {
 }
 
 fn validate_stage3(ingredients: &[Ingredient]) -> anyhow::Result<()> {
-    const ALLOWED_UNITS: &[&str] = &["g", "kg", "ml", "l", "tsp", "tbsp", "tablespoon", "teaspoon"];
-    const BANNED_UNITS: &[&str] = &["cup", "cups", "oz", "ounce", "ounces", "fl oz", "fluid ounce", "pound", "lb", "lbs", "pint", "quart", "gallon"];
-    
+    const ALLOWED_UNITS: &[&str] = &[
+        "g",
+        "kg",
+        "ml",
+        "l",
+        "tsp",
+        "tbsp",
+        "tablespoon",
+        "teaspoon",
+    ];
+    const BANNED_UNITS: &[&str] = &[
+        "cup",
+        "cups",
+        "oz",
+        "ounce",
+        "ounces",
+        "fl oz",
+        "fluid ounce",
+        "pound",
+        "lb",
+        "lbs",
+        "pint",
+        "quart",
+        "gallon",
+    ];
+
     for ing in ingredients {
         if let Some(unit) = &ing.unit {
             let unit_lower = unit.to_lowercase();
-            
+
             if BANNED_UNITS.contains(&unit_lower.as_str()) {
                 anyhow::bail!(
                     "Stage 3 validation failed: ingredient '{}' still has banned unit '{}'",
@@ -487,7 +603,7 @@ fn validate_stage3(ingredients: &[Ingredient]) -> anyhow::Result<()> {
                     unit
                 );
             }
-            
+
             if !ALLOWED_UNITS.contains(&unit_lower.as_str()) {
                 tracing::warn!(
                     "Stage 3 validation: ingredient '{}' has non-standard unit '{}'",
@@ -497,7 +613,7 @@ fn validate_stage3(ingredients: &[Ingredient]) -> anyhow::Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -549,13 +665,12 @@ pub fn normalize_instructions(v: JsonValue) -> Vec<String> {
                     (!t.is_empty()).then_some(t)
                 }
                 // {"section": "Sauce"} → "## Sauce"
-                JsonValue::Object(m) => {
-                    m.get("section")
-                        .and_then(|v| v.as_str())
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(|s| format!("## {s}"))
-                }
+                JsonValue::Object(m) => m
+                    .get("section")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| format!("## {s}")),
                 JsonValue::Number(n) => Some(n.to_string()),
                 JsonValue::Bool(b) => Some(b.to_string()),
                 _ => None,

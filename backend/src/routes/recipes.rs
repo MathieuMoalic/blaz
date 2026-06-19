@@ -156,7 +156,9 @@ pub async fn list(
 ) -> AppResult<Json<Vec<Recipe>>> {
     let limit = query.limit.max(1).min(1000);
     let offset = query.offset.max(0);
-    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?");
+    let sql = format!(
+        "SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?"
+    );
     let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
         .bind(limit)
         .bind(offset)
@@ -176,7 +178,9 @@ pub async fn list(
 ///
 /// Err if querying the db fails
 pub async fn list_deleted(State(state): State<AppState>) -> AppResult<Json<Vec<Recipe>>> {
-    let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC");
+    let sql = format!(
+        "SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+    );
     let rows: Vec<RecipeRow> = sqlx::query_as::<_, RecipeRow>(&sql)
         .fetch_all(&state.pool)
         .await
@@ -239,7 +243,7 @@ pub async fn check_duplicate(
 
             // Get all recipes and compare normalized URLs
             let rows: Vec<(i64, String, String)> = sqlx::query_as(
-                "SELECT id, title, source FROM recipes WHERE source != '' AND deleted_at IS NULL"
+                "SELECT id, title, source FROM recipes WHERE source != '' AND deleted_at IS NULL",
             )
             .fetch_all(&state.pool)
             .await
@@ -266,18 +270,18 @@ pub async fn check_duplicate(
         let title_lower = title.trim().to_lowercase();
         if !title_lower.is_empty() {
             // Get all recipe titles and check similarity
-            let rows: Vec<(i64, String, String)> = sqlx::query_as(
-                "SELECT id, title, source FROM recipes WHERE deleted_at IS NULL"
-            )
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default();
+            let rows: Vec<(i64, String, String)> =
+                sqlx::query_as("SELECT id, title, source FROM recipes WHERE deleted_at IS NULL")
+                    .fetch_all(&state.pool)
+                    .await
+                    .unwrap_or_default();
 
             for (id, existing_title, source) in rows {
                 let existing_lower = existing_title.to_lowercase();
                 // Check for high similarity (exact match or very close)
-                if existing_lower == title_lower ||
-                   title_similarity(&title_lower, &existing_lower) > 0.85 {
+                if existing_lower == title_lower
+                    || title_similarity(&title_lower, &existing_lower) > 0.85
+                {
                     duplicates.push(DuplicateMatch {
                         id,
                         title: existing_title,
@@ -348,18 +352,19 @@ pub async fn create(
             return Err(StatusCode::BAD_REQUEST.into());
         }
         if let Some(u) = ing.unit.as_deref()
-            && u.trim().is_empty() {
-                return Err(StatusCode::BAD_REQUEST.into());
-            }
+            && u.trim().is_empty()
+        {
+            return Err(StatusCode::BAD_REQUEST.into());
+        }
         if let Some(p) = ing.prep.as_deref()
-            && p.trim().is_empty() {
-                return Err(StatusCode::BAD_REQUEST.into());
-            }
+            && p.trim().is_empty()
+        {
+            return Err(StatusCode::BAD_REQUEST.into());
+        }
     }
 
     let ingredients_json = serialize_json_or_empty(&new.ingredients);
-    let instructions_json =
-        serialize_json_or_empty(&new.instructions);
+    let instructions_json = serialize_json_or_empty(&new.instructions);
 
     let sql = format!(
         r#"
@@ -397,14 +402,16 @@ pub async fn create(
 /// Err if querying the db fails
 /// Soft delete a recipe (move to trash)
 pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<StatusCode> {
-    let res = sqlx::query(r"UPDATE recipes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL")
-        .bind(id)
-        .execute(&state.pool)
-        .await
-        .map_err(|e| {
-            error!(?e, "recipes.delete failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let res = sqlx::query(
+        r"UPDATE recipes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| {
+        error!(?e, "recipes.delete failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     if res.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND.into());
@@ -413,15 +420,20 @@ pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppRe
 }
 
 /// Restore a soft-deleted recipe
-pub async fn restore(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Recipe>> {
-    let res = sqlx::query(r"UPDATE recipes SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL")
-        .bind(id)
-        .execute(&state.pool)
-        .await
-        .map_err(|e| {
-            error!(?e, "recipes.restore failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+pub async fn restore(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Recipe>> {
+    let res = sqlx::query(
+        r"UPDATE recipes SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+    )
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| {
+        error!(?e, "recipes.restore failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     if res.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND.into());
@@ -438,7 +450,10 @@ pub async fn restore(State(state): State<AppState>, Path(id): Path<i64>) -> AppR
 }
 
 /// Permanently delete a recipe (from trash)
-pub async fn permanent_delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<StatusCode> {
+pub async fn permanent_delete(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
     // Only allow permanent delete of already soft-deleted recipes
     let res = sqlx::query(r"DELETE FROM recipes WHERE id = ? AND deleted_at IS NOT NULL")
         .bind(id)
@@ -458,28 +473,37 @@ pub async fn permanent_delete(State(state): State<AppState>, Path(id): Path<i64>
 /// # Errors
 ///
 /// Err if querying the db fails
-fn build_update_args(
-    up: &UpdateRecipe,
-    id: i64,
-) -> AppResult<(String, SqliteArguments<'static>)> {
+fn build_update_args(up: &UpdateRecipe, id: i64) -> AppResult<(String, SqliteArguments<'static>)> {
     let mut sets: Vec<&'static str> = Vec::new();
     let mut args = SqliteArguments::default();
 
     if let Some(title) = up.title.clone() {
         sets.push("title = ?");
-        args.add(title).map_err(|e| { error!(?e, "arg add (title) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(title).map_err(|e| {
+            error!(?e, "arg add (title) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(source) = up.source.clone() {
         sets.push("source = ?");
-        args.add(source).map_err(|e| { error!(?e, "arg add (source) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(source).map_err(|e| {
+            error!(?e, "arg add (source) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(y) = up.r#yield.clone() {
         sets.push(r#""yield" = ?"#);
-        args.add(y).map_err(|e| { error!(?e, "arg add (yield) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(y).map_err(|e| {
+            error!(?e, "arg add (yield) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(notes) = up.notes.clone() {
         sets.push("notes = ?");
-        args.add(notes).map_err(|e| { error!(?e, "arg add (notes) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(notes).map_err(|e| {
+            error!(?e, "arg add (notes) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(ref ings) = up.ingredients {
         for ing in ings {
@@ -489,22 +513,34 @@ fn build_update_args(
         }
         let s = serialize_json_or_empty(ings);
         sets.push("ingredients = json(?)");
-        args.add(s).map_err(|e| { error!(?e, "arg add (ingredients) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(s).map_err(|e| {
+            error!(?e, "arg add (ingredients) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(ref instr) = up.instructions {
         let s = serialize_json_or_empty(instr);
         sets.push("instructions = json(?)");
-        args.add(s).map_err(|e| { error!(?e, "arg add (instructions) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(s).map_err(|e| {
+            error!(?e, "arg add (instructions) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     if let Some(ref reminders) = up.prep_reminders {
         let s = serialize_json_or_empty(reminders);
         sets.push("prep_reminders = json(?)");
-        args.add(s).map_err(|e| { error!(?e, "arg add (prep_reminders) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        args.add(s).map_err(|e| {
+            error!(?e, "arg add (prep_reminders) failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     sets.push("updated_at = CURRENT_TIMESTAMP");
 
     let sql = format!("UPDATE recipes SET {} WHERE id = ?", sets.join(", "));
-    args.add(id).map_err(|e| { error!(?e, "arg add (id) failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    args.add(id).map_err(|e| {
+        error!(?e, "arg add (id) failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok((sql, args))
 }
@@ -617,7 +653,8 @@ pub async fn estimate_macros(
     // Load LLM settings from database
     let llm_settings = LlmSettings::load(&state.pool).await;
 
-    let macros = call_and_parse_macros_llm(&client, &state.config, &llm_settings, sys, &user, basis).await?;
+    let macros =
+        call_and_parse_macros_llm(&client, &state.config, &llm_settings, sys, &user, basis).await?;
 
     save_macros(&state, id, &macros).await?;
 
@@ -681,8 +718,7 @@ pub async fn reparse_ingredients(
         return Ok(Json(original));
     }
 
-    let user = serde_json::to_string(&lines)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user = serde_json::to_string(&lines).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -734,8 +770,6 @@ pub async fn reparse_ingredients(
 
     Ok(Json(result))
 }
-
-
 
 async fn load_recipe_row(state: &AppState, id: i64) -> AppResult<RecipeRow> {
     let sql = format!("SELECT {RECIPE_COLS} FROM recipes WHERE id = ?");
@@ -863,7 +897,8 @@ async fn call_and_parse_macros_llm(
     })?;
 
     // Convert to API model and calculate totals
-    let ingredients: Vec<crate::models::IngredientMacros> = parsed.ingredients
+    let ingredients: Vec<crate::models::IngredientMacros> = parsed
+        .ingredients
         .into_iter()
         .map(|ing| crate::models::IngredientMacros {
             name: ing.name,
@@ -938,12 +973,13 @@ async fn extract_and_save_prep_reminders(state: AppState, recipe_id: i64) {
             }
         };
 
-    let Some(instructions_json) = instructions_json else { return };
-    let instructions: Vec<String> =
-        match serde_json::from_str(&instructions_json) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+    let Some(instructions_json) = instructions_json else {
+        return;
+    };
+    let instructions: Vec<String> = match serde_json::from_str(&instructions_json) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
 
     if instructions.is_empty() {
         return;
@@ -958,7 +994,10 @@ async fn extract_and_save_prep_reminders(state: AppState, recipe_id: i64) {
 
     let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
-        .build() else { return };
+        .build()
+    else {
+        return;
+    };
 
     // Load LLM settings from database
     let llm_settings = LlmSettings::load(&state.pool).await;
@@ -988,16 +1027,17 @@ async fn extract_and_save_prep_reminders(state: AppState, recipe_id: i64) {
         }
     };
 
-    let reminders: Vec<crate::models::PrepReminder> =
-        match serde_json::from_value(val) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(?e, "prep_reminders: failed to parse LLM response");
-                return;
-            }
-        };
+    let reminders: Vec<crate::models::PrepReminder> = match serde_json::from_value(val) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(?e, "prep_reminders: failed to parse LLM response");
+            return;
+        }
+    };
 
-    let Ok(json) = serde_json::to_string(&reminders) else { return };
+    let Ok(json) = serde_json::to_string(&reminders) else {
+        return;
+    };
 
     if let Err(e) = sqlx::query("UPDATE recipes SET prep_reminders = json(?) WHERE id = ?")
         .bind(json)

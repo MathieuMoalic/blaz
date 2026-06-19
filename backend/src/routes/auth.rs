@@ -41,11 +41,13 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
 ) -> AppResult<Json<LoginResp>> {
-    let stored_hash = state.config.password_hash.as_ref()
+    let stored_hash = state
+        .config
+        .password_hash
+        .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
-    let parsed = PasswordHash::new(stored_hash)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let parsed = PasswordHash::new(stored_hash).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if Argon2::default()
         .verify_password(req.password.as_bytes(), &parsed)

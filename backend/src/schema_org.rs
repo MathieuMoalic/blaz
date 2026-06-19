@@ -17,7 +17,7 @@ pub fn extract_schema_recipe(html: &str) -> Option<SchemaRecipe> {
     // Find all JSON-LD script tags
     for script in document.select(&script_selector) {
         let json_text = script.text().collect::<String>();
-        
+
         // Try to parse as JSON
         let json: JsonValue = match serde_json::from_str(&json_text) {
             Ok(v) => v,
@@ -79,7 +79,7 @@ fn extract_recipe_fields(recipe: &JsonValue) -> Option<SchemaRecipe> {
 
     // Extract ingredients (can be array of strings or array of objects)
     let ingredients = extract_ingredients(recipe)?;
-    
+
     // Extract instructions (can be array of strings, objects with text, or HowToSection)
     let instructions = extract_instructions(recipe)?;
 
@@ -92,9 +92,9 @@ fn extract_recipe_fields(recipe: &JsonValue) -> Option<SchemaRecipe> {
 
 fn extract_ingredients(recipe: &JsonValue) -> Option<Vec<String>> {
     let ing_value = recipe.get("recipeIngredient")?;
-    
+
     let mut ingredients = Vec::new();
-    
+
     if let Some(arr) = ing_value.as_array() {
         for item in arr {
             if let Some(text) = item.as_str() {
@@ -105,7 +105,7 @@ fn extract_ingredients(recipe: &JsonValue) -> Option<Vec<String>> {
             }
         }
     }
-    
+
     if ingredients.is_empty() {
         None
     } else {
@@ -115,9 +115,9 @@ fn extract_ingredients(recipe: &JsonValue) -> Option<Vec<String>> {
 
 fn extract_instructions(recipe: &JsonValue) -> Option<Vec<String>> {
     let inst_value = recipe.get("recipeInstructions")?;
-    
+
     let mut instructions = Vec::new();
-    
+
     // Handle array of instructions
     if let Some(arr) = inst_value.as_array() {
         for item in arr {
@@ -158,7 +158,7 @@ fn extract_instructions(recipe: &JsonValue) -> Option<Vec<String>> {
             instructions.push(trimmed.to_string());
         }
     }
-    
+
     if instructions.is_empty() {
         None
     } else {

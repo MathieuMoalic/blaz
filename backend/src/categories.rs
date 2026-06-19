@@ -107,15 +107,16 @@ impl Category {
 
 /// Fetch all category names from the database.
 async fn fetch_category_names(state: &AppState) -> Vec<String> {
-    sqlx::query_scalar::<_, String>(
-        r"SELECT name FROM shopping_categories ORDER BY sort_order",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_else(|_| {
-        // Fallback to hardcoded categories if DB fails
-        Category::ALL.iter().map(|c| c.as_str().to_string()).collect()
-    })
+    sqlx::query_scalar::<_, String>(r"SELECT name FROM shopping_categories ORDER BY sort_order")
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_else(|_| {
+            // Fallback to hardcoded categories if DB fails
+            Category::ALL
+                .iter()
+                .map(|c| c.as_str().to_string())
+                .collect()
+        })
 }
 
 /// Check if a category name exists in the database.
@@ -228,8 +229,11 @@ mod tests {
         assert_eq!(Category::from_str("Non-Food"), Some(Category::NonFood));
         assert_eq!(Category::from_str("Pharmacy"), Some(Category::Pharmacy));
         assert_eq!(Category::from_str("Online"), Some(Category::Online));
-        assert_eq!(Category::from_str("Online Alcohol"), Some(Category::OnlineAlcohol));
-        
+        assert_eq!(
+            Category::from_str("Online Alcohol"),
+            Some(Category::OnlineAlcohol)
+        );
+
         assert_eq!(Category::from_str("Invalid"), None);
         assert_eq!(Category::from_str("fruits"), None); // Case sensitive
         assert_eq!(Category::from_str(""), None);
@@ -259,7 +263,7 @@ mod tests {
         assert_eq!(Category::Fruits.sort_key(), 1);
         assert_eq!(Category::Vegetables.sort_key(), 2);
         assert_eq!(Category::OnlineAlcohol.sort_key(), 13);
-        
+
         assert!(Category::Other.sort_key() < Category::Fruits.sort_key());
         assert!(Category::Fruits.sort_key() < Category::Vegetables.sort_key());
     }

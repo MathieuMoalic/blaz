@@ -1,5 +1,5 @@
-use axum::{Json, extract::State, http::StatusCode};
 use axum::extract::Multipart;
+use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use std::time::Duration;
 
@@ -39,15 +39,20 @@ pub async fn import_from_images(
     let mut images: Vec<(String, String)> = Vec::new(); // (mime, base64)
     let mut model_override: Option<String> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        (StatusCode::BAD_REQUEST, format!("multipart error: {e}"))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("multipart error: {e}")))?
+    {
         let name = field.name().unwrap_or_default().to_string();
 
         if name == "model" {
             // Text field for model override
             let text = field.text().await.map_err(|e| {
-                (StatusCode::BAD_REQUEST, format!("read model field error: {e}"))
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("read model field error: {e}"),
+                )
             })?;
             if !text.trim().is_empty() {
                 model_override = Some(text.trim().to_string());
@@ -64,9 +69,10 @@ pub async fn import_from_images(
             .content_type()
             .map_or_else(|| "image/jpeg".to_string(), ToString::to_string);
 
-        let bytes = field.bytes().await.map_err(|e| {
-            (StatusCode::BAD_REQUEST, format!("read error: {e}"))
-        })?;
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("read error: {e}")))?;
 
         if bytes.len() > MAX_IMAGE_BYTES {
             return Err((

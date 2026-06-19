@@ -5,7 +5,10 @@ use crate::{
     embedded_web::serve_embedded_web,
     logging::{access_log, log_payloads},
     models::AppState,
-    routes::{categories, import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe, recipes, settings, share_recipe, shopping},
+    routes::{
+        categories, import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe,
+        recipes, settings, share_recipe, shopping,
+    },
 };
 
 use axum::extract::DefaultBodyLimit;
@@ -35,16 +38,14 @@ async fn version() -> Json<VersionInfo> {
 }
 
 fn cors_layer(config: &Config) -> CorsLayer {
-    let cors = CorsLayer::new()
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
 
     if let Some(origin) = &config.cors_origin {
         // Specific origin for production
         cors.allow_origin(
             origin
                 .parse::<axum::http::HeaderValue>()
-                .expect("Invalid CORS origin")
+                .expect("Invalid CORS origin"),
         )
     } else {
         // Allow any origin (development only)
@@ -77,13 +78,15 @@ pub fn build_app(state: AppState) -> Router {
         .route("/recipes/check-duplicate", post(recipes::check_duplicate))
         .route(
             "/recipes/{id}",
-            delete(recipes::delete)
-                .patch(recipes::update),
+            delete(recipes::delete).patch(recipes::update),
         )
         .route("/recipes/{id}/restore", post(recipes::restore))
         .route("/recipes/{id}/permanent", delete(recipes::permanent_delete))
         .route("/recipes/{id}/image", post(recipes::upload_image))
-        .route("/recipes/{id}/share", post(share_recipe::create_share_token).delete(share_recipe::revoke_share_token))
+        .route(
+            "/recipes/{id}/share",
+            post(share_recipe::create_share_token).delete(share_recipe::revoke_share_token),
+        )
         .route(
             "/recipes/{id}/macros/estimate",
             post(recipes::estimate_macros),
@@ -93,15 +96,27 @@ pub fn build_app(state: AppState) -> Router {
             post(recipes::reparse_ingredients),
         )
         .route("/recipes/import", post(parse_recipe::import_from_url))
-        .route("/recipes/import/images", post(import_recipe_images::import_from_images))
-        .route("/recipes/import/recipesage", post(import_recipesage::import_recipesage))
+        .route(
+            "/recipes/import/images",
+            post(import_recipe_images::import_from_images),
+        )
+        .route(
+            "/recipes/import/recipesage",
+            post(import_recipesage::import_recipesage),
+        )
         .route(
             "/meal-plan",
             get(meal_plan::get_for_day).post(meal_plan::assign),
         )
         .route("/meal-plan/reminders", get(meal_plan::list_reminders))
-        .route("/meal-plan/recipe/{recipe_id}", get(meal_plan::get_for_recipe))
-        .route("/meal-plan/{day}/{recipe_id}", delete(meal_plan::unassign).patch(meal_plan::move_entry))
+        .route(
+            "/meal-plan/recipe/{recipe_id}",
+            get(meal_plan::get_for_recipe),
+        )
+        .route(
+            "/meal-plan/{day}/{recipe_id}",
+            delete(meal_plan::unassign).patch(meal_plan::move_entry),
+        )
         .route("/shopping", get(shopping::list).post(shopping::create))
         .route("/shopping/all-texts", get(shopping::list_all_texts))
         .route(
@@ -109,8 +124,14 @@ pub fn build_app(state: AppState) -> Router {
             patch(shopping::patch_shopping_item).delete(shopping::delete),
         )
         .route("/shopping/merge", post(shopping::merge_items))
-        .route("/categories", get(categories::list).post(categories::create))
-        .route("/categories/{id}", patch(categories::update).delete(categories::delete))
+        .route(
+            "/categories",
+            get(categories::list).post(categories::create),
+        )
+        .route(
+            "/categories/{id}",
+            patch(categories::update).delete(categories::delete),
+        )
         .route("/categories/reorder", post(categories::reorder))
         .route("/llm/credits", get(llm_credits::get))
         .route("/settings", get(settings::get_all).patch(settings::update))

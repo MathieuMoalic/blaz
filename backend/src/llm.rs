@@ -154,9 +154,12 @@ impl LlmClient {
         // Warn if the model was cut off — this usually causes truncated JSON.
         if envelope
             .pointer("/choices/0/finish_reason")
-            .and_then(|v| v.as_str()) == Some("length")
+            .and_then(|v| v.as_str())
+            == Some("length")
         {
-            tracing::warn!("LLM response truncated (finish_reason=length); output may be incomplete");
+            tracing::warn!(
+                "LLM response truncated (finish_reason=length); output may be incomplete"
+            );
         }
 
         let content = envelope
@@ -210,13 +213,11 @@ impl LlmClient {
     /// # Errors
     ///
     /// Will return err if the request fails or if the response can't be parsed as JSON.
-    pub async fn chat_json_images(
-        &self,
-        req: ImageChatRequest<'_>,
-    ) -> anyhow::Result<JsonValue> {
+    pub async fn chat_json_images(&self, req: ImageChatRequest<'_>) -> anyhow::Result<JsonValue> {
         let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
 
-        let mut content: Vec<JsonValue> = req.images
+        let mut content: Vec<JsonValue> = req
+            .images
             .iter()
             .map(|(mime, b64)| {
                 json!({
@@ -238,7 +239,8 @@ impl LlmClient {
             "response_format": { "type": "json_object" }
         });
 
-        let mut http_req = req.http
+        let mut http_req = req
+            .http
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .timeout(req.timeout)

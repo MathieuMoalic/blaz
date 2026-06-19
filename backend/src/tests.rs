@@ -17,14 +17,10 @@ mod integration {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .expect("in-memory pool");
-        crate::db::MIGRATOR
-            .run(&pool)
-            .await
-            .expect("migrations");
+        crate::db::MIGRATOR.run(&pool).await.expect("migrations");
 
         let jwt_secret = "integration-test-secret".to_string();
-        let jwt_encoding =
-            jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes());
+        let jwt_encoding = jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes());
 
         let config = crate::config::Config {
             verbose: 0,
@@ -48,13 +44,20 @@ mod integration {
             ntfy_url: None,
         };
 
-        crate::models::AppState { pool, jwt_encoding, config }
+        crate::models::AppState {
+            pool,
+            jwt_encoding,
+            config,
+        }
     }
 
     fn make_token() -> String {
         use jsonwebtoken::{Algorithm, Header, encode};
         #[derive(serde::Serialize)]
-        struct Claims { sub: i64, exp: u64 }
+        struct Claims {
+            sub: i64,
+            exp: u64,
+        }
 
         let exp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -166,10 +169,7 @@ mod integration {
         let token = make_token();
         let app = crate::app::build_app(state);
 
-        let resp = app
-            .oneshot(auth_get("/recipes", &token))
-            .await
-            .unwrap();
+        let resp = app.oneshot(auth_get("/recipes", &token)).await.unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = json_body(resp.into_body()).await;
@@ -231,10 +231,7 @@ mod integration {
             .await
             .unwrap();
 
-        let resp = app
-            .oneshot(auth_get("/recipes", &token))
-            .await
-            .unwrap();
+        let resp = app.oneshot(auth_get("/recipes", &token)).await.unwrap();
 
         let list = json_body(resp.into_body()).await;
         assert_eq!(list.as_array().unwrap().len(), 1);
@@ -377,10 +374,7 @@ mod integration {
         assert_eq!(body["failed"].as_array().unwrap().len(), 0);
 
         // Verify recipes actually exist
-        let list_resp = app
-            .oneshot(auth_get("/recipes", &token))
-            .await
-            .unwrap();
+        let list_resp = app.oneshot(auth_get("/recipes", &token)).await.unwrap();
         let recipes = json_body(list_resp.into_body()).await;
         assert_eq!(recipes.as_array().unwrap().len(), 2);
     }
@@ -401,14 +395,24 @@ mod integration {
 
         // First import
         app.clone()
-            .oneshot(auth_json("POST", "/recipes/import/recipesage", &token, &payload))
+            .oneshot(auth_json(
+                "POST",
+                "/recipes/import/recipesage",
+                &token,
+                &payload,
+            ))
             .await
             .unwrap();
 
         // Second import — should be skipped
         let resp = app
             .clone()
-            .oneshot(auth_json("POST", "/recipes/import/recipesage", &token, &payload))
+            .oneshot(auth_json(
+                "POST",
+                "/recipes/import/recipesage",
+                &token,
+                &payload,
+            ))
             .await
             .unwrap();
 
@@ -417,10 +421,7 @@ mod integration {
         assert_eq!(body["failed"].as_array().unwrap().len(), 0);
 
         // DB should still have only 1 recipe
-        let list_resp = app
-            .oneshot(auth_get("/recipes", &token))
-            .await
-            .unwrap();
+        let list_resp = app.oneshot(auth_get("/recipes", &token)).await.unwrap();
         let recipes = json_body(list_resp.into_body()).await;
         assert_eq!(recipes.as_array().unwrap().len(), 1);
     }
@@ -439,19 +440,26 @@ mod integration {
         }]);
 
         app.clone()
-            .oneshot(auth_json("POST", "/recipes/import/recipesage", &token, &payload))
+            .oneshot(auth_json(
+                "POST",
+                "/recipes/import/recipesage",
+                &token,
+                &payload,
+            ))
             .await
             .unwrap();
 
         app.clone()
-            .oneshot(auth_json("POST", "/recipes/import/recipesage", &token, &payload))
+            .oneshot(auth_json(
+                "POST",
+                "/recipes/import/recipesage",
+                &token,
+                &payload,
+            ))
             .await
             .unwrap();
 
-        let list_resp = app
-            .oneshot(auth_get("/recipes", &token))
-            .await
-            .unwrap();
+        let list_resp = app.oneshot(auth_get("/recipes", &token)).await.unwrap();
         let recipes = json_body(list_resp.into_body()).await;
         assert_eq!(recipes.as_array().unwrap().len(), 1);
     }
@@ -488,13 +496,13 @@ mod integration {
         let token = make_token();
         let app = crate::app::build_app(state);
 
-        let resp = app
-            .oneshot(auth_get("/shopping", &token))
-            .await
-            .unwrap();
+        let resp = app.oneshot(auth_get("/shopping", &token)).await.unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(json_body(resp.into_body()).await.as_array().unwrap().len(), 0);
+        assert_eq!(
+            json_body(resp.into_body()).await.as_array().unwrap().len(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -505,14 +513,16 @@ mod integration {
         let app = crate::app::build_app(state);
 
         app.clone()
-            .oneshot(auth_json("POST", "/shopping", &token, &json!({"text": "2 kg potatoes"})))
+            .oneshot(auth_json(
+                "POST",
+                "/shopping",
+                &token,
+                &json!({"text": "2 kg potatoes"}),
+            ))
             .await
             .unwrap();
 
-        let resp = app
-            .oneshot(auth_get("/shopping", &token))
-            .await
-            .unwrap();
+        let resp = app.oneshot(auth_get("/shopping", &token)).await.unwrap();
 
         let items = json_body(resp.into_body()).await;
         assert_eq!(items.as_array().unwrap().len(), 1);

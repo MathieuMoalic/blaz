@@ -80,9 +80,10 @@ pub async fn assign(
         Ok(_) => {}
         Err(e) => {
             if let sqlx::Error::Database(db) = &e
-                && db.is_unique_violation() {
-                    return Err(StatusCode::CONFLICT.into());
-                }
+                && db.is_unique_violation()
+            {
+                return Err(StatusCode::CONFLICT.into());
+            }
             return Err(e.into());
         }
     }
@@ -151,7 +152,10 @@ pub async fn get_for_recipe(
     State(state): State<AppState>,
     Path(recipe_id): Path<i64>,
 ) -> AppResult<Json<Vec<MealPlanEntry>>> {
-    let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let today = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
     let rows: Vec<MealPlanEntry> = sqlx::query_as::<_, MealPlanEntry>(
         r"
         SELECT mp.id, mp.day, mp.recipe_id, r.title AS title, r.image_path_small
@@ -168,7 +172,6 @@ pub async fn get_for_recipe(
 
     Ok(Json(rows))
 }
-
 
 #[derive(Deserialize)]
 pub struct MoveEntry {
@@ -189,26 +192,24 @@ pub async fn move_entry(
     Path((day, recipe_id)): Path<(String, i64)>,
     Json(req): Json<MoveEntry>,
 ) -> AppResult<Json<MealPlanEntry>> {
-    NaiveDate::parse_from_str(&req.new_day, "%Y-%m-%d")
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    NaiveDate::parse_from_str(&req.new_day, "%Y-%m-%d").map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let res = sqlx::query(
-        r"UPDATE meal_plan SET day = ? WHERE day = ? AND recipe_id = ?",
-    )
-    .bind(&req.new_day)
-    .bind(&day)
-    .bind(recipe_id)
-    .execute(&state.pool)
-    .await;
+    let res = sqlx::query(r"UPDATE meal_plan SET day = ? WHERE day = ? AND recipe_id = ?")
+        .bind(&req.new_day)
+        .bind(&day)
+        .bind(recipe_id)
+        .execute(&state.pool)
+        .await;
 
     match res {
         Ok(r) if r.rows_affected() == 0 => return Err(StatusCode::NOT_FOUND.into()),
         Ok(_) => {}
         Err(e) => {
             if let sqlx::Error::Database(db) = &e
-                && db.is_unique_violation() {
-                    return Err(StatusCode::CONFLICT.into());
-                }
+                && db.is_unique_violation()
+            {
+                return Err(StatusCode::CONFLICT.into());
+            }
             return Err(e.into());
         }
     }
@@ -265,7 +266,9 @@ pub async fn list_reminders(
     let mut result: Vec<PrepReminderDto> = Vec::new();
 
     for row in rows {
-        let Some(json) = row.prep_reminders else { continue };
+        let Some(json) = row.prep_reminders else {
+            continue;
+        };
         let Ok(reminders) = serde_json::from_str::<Vec<PrepReminder>>(&json) else {
             continue;
         };

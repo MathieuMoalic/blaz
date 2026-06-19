@@ -86,33 +86,33 @@ mod tests {
         assert_eq!(canon_unit_str("grams"), Some("g"));
         assert_eq!(canon_unit_str("G"), Some("g"));
         assert_eq!(canon_unit_str("GRAMS"), Some("g"));
-        
+
         assert_eq!(canon_unit_str("kg"), Some("kg"));
         assert_eq!(canon_unit_str("kilogram"), Some("kg"));
         assert_eq!(canon_unit_str("kilograms"), Some("kg"));
         assert_eq!(canon_unit_str("KG"), Some("kg"));
-        
+
         assert_eq!(canon_unit_str("ml"), Some("ml"));
         assert_eq!(canon_unit_str("milliliter"), Some("ml"));
         assert_eq!(canon_unit_str("millilitre"), Some("ml"));
         assert_eq!(canon_unit_str("milliliters"), Some("ml"));
         assert_eq!(canon_unit_str("millilitres"), Some("ml"));
-        
+
         assert_eq!(canon_unit_str("l"), Some("L"));
         assert_eq!(canon_unit_str("liter"), Some("L"));
         assert_eq!(canon_unit_str("litre"), Some("L"));
         assert_eq!(canon_unit_str("liters"), Some("L"));
         assert_eq!(canon_unit_str("litres"), Some("L"));
         assert_eq!(canon_unit_str("L"), Some("L"));
-        
+
         assert_eq!(canon_unit_str("tsp"), Some("tsp"));
         assert_eq!(canon_unit_str("teaspoon"), Some("tsp"));
         assert_eq!(canon_unit_str("teaspoons"), Some("tsp"));
-        
+
         assert_eq!(canon_unit_str("tbsp"), Some("tbsp"));
         assert_eq!(canon_unit_str("tablespoon"), Some("tbsp"));
         assert_eq!(canon_unit_str("tablespoons"), Some("tbsp"));
-        
+
         assert_eq!(canon_unit_str("unknown"), None);
         assert_eq!(canon_unit_str("cup"), None);
         assert_eq!(canon_unit_str(""), None);
@@ -121,21 +121,54 @@ mod tests {
     #[test]
     fn test_to_canonical_qty_unit() {
         // All units pass through without conversion.
-        assert_eq!(to_canonical_qty_unit(Some("kg"), Some(1.0)), (Some("kg"), Some(1.0)));
-        assert_eq!(to_canonical_qty_unit(Some("kg"), Some(2.5)), (Some("kg"), Some(2.5)));
-        assert_eq!(to_canonical_qty_unit(Some("KG"), Some(1.0)), (Some("kg"), Some(1.0)));
+        assert_eq!(
+            to_canonical_qty_unit(Some("kg"), Some(1.0)),
+            (Some("kg"), Some(1.0))
+        );
+        assert_eq!(
+            to_canonical_qty_unit(Some("kg"), Some(2.5)),
+            (Some("kg"), Some(2.5))
+        );
+        assert_eq!(
+            to_canonical_qty_unit(Some("KG"), Some(1.0)),
+            (Some("kg"), Some(1.0))
+        );
 
-        assert_eq!(to_canonical_qty_unit(Some("l"), Some(1.0)), (Some("L"), Some(1.0)));
-        assert_eq!(to_canonical_qty_unit(Some("L"), Some(1.5)), (Some("L"), Some(1.5)));
+        assert_eq!(
+            to_canonical_qty_unit(Some("l"), Some(1.0)),
+            (Some("L"), Some(1.0))
+        );
+        assert_eq!(
+            to_canonical_qty_unit(Some("L"), Some(1.5)),
+            (Some("L"), Some(1.5))
+        );
 
-        assert_eq!(to_canonical_qty_unit(Some("tbsp"), Some(2.0)), (Some("tbsp"), Some(2.0)));
-        assert_eq!(to_canonical_qty_unit(Some("TBSP"), Some(3.0)), (Some("tbsp"), Some(3.0)));
+        assert_eq!(
+            to_canonical_qty_unit(Some("tbsp"), Some(2.0)),
+            (Some("tbsp"), Some(2.0))
+        );
+        assert_eq!(
+            to_canonical_qty_unit(Some("TBSP"), Some(3.0)),
+            (Some("tbsp"), Some(3.0))
+        );
 
-        assert_eq!(to_canonical_qty_unit(Some("tsp"), Some(3.0)), (Some("tsp"), Some(3.0)));
-        assert_eq!(to_canonical_qty_unit(Some("TSP"), Some(2.0)), (Some("tsp"), Some(2.0)));
+        assert_eq!(
+            to_canonical_qty_unit(Some("tsp"), Some(3.0)),
+            (Some("tsp"), Some(3.0))
+        );
+        assert_eq!(
+            to_canonical_qty_unit(Some("TSP"), Some(2.0)),
+            (Some("tsp"), Some(2.0))
+        );
 
-        assert_eq!(to_canonical_qty_unit(Some("g"), Some(100.0)), (Some("g"), Some(100.0)));
-        assert_eq!(to_canonical_qty_unit(Some("ml"), Some(50.0)), (Some("ml"), Some(50.0)));
+        assert_eq!(
+            to_canonical_qty_unit(Some("g"), Some(100.0)),
+            (Some("g"), Some(100.0))
+        );
+        assert_eq!(
+            to_canonical_qty_unit(Some("ml"), Some(50.0)),
+            (Some("ml"), Some(50.0))
+        );
 
         assert_eq!(to_canonical_qty_unit(None, Some(5.0)), (None, Some(5.0)));
         assert_eq!(to_canonical_qty_unit(Some("g"), None), (Some("g"), None));
@@ -147,7 +180,10 @@ mod tests {
         assert_eq!(norm_whitespace("  hello   world  "), "hello world");
         assert_eq!(norm_whitespace("hello\t\tworld"), "hello world");
         assert_eq!(norm_whitespace("hello\nworld"), "hello world");
-        assert_eq!(norm_whitespace("  \t  hello  \n  world  \t  "), "hello world");
+        assert_eq!(
+            norm_whitespace("  \t  hello  \n  world  \t  "),
+            "hello world"
+        );
         assert_eq!(norm_whitespace("single"), "single");
         assert_eq!(norm_whitespace(""), "");
         assert_eq!(norm_whitespace("   "), "");

@@ -17,12 +17,11 @@ pub async fn create_share_token(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let existing: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT share_token FROM recipes WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&state.pool)
-    .await?;
+    let existing: Option<Option<String>> =
+        sqlx::query_scalar("SELECT share_token FROM recipes WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
 
     match existing {
         Some(Some(token)) => return Ok(Json(serde_json::json!({ "share_token": token }))),

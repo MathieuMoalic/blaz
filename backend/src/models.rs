@@ -21,9 +21,9 @@ pub struct Ingredient {
     #[serde(default)]
     pub quantity: Option<f64>, // e.g. 120.0
     #[serde(default)]
-    pub unit: Option<String>,  // "g","kg","ml","L","tsp","tbsp" (normalized)
+    pub unit: Option<String>, // "g","kg","ml","L","tsp","tbsp" (normalized)
     #[serde(default)]
-    pub name: String,          // e.g. "all-purpose flour"
+    pub name: String, // e.g. "all-purpose flour"
     #[serde(default)]
     pub prep: Option<String>,
     /// `true` = raw unparsed text; `false` = user-confirmed structured ingredient.
@@ -153,7 +153,7 @@ pub struct MealPlanEntry {
     pub id: i64,
     pub day: String, // "YYYY-MM-DD"
     pub recipe_id: i64,
-    pub title: String, // joined from recipes for convenience
+    pub title: String,                    // joined from recipes for convenience
     pub image_path_small: Option<String>, // joined from recipes
 }
 
@@ -172,7 +172,7 @@ pub struct ShoppingItemView {
     pub done: i64,
     pub category: Option<String>,
     pub notes: String,
-    pub recipe_ids: String, // JSON array like "[1,2,3]"
+    pub recipe_ids: String,            // JSON array like "[1,2,3]"
     pub recipe_titles: Option<String>, // Comma-separated like "Recipe A, Recipe B"
 }
 

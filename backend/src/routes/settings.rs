@@ -6,11 +6,10 @@ use crate::{error::AppResult, models::AppState};
 
 /// Get all settings
 pub async fn get_all(State(state): State<AppState>) -> AppResult<Json<HashMap<String, String>>> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, value FROM settings")
-            .fetch_all(&state.pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM settings")
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let map: HashMap<String, String> = rows.into_iter().collect();
     Ok(Json(map))

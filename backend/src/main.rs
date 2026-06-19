@@ -22,9 +22,9 @@ mod models;
 mod ntfy;
 mod routes;
 mod schema_org;
-mod units;
 #[cfg(test)]
 mod tests;
+mod units;
 
 use clap::Parser;
 use tokio::net::TcpListener;

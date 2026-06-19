@@ -5,7 +5,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 
 use crate::models::AppState;
@@ -34,7 +34,10 @@ pub async fn require_auth(
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     // Decode and verify JWT using the config's JWT secret
-    let jwt_secret = state.config.jwt_secret.as_ref()
+    let jwt_secret = state
+        .config
+        .jwt_secret
+        .as_ref()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let decoding_key = DecodingKey::from_secret(jwt_secret.as_bytes());
 

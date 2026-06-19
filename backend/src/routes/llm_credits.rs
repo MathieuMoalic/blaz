@@ -58,10 +58,7 @@ pub async fn get(State(state): State<AppState>) -> AppResult<Json<LlmCredits>> {
 
     let data = body.get("data").unwrap_or(&body);
 
-    let usage = data
-        .get("usage")
-        .and_then(JsonValue::as_f64)
-        .unwrap_or(0.0);
+    let usage = data.get("usage").and_then(JsonValue::as_f64).unwrap_or(0.0);
     let limit = data.get("limit").and_then(JsonValue::as_f64);
     let is_free_tier = data
         .get("is_free_tier")

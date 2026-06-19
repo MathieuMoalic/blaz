@@ -30,7 +30,11 @@ pub async fn create(
 ) -> AppResult<Json<ShoppingCategory>> {
     let name = req.name.trim();
     if name.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "Category name cannot be empty".to_string()).into());
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Category name cannot be empty".to_string(),
+        )
+            .into());
     }
 
     // Get max sort_order to append at end
@@ -40,13 +44,11 @@ pub async fn create(
             .await?;
     let new_order = max_order.unwrap_or(0) + 1;
 
-    let result = sqlx::query(
-        r"INSERT INTO shopping_categories (name, sort_order) VALUES (?, ?)",
-    )
-    .bind(name)
-    .bind(new_order)
-    .execute(&state.pool)
-    .await;
+    let result = sqlx::query(r"INSERT INTO shopping_categories (name, sort_order) VALUES (?, ?)")
+        .bind(name)
+        .bind(new_order)
+        .execute(&state.pool)
+        .await;
 
     match result {
         Ok(_) => {}
@@ -104,9 +106,11 @@ pub async fn update(
 
     if let Some(ref name) = new_name {
         if name.is_empty() {
-            return Err(
-                (StatusCode::BAD_REQUEST, "Category name cannot be empty".to_string()).into(),
-            );
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Category name cannot be empty".to_string(),
+            )
+                .into());
         }
         updates.push("name = ?");
         binds.push(name.clone());
@@ -140,7 +144,10 @@ pub async fn update(
             if let sqlx::Error::Database(db) = &e
                 && db.is_unique_violation()
             {
-                return Err((StatusCode::CONFLICT, "Category name already exists".to_string())
+                return Err((
+                    StatusCode::CONFLICT,
+                    "Category name already exists".to_string(),
+                )
                     .into());
             }
             return Err(e.into());
@@ -204,12 +211,10 @@ pub async fn delete(
     }
 
     // Check if any shopping items use this category
-    let count: i64 = sqlx::query_scalar(
-        r"SELECT COUNT(*) FROM shopping_items WHERE category = ?",
-    )
-    .bind(&existing.name)
-    .fetch_one(&state.pool)
-    .await?;
+    let count: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM shopping_items WHERE category = ?")
+        .bind(&existing.name)
+        .fetch_one(&state.pool)
+        .await?;
 
     if count > 0 {
         return Err((
