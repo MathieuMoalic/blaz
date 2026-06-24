@@ -827,7 +827,7 @@ Future<Recipe> uploadRecipeImage({
 }
 
 Future<List<Recipe>> fetchRecipes() async {
-  final res = await http.get(_u('/recipes'), headers: _headers(null, false));
+  final res = await http.get(_u('/recipes?limit=1000'), headers: _headers(null, false));
   if (res.statusCode != 200) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
