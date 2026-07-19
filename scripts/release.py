@@ -111,16 +111,16 @@ def update_flake_versions(version: str) -> None:
 
     text = replace_all_existing(
         text,
-        r'(pname = "blaz-web";\n\s+version = ")[^"]+(";)',
-        rf"\g<1>{version}\2",
+        r'(webBuild = pkgs\.flutter\.buildFlutterApplication \{)\n\s+pname = "blaz-web";\n\s+version = ")[^"]+(";)',
+        rf"\1\n    pname = "blaz-web";\n    version = \"{version}\";",
         "flake.nix blaz-web version",
     )
 
     text = replace_all_existing(
         text,
-        r'(pname = "blaz";\n\s+version = ")[^"]+(";)',
-        rf"\g<1>{version}\2",
-        "flake.nix blaz versions",
+        r'(package = pkgs\.rustPlatform\.buildRustPackage \{)\n\s+pname = "blaz";\n\s+version = ")[^"]+(";)',
+        rf"\1\n    pname = "blaz";\n    version = \"{version}\";",
+        "flake.nix blaz version",
     )
 
     FLAKE.write_text(text)
@@ -136,16 +136,9 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
 
     text = replace_all_existing(
         text,
-        r'(pname = "blaz-web";\n\s+version = ")[^"]+(";)',
-        rf"\g<1>{version}\2",
-        "flake.nix blaz-web version",
-    )
-
-    text = replace_all_existing(
-        text,
-        r'(pname = "blaz";\n\s+version = ")[^"]+(";)',
-        rf"\g<1>{version}\2",
-        "flake.nix blaz versions",
+        r'(prebuiltPackage = pkgs\.stdenvNoCC\.mkDerivation rec \{)\n\s+pname = "blaz";\n\s+version = ")[^"]+(";)',
+        rf"\1\n    pname = "blaz";\n    version = \"{version}\";",
+        "flake.nix prebuilt blaz version",
     )
 
     text = replace_once(
@@ -307,17 +300,30 @@ def release_command(bump_type: str) -> None:
         nix_hash = nix_hash_file(backend_artifact)
         update_flake_prebuilt(new, nix_hash)
         commit_and_tag(new)
+        
+        # Build Flutter APK and get hash
         apk_artifact = build_apk(new)
-
+        apk_hash = nix_hash_file(apk_artifact)
+        
+        # Update flake.nix for Flutter
+        update_flake_flutter(new, apk_hash)
+        
         print("\nRelease artifacts:")
-        print(f"  {backend_artifact}")
-        print(f"  {apk_artifact}")
-
+        print(f"  Backend: {backend_artifact}")
+        print(f"  APK: {apk_artifact}")
+        print(f"\nFlake.nix updated with local build artifacts.")
+        
         pushed = True
-        run("git", "push", "origin", "HEAD")
-        run("git", "push", "origin", tag)
-        push_release_command(tag)
-        print(f"\nReleased {tag}")
+        print(f"\nCreated release {tag} locally")
+        print(f"Built:")
+        print(f"  - Backend (nix)")
+        print(f"  - Web build")
+        print(f"  - APK ({new})")
+        print(f"\nTo publish:")
+        print(f"  1. Test builds locally")
+        print(f"  2. Commit flake.nix changes: git add flake.nix && git commit")
+        print(f"  3. Push commits: git push origin main")
+        print(f"  4. Push tag: git push origin {tag}")
     except Exception:
         if not pushed:
             run("git", "reset", "--hard", start_head)
@@ -329,6 +335,90 @@ def release_command(bump_type: str) -> None:
             if web_build.exists():
                 shutil.rmtree(web_build)
         raise
+
+
+def update_flake_flutter(version: str, apk_hash: str) -> None:
+    """Update flake.nix for Flutter web build and prebuilt package."""
+    text = FLAKE.read_text()
+    
+    # Update web build version
+    lines = text.split("\n")
+    output_lines = []
+    web_build_updated = False
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if ('webBuild = pkgs.flutter.buildFlutterApplication {' in line and 
+            i + 2 < len(lines) and 
+            'pname = "blaz-web";' in lines[i + 1] and 
+            'version = "0.1.0";' in lines[i + 2]):
+            # Update the version line
+            output_lines.append(line)
+            output_lines.append(lines[i + 1])
+            output_lines.append(line.replace("0.1.0", version))
+            web_build_updated = True
+            i += 3  # Skip the next 2 lines as we've already added them
+        else:
+            output_lines.append(line)
+            i += 1
+    
+    if not web_build_updated:
+        raise RuntimeError("Failed to update web build version")
+    
+    text = "\n".join(output_lines)
+    
+    # Find and update the prebuiltPackage section
+    lines = text.split("\n")
+    output_lines = []
+    in_prebuilt_section = False
+    src_replaced = False
+    version_updated = False
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if in_prebuilt_section:
+            if 'version = "2.8.1";' in line and not version_updated:
+                # Update version
+                output_lines.append(line.replace('version = "2.8.1";', f'version = "{version}";'))
+                version_updated = True
+                i += 1
+                continue
+            elif 'src = pkgs.fetchurl {' in line and not src_replaced:
+                # Replace with local src and advance past the fetchurl block
+                brace_count = 1
+                j = i + 1
+                while j < len(lines) and brace_count > 0:
+                    if '{' in lines[j]:
+                        brace_count += 1
+                    if '}' in lines[j]:
+                        brace_count -= 1
+                    j += 1
+                
+                # Replace the src line and skip to end of fetchurl block
+                output_lines.append(line.replace('src = pkgs.fetchurl {', 'src = ./backend;'))
+                i = j  # Skip to end of block
+                in_prebuilt_section = False
+                src_replaced = True
+                continue
+            else:
+                output_lines.append(line)
+                i += 1
+        else:
+            output_lines.append(line)
+            if "prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {" in line:
+                in_prebuilt_section = True
+            i += 1
+    
+    text = "\n".join(output_lines)
+    
+    if not version_updated:
+        raise RuntimeError("Failed to update prebuilt package version")
+    if not src_replaced:
+        raise RuntimeError("Failed to update prebuilt package src")
+    
+    FLAKE.write_text(text)
 
 
 def main() -> None:
