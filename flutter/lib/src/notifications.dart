@@ -85,6 +85,7 @@ void _callbackDispatcher() {
 }
 
 /// Check for reminders and send notifications
+/// Sends one notification per recipe on the day before it's planned, at 20:00
 Future<void> _checkAndNotifyReminders() async {
   try {
     // Load stored credentials
@@ -101,29 +102,47 @@ Future<void> _checkAndNotifyReminders() async {
     // Set auth token
     api.setAuthToken(authToken);
 
-    // Fetch reminders
+    // Fetch reminders for next 30 days
     final reminders = await api.fetchUpcomingReminders();
     
-    // Get today and tomorrow dates
+    // Get today's date
     final now = DateTime.now();
     final today = _formatDate(now);
-    final tomorrow = _formatDate(now.add(const Duration(days: 1)));
-
-    // Filter to today/tomorrow
-    final urgentReminders = reminders
-        .where((r) => r.dueDate == today || r.dueDate == tomorrow)
-        .toList();
-
-    if (urgentReminders.isEmpty) return;
-
-    // Send notifications
-    for (int i = 0; i < urgentReminders.length; i++) {
-      final r = urgentReminders[i];
-      final when = r.dueDate == today ? 'today' : 'tomorrow';
+    
+    // Group reminders by recipe to get unique recipes
+    final recipesToNotify = <String, String>{};
+    
+    for (final r in reminders) {
+      if (r.recipeTitle.isEmpty) continue;
+      
+      // Check if today is the day before this recipe's due date
+      final dueDate = r.dueDate;
+      
+      // Parse dates to compare
+      final todayDate = DateTime.tryParse('$today 00:00:00');
+      final dueDateObj = DateTime.tryParse('$dueDate 00:00:00');
+      
+      if (todayDate != null && dueDateObj != null) {
+        // Check if today is the day before the due date
+        final dayBeforeDue = dueDateObj.subtract(const Duration(days: 1));
+        final dayBeforeDueStr = _formatDate(dayBeforeDue);
+        
+        if (today == dayBeforeDueStr) {
+          // This recipe needs notification today
+          recipesToNotify[r.recipeId.toString()] = r.recipeTitle;
+        }
+      }
+    }
+    
+    if (recipesToNotify.isEmpty) return;
+    
+    // Send one notification per recipe
+    for (var i = 0; i < recipesToNotify.length; i++) {
+      final recipeTitle = recipesToNotify.values.elementAt(i);
       await _showNotification(
         id: i,
-        title: 'Prep Reminder: ${r.recipeTitle}',
-        body: '$when: ${r.step}',
+        title: 'Prep Reminder: $recipeTitle',
+        body: 'Prepare for $today',
       );
     }
   } catch (e) {
