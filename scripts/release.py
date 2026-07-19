@@ -228,6 +228,9 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python3 release.py release <type>")
         print("Example: python3 release.py release stable")
+        print("")
+        print("This script builds both backend and Flutter, and updates flake.nix")
+        print("Git tagging is handled by the justfile")
         sys.exit(1)
     
     release_type = sys.argv[1]
@@ -236,7 +239,7 @@ def main():
     today = datetime.now().strftime("%Y.%m.%d")
     version = f"{today}-{release_type}"
     
-    print(f"=== Starting Release Process for {version} ===")
+    print(f"=== Local Release Process for {version} ===")
     print(f"Release type: {release_type}")
     
     # Ensure we're on the main branch
@@ -247,20 +250,9 @@ def main():
         if response != "y":
             sys.exit(1)
     
-    # Create a new git tag
-    print(f"\n=== Creating Tag ===")
-    run_command(["git", "tag", "-a", version, "-m", f"Release {version}"])
-    print(f"Created tag {version}")
-    
     # Build everything
     build_backend()
     build_flutter()
-    
-    # Create release notes
-    notes = create_release_notes(version)
-    
-    # Create GitHub release
-    create_github_release(version, notes)
     
     # Update flake.nix
     update_flake_nix()
@@ -272,9 +264,10 @@ def main():
     print(f"Committed flake.nix update")
     
     print(f"\n=== Release {version} Complete ===")
-    print("Don't forget to push your tags:")
+    print("Built artifacts are ready in the build directories.")
+    print("Don't forget to push your commits and tags:")
+    print(f"  git push origin main")
     print(f"  git push origin {version}")
-    print("  git push origin main")
 
 if __name__ == "__main__":
     main()
