@@ -17,3 +17,5 @@ flutter/android/.gradle/
 flutter/android/.cxx/
 backend/recipesage.json
 result
+/.cache/codebase-memory-mcp
+/scripts/__pycache__
