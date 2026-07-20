@@ -333,8 +333,6 @@ def build_apk(version: str) -> Path:
         "flutter",
         "build",
         "apk",
-        "--flavor",
-        "prod",
         "--release",
         "--build-name",
         version,
@@ -344,7 +342,7 @@ def build_apk(version: str) -> Path:
     )
 
     source = (
-        FLUTTER / "build" / "app" / "outputs" / "flutter-apk" / "app-prod-release.apk"
+        FLUTTER / "build" / "app" / "outputs" / "flutter-apk" / "app-release.apk"
     )
     shutil.copy2(source, artifact)
     return artifact
