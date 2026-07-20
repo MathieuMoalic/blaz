@@ -219,9 +219,10 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
         if ('webBuild = pkgs.flutter.buildFlutterApplication {' in line and 
             i + 2 < len(lines) and 
             'pname = "blaz-web";' in lines[i + 1] and 
-            'version = "0.1.0";' in lines[i + 2]):
-            # Update the version line
-            lines[i + 2] = lines[i + 2].replace("0.1.0", version)
+            'version = "' in lines[i + 2]):
+            # Update the version line (replace the version number between quotes)
+            import re
+            lines[i + 2] = re.sub(r'(version = ")[^"]+(";)', r'\g<1>' + version + r'\g<2>', lines[i + 2])
             web_build_updated = True
             i += 3
         else:
