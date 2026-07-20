@@ -264,7 +264,11 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
     if not prebuilt_found:
         raise RuntimeError("Failed to find prebuiltPackage in flake.nix")
     
-    FLAKE.write_text("\n".join(output_lines))
+    # Also update the outputs section to reference package instead of prebuiltPackage
+    text = "\n".join(output_lines)
+    text = text.replace('prebuilt = prebuiltPackage;', 'prebuilt = package;')
+    
+    FLAKE.write_text(text)
 
 
 def cargo_check() -> None:
@@ -396,10 +400,13 @@ def release_command(bump_type: str) -> None:
         update_version_files(old, new)
         cargo_check()
         build_flutter_web()
+        
+        # Update flake.nix before building backend
+        update_flake_prebuilt(new, "placeholder")
+        commit_and_tag(new)
+        
         backend_artifact = build_backend_archive(new)
         nix_hash = nix_hash_file(backend_artifact)
-        update_flake_prebuilt(new, nix_hash)
-        commit_and_tag(new)
         
         # Build Flutter APK and get hash
         apk_artifact = build_apk(new)
