@@ -126,155 +126,49 @@ def update_flake_versions(version: str) -> None:
     FLAKE.write_text(text)
 
 
-def update_flake_flutter(version: str, apk_hash: str) -> None:
-    """Update flake.nix for Flutter web build and prebuilt package."""
-    text = FLAKE.read_text()
-    
-    # Update web build version
-    lines = text.split("\n")
-    web_build_updated = False
-    
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if ('webBuild = pkgs.flutter.buildFlutterApplication {' in line and 
-            i + 2 < len(lines) and 
-            'pname = "blaz-web";' in lines[i + 1] and 
-            'version = "' in lines[i + 2]):
-            # Update the version line (replace the version number between quotes)
-            import re
-            lines[i + 2] = re.sub(r'(version = ")[^"]+(";)', r'\g<1>' + version + r'\g<2>', lines[i + 2])
-            web_build_updated = True
-            i += 3
-        else:
-            i += 1
-    
-    if not web_build_updated:
-        raise RuntimeError("Failed to update web build version")
-    
-    # Update prebuilt package version and src to local
-    text = "\n".join(lines)
-    
-    lines = text.split("\n")
-    in_prebuilt_section = False
-    src_replaced = False
-    version_updated = False
-    
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if in_prebuilt_section:
-            if 'version = "2.8.1";' in line and not version_updated:
-                # Update version
-                lines[i] = line.replace('version = "2.8.1";', f'version = "{version}";')
-                version_updated = True
-                i += 1
-                continue
-            elif 'src = pkgs.fetchurl {' in line and not src_replaced:
-                # Replace with local src and advance past the fetchurl block
-                brace_count = 1
-                j = i + 1
-                while j < len(lines) and brace_count > 0:
-                    if '{' in lines[j]:
-                        brace_count += 1
-                    if '}' in lines[j]:
-                        brace_count -= 1
-                    j += 1
-                
-                # Replace the src line and skip to end of fetchurl block
-                lines[i] = line.replace('src = pkgs.fetchurl {', 'src = ./backend;')
-                i = j
-                in_prebuilt_section = False
-                src_replaced = True
-                continue
-            else:
-                i += 1
-        else:
-            if "prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {" in line:
-                in_prebuilt_section = True
-            i += 1
-    
-    text = "\n".join(lines)
-    
-    if not version_updated:
-        raise RuntimeError("Failed to update prebuilt package version")
-    if not src_replaced:
-        raise RuntimeError("Failed to update prebuilt package src")
-    
-    FLAKE.write_text(text)
-
-
 def update_flake_prebuilt(version: str, nix_hash: str) -> None:
-    """Update flake.nix for local builds."""
+    tag = f"v{version}"
+    archive_name = f"{APP}-{tag}-{TARGET}.tar.gz"
+    binary_name = f"{APP}-{tag}-{TARGET}"
+    url = f"https://github.com/{REPO}/releases/download/{tag}/{archive_name}"
+
     text = FLAKE.read_text()
-    
-    # Update web build version
-    lines = text.split("\n")
-    web_build_updated = False
-    
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if ('webBuild = pkgs.flutter.buildFlutterApplication {' in line and 
-            i + 2 < len(lines) and 
-            'pname = "blaz-web";' in lines[i + 1] and 
-            'version = "' in lines[i + 2]):
-            # Update the version line (replace the version number between quotes)
-            import re
-            lines[i + 2] = re.sub(r'(version = ")[^"]+(";)', r'\g<1>' + version + r'\g<2>', lines[i + 2])
-            web_build_updated = True
-            i += 3
-        else:
-            i += 1
-    
-    if not web_build_updated:
-        raise RuntimeError("Failed to update web build version")
-    
-    # Replace prebuiltPackage with just a reference to package
-    text = "\n".join(lines)
-    
-    # Check if already replaced (idempotent)
-    if 'prebuilt = package;' in text:
-        # Already updated, just need to make sure outputs section is correct
-        text = text.replace('prebuilt = prebuiltPackage;', 'prebuilt = package;')
-        FLAKE.write_text(text)
-        return
-    
-    # Find the prebuiltPackage section and replace it with just the assignment
-    lines = text.split("\n")
-    output_lines = []
-    skip_until_closing = False
-    prebuilt_found = False
-    brace_count = 0
-    
-    for i, line in enumerate(lines):
-        if 'prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {' in line:
-            skip_until_closing = True
-            brace_count = 1
-            prebuilt_found = True
-            output_lines.append('    prebuilt = package;')
-            continue
-        
-        if skip_until_closing:
-            # Count braces to find the end of the prebuiltPackage block
-            if '{' in line:
-                brace_count += 1
-            if '}' in line:
-                brace_count -= 1
-            
-            if brace_count == 0:
-                skip_until_closing = False
-            continue
-        
-        output_lines.append(line)
-    
-    if not prebuilt_found:
-        raise RuntimeError("Failed to find prebuiltPackage in flake.nix")
-    
-    # Also update the outputs section to reference package instead of prebuiltPackage
-    text = "\n".join(output_lines)
-    text = text.replace('prebuilt = prebuiltPackage;', 'prebuilt = package;')
-    
+
+    text = replace_all_existing(
+        text,
+        r'(pname = "blaz-web";\n\s+version = ")[^"]+(";)',
+        rf"\g<1>{version}\2",
+        "flake.nix blaz-web version",
+    )
+
+    text = replace_all_existing(
+        text,
+        r'(pname = "blaz";\n\s+version = ")[^"]+(";)',
+        rf"\g<1>{version}\2",
+        "flake.nix blaz versions",
+    )
+
+    text = replace_once(
+        text,
+        r'url = "https://github\.com/MathieuMoalic/blaz/releases/download/[^"]+";',
+        f'url = "{url}";',
+        "flake.nix prebuilt URL",
+    )
+
+    text = replace_once(
+        text,
+        r'hash = "sha256-[^"]+";',
+        f'hash = "{nix_hash}";',
+        "flake.nix prebuilt hash",
+    )
+
+    text = replace_once(
+        text,
+        r"install -Dm755 blaz-v[0-9]+\.[0-9]+\.[0-9]+-x86_64-linux \$out/bin/blaz",
+        f"install -Dm755 {binary_name} $out/bin/blaz",
+        "flake.nix prebuilt install path",
+    )
+
     FLAKE.write_text(text)
 
 
@@ -407,20 +301,11 @@ def release_command(bump_type: str) -> None:
         update_version_files(old, new)
         cargo_check()
         build_flutter_web()
-        
-        # Update flake.nix before building backend
-        update_flake_prebuilt(new, "placeholder")
-        commit_and_tag(new)
-        
         backend_artifact = build_backend_archive(new)
         nix_hash = nix_hash_file(backend_artifact)
-        
-        # Build Flutter APK and get hash
+        update_flake_prebuilt(new, nix_hash)
+        commit_and_tag(new)
         apk_artifact = build_apk(new)
-        apk_hash = nix_hash_file(apk_artifact)
-        
-        # Update flake.nix for Flutter
-        update_flake_flutter(new, apk_hash)
 
         print("\nRelease artifacts:")
         print(f"  {backend_artifact}")
