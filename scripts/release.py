@@ -234,6 +234,13 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
     # Replace prebuiltPackage with just a reference to package
     text = "\n".join(lines)
     
+    # Check if already replaced (idempotent)
+    if 'prebuilt = package;' in text:
+        # Already updated, just need to make sure outputs section is correct
+        text = text.replace('prebuilt = prebuiltPackage;', 'prebuilt = package;')
+        FLAKE.write_text(text)
+        return
+    
     # Find the prebuiltPackage section and replace it with just the assignment
     lines = text.split("\n")
     output_lines = []
