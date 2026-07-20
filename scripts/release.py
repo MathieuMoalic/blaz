@@ -221,9 +221,7 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
             'pname = "blaz-web";' in lines[i + 1] and 
             'version = "0.1.0";' in lines[i + 2]):
             # Update the version line
-            lines[i] = line
-            lines[i + 1] = lines[i + 1]
-            lines[i + 2] = line.replace("0.1.0", version)
+            lines[i + 2] = lines[i + 2].replace("0.1.0", version)
             web_build_updated = True
             i += 3
         else:
@@ -232,56 +230,41 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
     if not web_build_updated:
         raise RuntimeError("Failed to update web build version")
     
-    # Update prebuilt package version and src to local
+    # Replace prebuiltPackage with just a reference to package
     text = "\n".join(lines)
     
+    # Find the prebuiltPackage section and replace it with just the assignment
     lines = text.split("\n")
-    in_prebuilt_section = False
-    src_replaced = False
-    version_updated = False
+    output_lines = []
+    skip_until_closing = False
+    prebuilt_found = False
+    brace_count = 0
     
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if in_prebuilt_section:
-            if 'version = "2.8.1";' in line and not version_updated:
-                # Update version
-                lines[i] = line.replace('version = "2.8.1";', f'version = "{version}";')
-                version_updated = True
-                i += 1
-                continue
-            elif 'src = pkgs.fetchurl {' in line and not src_replaced:
-                # Replace with local src and advance past the fetchurl block
-                brace_count = 1
-                j = i + 1
-                while j < len(lines) and brace_count > 0:
-                    if '{' in lines[j]:
-                        brace_count += 1
-                    if '}' in lines[j]:
-                        brace_count -= 1
-                    j += 1
-                
-                # Replace the src line and skip to end of fetchurl block
-                lines[i] = line.replace('src = pkgs.fetchurl {', 'src = ./backend;')
-                i = j
-                in_prebuilt_section = False
-                src_replaced = True
-                continue
-            else:
-                i += 1
-        else:
-            if "prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {" in line:
-                in_prebuilt_section = True
-            i += 1
+    for i, line in enumerate(lines):
+        if 'prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {' in line:
+            skip_until_closing = True
+            brace_count = 1
+            prebuilt_found = True
+            output_lines.append('    prebuilt = package;')
+            continue
+        
+        if skip_until_closing:
+            # Count braces to find the end of the prebuiltPackage block
+            if '{' in line:
+                brace_count += 1
+            if '}' in line:
+                brace_count -= 1
+            
+            if brace_count == 0:
+                skip_until_closing = False
+            continue
+        
+        output_lines.append(line)
     
-    text = "\n".join(lines)
+    if not prebuilt_found:
+        raise RuntimeError("Failed to find prebuiltPackage in flake.nix")
     
-    if not version_updated:
-        raise RuntimeError("Failed to update prebuilt package version")
-    if not src_replaced:
-        raise RuntimeError("Failed to update prebuilt package src")
-    
-    FLAKE.write_text(text)
+    FLAKE.write_text("\n".join(output_lines))
 
 
 def cargo_check() -> None:
