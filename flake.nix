@@ -60,7 +60,7 @@
 
     webBuild = pkgs.flutter.buildFlutterApplication {
       pname = "blaz-web";
-      version = "0.1.0";
+      version = "2.8.3";
       src = pkgs.lib.cleanSource ./flutter;
       autoPubspecLock = ./flutter/pubspec.lock;
       targetFlutterPlatform = "web";
@@ -104,33 +104,7 @@
     # NOTE: This always points to a previous stable release since we can't
     # know the hash until after the release is built. This is intentional
     # and keeps deployment fast while source builds always give you latest.
-    prebuiltPackage = pkgs.stdenvNoCC.mkDerivation rec {
-      pname = "blaz";
-      version = "2.8.1";
-
-      src = pkgs.fetchurl {
-        url = "https://github.com/MathieuMoalic/blaz/releases/download/v${version}/blaz-v${version}-x86_64-linux";
-        sha256 = "sha256-9+V4/5nlHBxo0KMKG+jBK+MWzYByHTdxu9+TI5G2xwY=";
-      };
-
-      dontUnpack = true;
-
-      installPhase = ''
-        runHook preInstall
-        mkdir -p "$out/bin"
-        cp "$src" "$out/bin/blaz"
-        chmod +x "$out/bin/blaz"
-        runHook postInstall
-      '';
-
-      meta = with lib; {
-        description = "Recipe manager backend (prebuilt binary from latest release)";
-        homepage = "https://github.com/MathieuMoalic/blaz";
-        license = licenses.gpl3;
-        platforms = ["x86_64-linux"];
-        mainProgram = "blaz";
-      };
-    };
+    prebuilt = package;
 
     service = {
       lib,
