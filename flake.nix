@@ -60,7 +60,7 @@
 
     webBuild = pkgs.flutter.buildFlutterApplication {
       pname = "blaz-web";
-      version = "2.8.3";
+      version = "2.8.4";
       src = pkgs.lib.cleanSource ./flutter;
       autoPubspecLock = ./flutter/pubspec.lock;
       targetFlutterPlatform = "web";
@@ -385,7 +385,7 @@
       default = package;
       backend = package;
       web = webBuild;
-      prebuilt = prebuiltPackage;
+      prebuilt = package;
     };
   };
 }
