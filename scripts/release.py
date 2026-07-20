@@ -302,20 +302,18 @@ def release_command(bump_type: str) -> None:
         cargo_check()
         build_flutter_web()
         backend_artifact = build_backend_archive(new)
-        nix_hash = nix_hash_file(backend_artifact)
-        update_flake_prebuilt(new, nix_hash)
         commit_and_tag(new)
         apk_artifact = build_apk(new)
 
         print("\nRelease artifacts:")
-        print(f"  {backend_artifact}")
-        print(f"  {apk_artifact}")
+        print(f"  Backend: {backend_artifact}")
+        print(f"  APK: {apk_artifact}")
 
         pushed = True
-        run("git", "push", "origin", "HEAD")
-        run("git", "push", "origin", tag)
-        push_release_command(tag)
-        print(f"\nReleased {tag}")
+        print(f"\nCreated release {tag}")
+        print(f"\nTo publish:")
+        print(f"  git push origin main")
+        print(f"  git push origin {tag}")
     except Exception:
         if not pushed:
             run("git", "reset", "--hard", start_head)
