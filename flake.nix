@@ -172,6 +172,12 @@
           description = "Path to SQLite database file";
         };
 
+        mediaDir = lib.mkOption {
+          type = lib.types.str;
+          default = "/var/lib/blaz/media";
+          description = "Directory to store media files (recipe images)";
+        };
+
         logFile = lib.mkOption {
           type = lib.types.str;
           default = "/var/lib/blaz/blaz.log";
@@ -270,6 +276,7 @@
 
         systemd.tmpfiles.rules = [
           "d ${dirOf cfg.databasePath} 0750 blaz blaz - -"
+          "d ${cfg.mediaDir} 0750 blaz blaz - -"
           "d ${dirOf cfg.logFile} 0750 blaz blaz - -"
           "f ${cfg.logFile} 0640 blaz blaz - -"
         ];
@@ -283,6 +290,7 @@
             {
               BLAZ_BIND_ADDR = cfg.bindAddr;
               BLAZ_DATABASE_PATH = cfg.databasePath;
+              BLAZ_MEDIA_DIR = cfg.mediaDir;
               BLAZ_LOG_FILE = cfg.logFile;
               BLAZ_LLM_API_URL = cfg.llmApiUrl;
               BLAZ_LLM_MODEL = cfg.llmModel;
@@ -326,7 +334,10 @@
             NoNewPrivileges = "yes";
             PrivateTmp = "yes";
             ProtectSystem = "strict";
-            ReadWritePaths = [(dirOf cfg.databasePath)];
+            ReadWritePaths = [
+              (dirOf cfg.databasePath)
+              cfg.mediaDir
+            ];
             SocketBindAllow = let
               port = lib.last (lib.splitString ":" cfg.bindAddr);
             in ["tcp:${port}"];

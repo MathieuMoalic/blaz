@@ -19,3 +19,4 @@ backend/recipesage.json
 result
 /.cache/codebase-memory-mcp
 /scripts/__pycache__
+/release/artifacts
