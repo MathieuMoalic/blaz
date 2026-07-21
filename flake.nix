@@ -15,14 +15,11 @@
     androidSdk =
       (pkgs.androidenv.composeAndroidPackages {
         platformVersions = ["36" "35" "34"];
-        buildToolsVersions = ["35.0.0" "34.0.0"];
-
+        buildToolsVersions = ["36.0.0" "35.0.0" "34.0.0"];
         ndkVersions = ["27.0.12077973"];
         includeNDK = true;
-
         cmakeVersions = ["3.22.1"];
         includeCmake = true;
-
         includeEmulator = false;
       }).androidsdk;
 
@@ -47,8 +44,24 @@
         sqlite
         sqlx-cli
         watchexec
-        github-copilot-cli
-        uv
+        tmux
+        git
+        bashInteractive
+        coreutils
+        gnugrep
+        gnused
+        gawk
+        findutils
+        which
+        curl
+        jq
+        procps
+        lsof
+        ripgrep
+        fd
+        netcat-openbsd
+        chromium
+        chromedriver
       ];
 
       RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
@@ -56,11 +69,12 @@
       ANDROID_SDK_ROOT = sdkRoot;
       ANDROID_HOME = sdkRoot;
       JAVA_HOME = "${pkgs.jdk17}/lib/openjdk";
+      CHROME_EXECUTABLE = "${pkgs.chromium}/bin/chromium";
     };
 
     webBuild = pkgs.flutter.buildFlutterApplication {
       pname = "blaz-web";
-      version = "2.8.4";
+      version = "0.1.0";
       src = pkgs.lib.cleanSource ./flutter;
       autoPubspecLock = ./flutter/pubspec.lock;
       targetFlutterPlatform = "web";
@@ -84,7 +98,6 @@
         openssl
       ];
 
-      # Copy web build before building rust
       preBuild = ''
         mkdir -p web_build
         cp -r ${webBuild}/* web_build/
@@ -100,11 +113,35 @@
       };
     };
 
-    # Prebuilt binary from GitHub releases (faster, no compilation needed)
-    # NOTE: This always points to a previous stable release since we can't
-    # know the hash until after the release is built. This is intentional
-    # and keeps deployment fast while source builds always give you latest.
-    prebuilt = package;
+    prebuilt = pkgs.stdenvNoCC.mkDerivation {
+      pname = "blaz";
+      version = "0.1.0";
+
+      src = pkgs.fetchurl {
+        url = "https://github.com/MathieuMoalic/blaz/releases/download/v0.1.0/blaz-v0.1.0-x86_64-linux.tar.gz";
+        hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+      };
+
+      sourceRoot = ".";
+
+      nativeBuildInputs = [pkgs.patchelf];
+
+      installPhase = ''
+        install -Dm755 blaz-v0.1.0-x86_64-linux $out/bin/blaz
+        patchelf \
+          --set-interpreter ${pkgs.stdenv.cc.bintools.dynamicLinker} \
+          --set-rpath ${lib.makeLibraryPath [pkgs.stdenv.cc.cc.lib pkgs.glibc]} \
+          $out/bin/blaz
+      '';
+
+      meta = with lib; {
+        description = "Recipe manager backend (prebuilt)";
+        homepage = "https://github.com/MathieuMoalic/blaz";
+        license = licenses.gpl3;
+        platforms = ["x86_64-linux"];
+        maintainers = [];
+      };
+    };
 
     service = {
       lib,
@@ -120,8 +157,7 @@
         package = lib.mkOption {
           type = lib.types.package;
           default = package;
-          defaultText = lib.literalExpression "package (built from source)";
-          description = "The blaz package to use. Set to prebuiltPackage to use prebuilt binaries from GitHub releases.";
+          description = "The blaz package to use.";
         };
 
         bindAddr = lib.mkOption {
@@ -134,12 +170,6 @@
           type = lib.types.str;
           default = "/var/lib/blaz/blaz.sqlite";
           description = "Path to SQLite database file";
-        };
-
-        mediaDir = lib.mkOption {
-          type = lib.types.str;
-          default = "/var/lib/blaz/media";
-          description = "Directory to store media files (recipe images)";
         };
 
         logFile = lib.mkOption {
@@ -161,60 +191,52 @@
           description = "Log verbosity level (-2 to 3, where 0 is info)";
         };
 
-        # Authentication options
         passwordHash = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
-          description = "Argon2 password hash for authentication. Generate with: blaz hash-password";
+          description = "Argon2 password hash. Generate with: blaz hash-password";
         };
 
         passwordHashFile = lib.mkOption {
           type = lib.types.nullOr lib.types.path;
           default = null;
-          description = "Path to file containing password hash (for use with sops-nix)";
+          description = "Path to file containing password hash (for sops-nix)";
         };
 
         jwtSecret = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
-          description = "JWT secret for token signing. If not set, generates a random one (tokens won't persist across restarts)";
+          description = "JWT secret. If not set, generates a random one.";
         };
 
         jwtSecretFile = lib.mkOption {
           type = lib.types.nullOr lib.types.path;
           default = null;
-          description = "Path to file containing JWT secret (for use with sops-nix)";
-        };
-
-        # LLM options
-        llmApiKey = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = "LLM API key for recipe parsing and macro estimation";
-        };
-
-        llmApiKeyFile = lib.mkOption {
-          type = lib.types.nullOr lib.types.path;
-          default = null;
-          description = "Path to file containing LLM API key (for use with sops-nix)";
+          description = "Path to file containing JWT secret (for sops-nix)";
         };
 
         llmApiUrl = lib.mkOption {
           type = lib.types.str;
           default = "https://openrouter.ai/api/v1";
-          description = "LLM API URL";
+          description = "LLM API endpoint URL";
         };
 
-        systemPromptImport = lib.mkOption {
+        llmApiKey = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
-          description = "Custom system prompt for recipe import (uses default if not set)";
+          description = "LLM API key";
         };
 
-        systemPromptMacros = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+        llmApiKeyFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
           default = null;
-          description = "Custom system prompt for macro estimation (uses default if not set)";
+          description = "Path to file containing LLM API key (for sops-nix)";
+        };
+
+        llmModel = lib.mkOption {
+          type = lib.types.str;
+          default = "deepseek/deepseek-v4-flash";
+          description = "LLM model name to use";
         };
       };
 
@@ -246,15 +268,8 @@
         };
         users.groups.blaz = {};
 
-        # Create directories before service starts (required due to ProtectSystem = strict)
         systemd.tmpfiles.rules = [
-          # Database directory
           "d ${dirOf cfg.databasePath} 0750 blaz blaz - -"
-
-          # Media directory
-          "d ${cfg.mediaDir} 0750 blaz blaz - -"
-
-          # Log directory and file
           "d ${dirOf cfg.logFile} 0750 blaz blaz - -"
           "f ${cfg.logFile} 0640 blaz blaz - -"
         ];
@@ -264,49 +279,28 @@
           after = ["network.target"];
           wantedBy = ["multi-user.target"];
 
-          # Basic environment variables (non-secrets)
           environment =
             {
               BLAZ_BIND_ADDR = cfg.bindAddr;
               BLAZ_DATABASE_PATH = cfg.databasePath;
-              BLAZ_MEDIA_DIR = cfg.mediaDir;
               BLAZ_LOG_FILE = cfg.logFile;
               BLAZ_LLM_API_URL = cfg.llmApiUrl;
+              BLAZ_LLM_MODEL = cfg.llmModel;
             }
-            // lib.optionalAttrs (cfg.corsOrigin != null) {
-              BLAZ_CORS_ORIGIN = cfg.corsOrigin;
-            }
-            // lib.optionalAttrs (cfg.passwordHash != null) {
-              BLAZ_PASSWORD_HASH = cfg.passwordHash;
-            }
-            // lib.optionalAttrs (cfg.jwtSecret != null) {
-              BLAZ_JWT_SECRET = cfg.jwtSecret;
-            }
-            // lib.optionalAttrs (cfg.llmApiKey != null) {
-              BLAZ_LLM_API_KEY = cfg.llmApiKey;
-            }
-            // lib.optionalAttrs (cfg.systemPromptImport != null) {
-              BLAZ_SYSTEM_PROMPT_IMPORT = cfg.systemPromptImport;
-            }
-            // lib.optionalAttrs (cfg.systemPromptMacros != null) {
-              BLAZ_SYSTEM_PROMPT_MACROS = cfg.systemPromptMacros;
-            };
+            // lib.optionalAttrs (cfg.corsOrigin != null) {BLAZ_CORS_ORIGIN = cfg.corsOrigin;}
+            // lib.optionalAttrs (cfg.passwordHash != null) {BLAZ_PASSWORD_HASH = cfg.passwordHash;}
+            // lib.optionalAttrs (cfg.jwtSecret != null) {BLAZ_JWT_SECRET = cfg.jwtSecret;}
+            // lib.optionalAttrs (cfg.llmApiKey != null) {BLAZ_LLM_API_KEY = cfg.llmApiKey;};
 
-          # Script to load secrets from files before starting
           script = let
-            # Load password hash from file if specified
             passwordHashLoader =
               if cfg.passwordHashFile != null
               then ''export BLAZ_PASSWORD_HASH="$(cat ${cfg.passwordHashFile})"''
               else "";
-
-            # Load JWT secret from file if specified
             jwtSecretLoader =
               if cfg.jwtSecretFile != null
               then ''export BLAZ_JWT_SECRET="$(cat ${cfg.jwtSecretFile})"''
               else "";
-
-            # Load LLM API key from file if specified
             llmApiKeyLoader =
               if cfg.llmApiKeyFile != null
               then ''export BLAZ_LLM_API_KEY="$(cat ${cfg.llmApiKeyFile})"''
@@ -315,7 +309,6 @@
             ${passwordHashLoader}
             ${jwtSecretLoader}
             ${llmApiKeyLoader}
-
             exec ${cfg.package}/bin/blaz \
               ${lib.concatStringsSep " " (
               lib.optionals (cfg.verbosity > 0) (lib.genList (_: "-v") cfg.verbosity)
@@ -328,52 +321,16 @@
             User = "blaz";
             Group = "blaz";
             StateDirectory = "blaz";
-            LogsDirectory = "blaz";
-
-            RuntimeDirectory = "blaz";
-            RuntimeDirectoryMode = "0750";
-
             Restart = "always";
             RestartSec = "5s";
-
-            CapabilityBoundingSet = "";
-            RestrictAddressFamilies = "AF_UNIX AF_INET AF_INET6";
-            SystemCallFilter = "~@clock @cpu-emulation @keyring @module @obsolete @raw-io @reboot @swap @resources @privileged @mount @debug";
             NoNewPrivileges = "yes";
-            ProtectClock = "yes";
-            ProtectKernelLogs = "yes";
-            ProtectControlGroups = "yes";
-            ProtectKernelModules = "yes";
-            SystemCallArchitectures = "native";
-            RestrictNamespaces = "yes";
-            RestrictSUIDSGID = "yes";
-            ProtectHostname = "yes";
-            ProtectKernelTunables = "yes";
-            RestrictRealtime = "yes";
-            ProtectProc = "invisible";
-            PrivateUsers = "yes";
-            LockPersonality = "yes";
-            UMask = "0027";
-            RemoveIPC = "yes";
-            ProtectHome = "yes";
             PrivateTmp = "yes";
             ProtectSystem = "strict";
-            ProcSubset = "pid";
-
+            ReadWritePaths = [(dirOf cfg.databasePath)];
             SocketBindAllow = let
               port = lib.last (lib.splitString ":" cfg.bindAddr);
             in ["tcp:${port}"];
             SocketBindDeny = "any";
-
-            LimitNOFILE = 4096;
-            LimitNPROC = 128;
-            MemoryMax = "512M";
-            TasksMax = 256;
-
-            ReadWritePaths = [
-              cfg.mediaDir
-              (dirOf cfg.databasePath)
-            ];
           };
         };
       };
@@ -384,8 +341,8 @@
     packages.${system} = {
       default = package;
       backend = package;
+      prebuilt = prebuilt;
       web = webBuild;
-      prebuilt = package;
     };
   };
 }
