@@ -239,10 +239,60 @@
           description = "Path to file containing LLM API key (for sops-nix)";
         };
 
+        # Kept for compatibility with existing deployments. Current Blaz
+        # stores model selections through the /settings API.
         llmModel = lib.mkOption {
           type = lib.types.str;
           default = "deepseek/deepseek-v4-flash";
-          description = "LLM model name to use";
+          description = "Legacy LLM model setting retained for compatibility";
+        };
+
+        systemPromptImport = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for recipe import";
+        };
+
+        systemPromptExtract = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for recipe extraction";
+        };
+
+        systemPromptStructure = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for ingredient structuring";
+        };
+
+        systemPromptConvert = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for metric conversion";
+        };
+
+        systemPromptMacros = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for macro estimation";
+        };
+
+        systemPromptNormalize = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for ingredient normalization";
+        };
+
+        systemPromptPrepReminders = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Custom system prompt for prep reminder detection";
+        };
+
+        ntfyUrl = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "ntfy URL for backend error notifications";
         };
       };
 
@@ -298,7 +348,31 @@
             // lib.optionalAttrs (cfg.corsOrigin != null) {BLAZ_CORS_ORIGIN = cfg.corsOrigin;}
             // lib.optionalAttrs (cfg.passwordHash != null) {BLAZ_PASSWORD_HASH = cfg.passwordHash;}
             // lib.optionalAttrs (cfg.jwtSecret != null) {BLAZ_JWT_SECRET = cfg.jwtSecret;}
-            // lib.optionalAttrs (cfg.llmApiKey != null) {BLAZ_LLM_API_KEY = cfg.llmApiKey;};
+            // lib.optionalAttrs (cfg.llmApiKey != null) {BLAZ_LLM_API_KEY = cfg.llmApiKey;}
+            // lib.optionalAttrs (cfg.systemPromptImport != null) {
+              BLAZ_SYSTEM_PROMPT_IMPORT = cfg.systemPromptImport;
+            }
+            // lib.optionalAttrs (cfg.systemPromptExtract != null) {
+              BLAZ_SYSTEM_PROMPT_EXTRACT = cfg.systemPromptExtract;
+            }
+            // lib.optionalAttrs (cfg.systemPromptStructure != null) {
+              BLAZ_SYSTEM_PROMPT_STRUCTURE = cfg.systemPromptStructure;
+            }
+            // lib.optionalAttrs (cfg.systemPromptConvert != null) {
+              BLAZ_SYSTEM_PROMPT_CONVERT = cfg.systemPromptConvert;
+            }
+            // lib.optionalAttrs (cfg.systemPromptMacros != null) {
+              BLAZ_SYSTEM_PROMPT_MACROS = cfg.systemPromptMacros;
+            }
+            // lib.optionalAttrs (cfg.systemPromptNormalize != null) {
+              BLAZ_SYSTEM_PROMPT_NORMALIZE = cfg.systemPromptNormalize;
+            }
+            // lib.optionalAttrs (cfg.systemPromptPrepReminders != null) {
+              BLAZ_SYSTEM_PROMPT_PREP_REMINDERS = cfg.systemPromptPrepReminders;
+            }
+            // lib.optionalAttrs (cfg.ntfyUrl != null) {
+              BLAZ_NTFY_URL = cfg.ntfyUrl;
+            };
 
           script = let
             passwordHashLoader =
