@@ -74,7 +74,7 @@
 
     webBuild = pkgs.flutter.buildFlutterApplication {
       pname = "blaz-web";
-      version = "2.8.9";
+      version = "2.8.10";
       src = pkgs.lib.cleanSource ./flutter;
       autoPubspecLock = ./flutter/pubspec.lock;
       targetFlutterPlatform = "web";
@@ -82,7 +82,7 @@
 
     package = pkgs.rustPlatform.buildRustPackage {
       pname = "blaz";
-      version = "2.8.9";
+      version = "2.8.10";
       src = ./backend;
 
       cargoLock = {
@@ -115,11 +115,11 @@
 
     prebuilt = pkgs.stdenvNoCC.mkDerivation {
       pname = "blaz";
-      version = "2.8.9";
+      version = "2.8.10";
 
       src = pkgs.fetchurl {
-        url = "https://github.com/MathieuMoalic/blaz/releases/download/v2.8.9/blaz-v2.8.9-x86_64-linux.tar.gz";
-        hash = "sha256-CE1Da8ZIix6KIuFSh3tZLlV1rC1ZxxtC0iuMJIrFywI=";
+        url = "https://github.com/MathieuMoalic/blaz/releases/download/v2.8.10/blaz-v2.8.10-x86_64-linux.tar.gz";
+        hash = "sha256-OTiaM0UrCk0Q/0jQZ9fC+8K442kcZaIAu9AkeqlVoow=";
       };
 
       sourceRoot = ".";
@@ -127,7 +127,7 @@
       nativeBuildInputs = [pkgs.patchelf];
 
       installPhase = ''
-        install -Dm755 blaz-v2.8.9-x86_64-linux $out/bin/blaz
+        install -Dm755 blaz-v2.8.10-x86_64-linux $out/bin/blaz
         patchelf \
           --set-interpreter ${pkgs.stdenv.cc.bintools.dynamicLinker} \
           --set-rpath ${lib.makeLibraryPath [pkgs.stdenv.cc.cc.lib pkgs.glibc]} \
