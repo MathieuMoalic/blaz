@@ -474,25 +474,35 @@ class ShoppingListPageState extends State<ShoppingListPage> {
                                           if (mounted && v == true) {
                                             messenger.showSnackBar(
                                               SnackBar(
-                                                content: Text('Marked "${item.text}" as done'),
-                                                duration: const Duration(seconds: 4),
-                                                action: SnackBarAction(
-                                                  label: 'Undo',
-                                                  onPressed: () async {
-                                                    messenger.hideCurrentSnackBar();
-                                                    try {
-                                                      await toggleShoppingItem(
-                                                        id: item.id,
-                                                        done: wasDone,
-                                                      );
-                                                      await refresh();
-                                                    } catch (e) {
-                                                      messenger.showSnackBar(
-                                                        SnackBar(content: Text('Failed to undo: $e')),
-                                                      );
-                                                    }
-                                                  },
+                                                // SnackBarAction prevents SnackBars from timing out
+                                                // when accessibility navigation is enabled. Keep Undo
+                                                // in the content instead so this acknowledgement always
+                                                // dismisses after its configured duration.
+                                                content: Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text('Marked "${item.text}" as done'),
+                                                    ),
+                                                    TextButton(
+                                                      onPressed: () async {
+                                                        messenger.hideCurrentSnackBar();
+                                                        try {
+                                                          await toggleShoppingItem(
+                                                            id: item.id,
+                                                            done: wasDone,
+                                                          );
+                                                          await refresh();
+                                                        } catch (e) {
+                                                          messenger.showSnackBar(
+                                                            SnackBar(content: Text('Failed to undo: $e')),
+                                                          );
+                                                        }
+                                                      },
+                                                      child: const Text('Undo'),
+                                                    ),
+                                                  ],
                                                 ),
+                                                duration: const Duration(seconds: 4),
                                               ),
                                             );
                                           }

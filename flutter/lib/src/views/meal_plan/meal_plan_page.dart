@@ -232,28 +232,38 @@ class MealPlanPageState extends State<MealPlanPage> {
                           
                           messenger.showSnackBar(
                             SnackBar(
-                              content: Text('Removed "$recipeName" from meal plan'),
-                              duration: const Duration(seconds: 4),
-                              action: SnackBarAction(
-                                label: 'Undo',
-                                onPressed: () async {
-                                  messenger.hideCurrentSnackBar();
-                                  try {
-                                    await assignRecipeToDay(
-                                      day: meal.day,
-                                      recipeId: meal.recipeId,
-                                    );
-                                    await _reloadDay(dayIso);
-                                    messenger.showSnackBar(
-                                      SnackBar(content: Text('Restored "$recipeName"')),
-                                    );
-                                  } catch (e) {
-                                    messenger.showSnackBar(
-                                      SnackBar(content: Text('Failed to restore: $e')),
-                                    );
-                                  }
-                                },
+                              // SnackBarAction prevents SnackBars from timing out
+                              // when accessibility navigation is enabled. Keep Undo
+                              // in the content instead so this acknowledgement always
+                              // dismisses after its configured duration.
+                              content: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text('Removed "$recipeName" from meal plan'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      messenger.hideCurrentSnackBar();
+                                      try {
+                                        await assignRecipeToDay(
+                                          day: meal.day,
+                                          recipeId: meal.recipeId,
+                                        );
+                                        await _reloadDay(dayIso);
+                                        messenger.showSnackBar(
+                                          SnackBar(content: Text('Restored "$recipeName"')),
+                                        );
+                                      } catch (e) {
+                                        messenger.showSnackBar(
+                                          SnackBar(content: Text('Failed to restore: $e')),
+                                        );
+                                      }
+                                    },
+                                    child: const Text('Undo'),
+                                  ),
+                                ],
                               ),
+                              duration: const Duration(seconds: 4),
                             ),
                           );
                         },
