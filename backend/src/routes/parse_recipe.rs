@@ -686,6 +686,54 @@ pub fn normalize_instructions(v: JsonValue) -> Vec<String> {
     }
 }
 
+fn parse_fraction(value: &str) -> Option<f64> {
+    let parts: Vec<&str> = value.split('/').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let numerator = parts[0].trim().parse::<f64>().ok()?;
+    let denominator = parts[1].trim().parse::<f64>().ok()?;
+
+    if denominator == 0.0 {
+        return None;
+    }
+
+    Some(numerator / denominator)
+}
+
+fn parse_quantity(value: &str) -> Option<f64> {
+    let token = value.trim().replace(',', ".");
+    if token.is_empty() {
+        return None;
+    }
+
+    // Try parsing ranges like "2-3" or "2–3"
+    for separator in &['-', '–'] {
+        if let Some(index) = token.find(*separator) {
+            if index > 0 {
+                let before = token[..index].trim();
+                let after = token[index + 1..].trim();
+
+                // Only treat as range if both parts are simple numbers/fractions
+                if !before.contains('/') && !after.contains('/') {
+                    if let (Ok(a), Ok(b)) = (before.parse::<f64>(), after.parse::<f64>()) {
+                        return Some((a + b) / 2.0);
+                    }
+                }
+            }
+        }
+    }
+
+    // Try fraction: "1/2"
+    if let Some(fraction) = parse_fraction(&token) {
+        return Some(fraction);
+    }
+
+    // Decimal / integer
+    token.parse::<f64>().ok()
+}
+
 fn normalize_unit(unit: &str) -> String {
     let lower = unit.to_lowercase();
     match lower.as_str() {
@@ -737,7 +785,7 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                         .or_else(|| m.remove("amount"))
                         .and_then(|v| match v {
                             JsonValue::Number(n) => n.as_f64(),
-                            JsonValue::String(s) => s.trim().replace(',', ".").parse::<f64>().ok(),
+                            JsonValue::String(s) => parse_quantity(s.trim()),
                             _ => None,
                         });
 

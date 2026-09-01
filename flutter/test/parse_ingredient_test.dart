@@ -77,6 +77,71 @@ void main() {
       expect(i.name, 'cups flour');
     });
 
+    // --- Fractions ----------------------------------------------------------
+
+    test('fraction quantity', () {
+      final i = parseIngredientLine('1/2 teaspoon cumin');
+      expect(i.quantity, 0.5);
+      expect(i.unit, 'tsp');
+      expect(i.name, 'cumin');
+    });
+
+    test('unit alias teaspoon→tsp', () {
+      final i = parseIngredientLine('1 teaspoon salt');
+      expect(i.quantity, 1.0);
+      expect(i.unit, 'tsp');
+      expect(i.name, 'salt');
+    });
+
+    test('unit alias teaspoons→tsp', () {
+      final i = parseIngredientLine('2 teaspoons vanilla');
+      expect(i.quantity, 2.0);
+      expect(i.unit, 'tsp');
+      expect(i.name, 'vanilla');
+    });
+
+    test('unit alias tablespoon→tbsp', () {
+      final i = parseIngredientLine('1 tablespoon butter');
+      expect(i.quantity, 1.0);
+      expect(i.unit, 'tbsp');
+      expect(i.name, 'butter');
+    });
+
+    test('unit alias tablespoons→tbsp', () {
+      final i = parseIngredientLine('2 tablespoons olive oil');
+      expect(i.quantity, 2.0);
+      expect(i.unit, 'tbsp');
+      expect(i.name, 'olive oil');
+    });
+
+    test('mixed fraction 1 1/2', () {
+      final i = parseIngredientLine('1 1/2 teaspoons cumin');
+      expect(i.quantity, 1.5);
+      expect(i.unit, 'tsp');
+      expect(i.name, 'cumin');
+    });
+
+    test('unicode fraction ½', () {
+      final i = parseIngredientLine('½ teaspoon cumin');
+      expect(i.quantity, 0.5);
+      expect(i.unit, 'tsp');
+      expect(i.name, 'cumin');
+    });
+
+    test('range 2-3', () {
+      final i = parseIngredientLine('2-3 teaspoons cumin');
+      expect(i.quantity, 2.5); // (2 + 3) / 2
+      expect(i.unit, 'tsp');
+      expect(i.name, 'cumin');
+    });
+
+    test('range with unicode dash 2–3', () {
+      final i = parseIngredientLine('2–3 teaspoons cumin');
+      expect(i.quantity, 2.5);
+      expect(i.unit, 'tsp');
+      expect(i.name, 'cumin');
+    });
+
     // --- toLine round-trip ---------------------------------------------------
 
     test('toLine round-trips qty + unit + name', () {
