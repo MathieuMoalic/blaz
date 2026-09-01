@@ -1,5 +1,6 @@
 use crate::error::AppResult;
 use crate::html::{clean_title, extract_title, fallback_title_from_url, html_to_plain_text};
+use crate::ingredients::parser::{ParsedIngredient, parse_ingredient_line};
 use crate::llm::LlmClient;
 use crate::models::Ingredient;
 use crate::routes::settings::LlmSettings;
@@ -116,60 +117,25 @@ pub async fn import_from_url(
         tracing::debug!("  Ingredient {}: {}", i, ing);
     }
 
-    // STAGE 2: Structure ingredients
+    // STAGE 2/3: deterministic structuring (parser-first); the LLM only
+    // structures lines with unit-like/imperial wording, then converts those
+    // to metric. LLM failures fall back to the deterministic parse so
+    // imports never fail on structuring.
+    let structured_ingredients =
+        structure_ingredients(&llm, &http, &state, &llm_settings, &ingredient_strings).await;
     tracing::info!(
-        "Stage 2: Structuring {} ingredients",
-        ingredient_strings.len()
-    );
-    let mut structured_ingredients =
-        stage2_structure_ingredients(&llm, &http, &state, &llm_settings, &ingredient_strings)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Stage 2 (structure) failed: {e}"),
-                )
-            })?;
-
-    tracing::info!(
-        "Stage 2 complete: {} structured ingredients",
+        "Stage 2/3 complete: {} structured ingredients (parser-first)",
         structured_ingredients.len()
     );
     for (i, ing) in structured_ingredients.iter().enumerate() {
         tracing::debug!(
-            "  Structured {}: qty={:?}, unit={:?}, name={}, prep={:?}",
+            "  Final {}: qty={:?}, unit={:?}, name={}, prep={:?}, raw_text={:?}",
             i,
             ing.quantity,
             ing.unit,
             ing.name,
-            ing.prep
-        );
-    }
-
-    // STAGE 3: Convert to metric
-    tracing::info!("Stage 3: Converting to metric");
-    structured_ingredients =
-        stage3_convert_to_metric(&llm, &http, &state, &llm_settings, &structured_ingredients)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Stage 3 (convert) failed: {e}"),
-                )
-            })?;
-
-    tracing::info!(
-        "Stage 3 complete: {} ingredients after metric conversion",
-        structured_ingredients.len()
-    );
-    for (i, ing) in structured_ingredients.iter().enumerate() {
-        tracing::debug!(
-            "  Final {}: qty={:?}, unit={:?}, name={}, prep={:?}",
-            i,
-            ing.quantity,
-            ing.unit,
-            ing.name,
-            ing.prep
+            ing.prep,
+            ing.raw_text
         );
     }
 
@@ -348,7 +314,141 @@ async fn stage1_extract(
 }
 
 /* =========================
- * Stage 2: Structure ingredients
+ * Stage 2/3: Structure + metric conversion (parser-first)
+ * ========================= */
+
+/// Leading phrase words that mark a line as needing LLM structuring: the
+/// deterministic parser handles metric units and plain names, but
+/// imperial/container wording ("2 cups flour", "1 can (400g) chickpeas")
+/// needs the extraction prompt.
+const IMPERIAL_UNIT_WORDS: &[&str] = &[
+    "cup", "cups", "oz", "ounce", "ounces", "fl", "fluid", "lb", "lbs", "pound", "pounds",
+    "clove", "cloves", "can", "cans", "tin", "tins", "bunch", "bunches", "head", "heads",
+    "stick", "sticks", "package", "packages", "pkg", "packet", "envelope", "box", "boxes",
+    "bag", "pinch", "splash", "sprig", "sprigs", "slice", "slices", "jar", "bottle",
+    "handful", "knob",
+];
+
+fn needs_llm_structuring(parsed: &ParsedIngredient) -> bool {
+    parsed.unit.is_none()
+        && parsed.quantity.is_some()
+        && parsed
+            .ingredient_phrase
+            .split_whitespace()
+            .next()
+            .is_some_and(|w| IMPERIAL_UNIT_WORDS.contains(&w.to_ascii_lowercase().as_str()))
+}
+
+/// Structure ingredient lines: deterministic parser first; the LLM
+/// (stage 2 extraction + stage 3 metric conversion) only handles lines with
+/// unit-like/imperial wording. LLM failures fall back to the deterministic
+/// parse so imports never fail on structuring.
+///
+/// Identity fields (`raw_text`, `ingredient_id`) survive every
+/// restructuring step; semantic food resolution happens later, at save,
+/// via `ensure_resolved`.
+///
+/// # Errors
+///
+/// Infallible: LLM errors are contained and logged; the deterministic parse
+/// always provides a result.
+#[allow(clippy::unused_async)]
+pub async fn structure_ingredients(
+    llm: &LlmClient,
+    http: &reqwest::Client,
+    state: &AppState,
+    llm_settings: &LlmSettings,
+    lines: &[String],
+) -> Vec<Ingredient> {
+    let mut ingredients: Vec<Option<Ingredient>> = Vec::with_capacity(lines.len());
+    let mut needs_llm: Vec<(usize, ParsedIngredient)> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        // Section markers ("## Sauce") pass through as headers.
+        if let Some(label) = line.trim().strip_prefix("##") {
+            let label = label.trim();
+            if !label.is_empty() {
+                ingredients.push(Some(Ingredient::section_header(label.to_string())));
+                continue;
+            }
+        }
+
+        let Some(parsed) = parse_ingredient_line(line) else {
+            continue; // empty line
+        };
+        if needs_llm_structuring(&parsed) {
+            needs_llm.push((i, parsed));
+            ingredients.push(None);
+        } else {
+            ingredients.push(Some(Ingredient::from_parsed(&parsed)));
+        }
+    }
+
+    if !needs_llm.is_empty() {
+        let llm_lines: Vec<String> = needs_llm
+            .iter()
+            .map(|(i, _)| lines[*i].clone())
+            .collect();
+        let mut structured = match stage2_structure_ingredients(
+            llm,
+            http,
+            state,
+            llm_settings,
+            &llm_lines,
+        )
+        .await
+        {
+            Ok(ings) => ings,
+            Err(e) => {
+                tracing::warn!(?e, "LLM structuring failed; using deterministic parse");
+                Vec::new()
+            }
+        };
+        if !structured.is_empty() {
+            structured = match stage3_convert_to_metric(
+                llm,
+                http,
+                state,
+                llm_settings,
+                &structured,
+            )
+            .await
+            {
+                Ok(converted) => converted,
+                Err(e) => {
+                    tracing::warn!(?e, "metric conversion failed; keeping stage 2 output");
+                    structured
+                }
+            };
+        }
+
+        if structured.len() == needs_llm.len() {
+            for (k, (i, _)) in needs_llm.iter().enumerate() {
+                let mut ing = structured[k].clone();
+                if ing.section.is_none() {
+                    ing.raw_text = Some(lines[*i].clone());
+                }
+                ingredients[*i] = Some(ing);
+            }
+        } else {
+            tracing::warn!(
+                expected = needs_llm.len(),
+                got = structured.len(),
+                "LLM structuring result mismatch; using deterministic parse"
+            );
+            for (i, parsed) in &needs_llm {
+                ingredients[*i] = Some(Ingredient::from_parsed(parsed));
+            }
+        }
+    }
+
+    let result: Vec<Ingredient> = ingredients.into_iter().flatten().collect();
+    validate_stage2(&result);
+    result
+}
+
+/* =========================
+ * Stage 2: Structure ingredients (LLM fallback)
  * ========================= */
 
 async fn stage2_structure_ingredients(

@@ -363,10 +363,11 @@ pub async fn create(
         }
     }
 
-    // Resolve canonical names for better shopping list merging
-    let ingredients = new.ingredients.clone();
-    // TODO: Implement canonical name resolution when LLM settings are available
-    // For now, we skip resolution to avoid blocking recipe creation
+    // Assign stable food identity to all ingredients (parser + resolver).
+    let mut ingredients = new.ingredients.clone();
+    if let Err(e) = crate::routes::ingredients::ensure_resolved(&state, &mut ingredients).await {
+        tracing::warn!(?e, "ingredient resolution failed; saving unresolved");
+    }
 
     let ingredients_json = serialize_json_or_empty(&ingredients);
     let instructions_json = serialize_json_or_empty(&new.instructions);
@@ -555,11 +556,44 @@ pub async fn update(
     Path(id): Path<i64>,
     payload: Result<Json<UpdateRecipe>, JsonRejection>,
 ) -> AppResult<Json<Recipe>> {
-    let Json(up) = payload.map_err(|rejection| {
+    let Json(mut up) = payload.map_err(|rejection| {
         let msg = rejection.body_text();
         tracing::error!("JSON deserialization failed in recipes::update: {}", msg);
         (StatusCode::UNPROCESSABLE_ENTITY, msg)
     })?;
+
+    // Resolve food identity for ingredient edits (idempotent: unchanged
+    // names hit cached aliases and keep their identity; changed names are
+    // cleared and re-resolved so stale food_ids never survive a rename).
+    if let Some(ings) = up.ingredients.as_mut() {
+        if let Ok(row) = load_recipe_row(&state, id).await {
+            let existing: std::collections::HashMap<String, String> = row
+                .ingredients
+                .0
+                .iter()
+                .filter_map(|ing| {
+                    ing.ingredient_id
+                        .as_ref()
+                        .map(|iid| (iid.clone(), crate::units::normalize_name(&ing.name)))
+                })
+                .collect();
+            for ing in ings.iter_mut() {
+                if let Some(iid) = &ing.ingredient_id
+                    && let Some(old_name) = existing.get(iid)
+                    && *old_name != crate::units::normalize_name(&ing.name)
+                {
+                    ing.food_id = None;
+                    ing.canonical_name = None;
+                    ing.resolution_source = None;
+                    ing.resolution_confidence = None;
+                    ing.qualifiers.clear();
+                }
+            }
+        }
+        if let Err(e) = crate::routes::ingredients::ensure_resolved(&state, ings).await {
+            tracing::warn!(?e, "ingredient resolution failed; saving unresolved");
+        }
+    }
 
     // Re-run LLM prep detection only when instructions changed and the caller
     // didn't explicitly supply new prep_reminders (which would be overwritten).

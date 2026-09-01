@@ -3,6 +3,7 @@ pub mod categories;
 pub mod import_recipe_images;
 pub mod import_recipesage;
 pub mod ingredient_resolver;
+pub mod ingredients;
 pub mod llm_credits;
 pub mod meal_plan;
 pub mod parse_recipe;

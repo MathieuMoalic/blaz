@@ -79,10 +79,30 @@ impl OpenRouterFoodLlm {
             system_prompt,
         }
     }
+
+    /// Build from app state (models from DB settings, prompt from config).
+    /// Without an API key the resolver still serves the deterministic
+    /// strategies and fails fast on LLM batches.
+    pub async fn from_state(state: &crate::models::AppState) -> Self {
+        use crate::routes::settings::LlmSettings;
+        let settings = LlmSettings::load(&state.pool).await;
+        Self::new(
+            LlmClient::new(
+                state.config.llm_api_url.clone(),
+                state.config.llm_api_key.clone().unwrap_or_default(),
+                settings.model,
+            ),
+            settings.fallback_model,
+            state.config.system_prompt_food_resolver.clone(),
+        )
+    }
 }
 
 impl FoodLlm for OpenRouterFoodLlm {
     async fn resolve(&self, req: &LlmResolveRequest) -> anyhow::Result<Vec<LlmResultItem>> {
+        if self.llm.token.trim().is_empty() {
+            anyhow::bail!("LLM API key is not configured");
+        }
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(45))
             .build()?;

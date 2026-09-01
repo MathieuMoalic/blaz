@@ -111,6 +111,7 @@ pub async fn import_recipesage(State(state): State<AppState>, body: String) -> i
     )
 }
 
+#[allow(clippy::too_many_lines)]
 async fn import_single_recipe(state: &AppState, recipe: JsonLdRecipe) -> Result<(), String> {
     let title = recipe
         .name
@@ -140,6 +141,12 @@ async fn import_single_recipe(state: &AppState, recipe: JsonLdRecipe) -> Result<
             canonical_name: None,
         })
         .collect();
+
+    // Structure + resolve through the canonical pipeline (same as all saves).
+    let mut ingredients = ingredients;
+    if let Err(e) = crate::routes::ingredients::ensure_resolved(state, &mut ingredients).await {
+        tracing::warn!(?e, "ingredient resolution failed; saving unresolved");
+    }
 
     let ingredients_json = serde_json::to_string(&ingredients)
         .map_err(|e| format!("{title}: Failed to serialize ingredients: {e}"))?;

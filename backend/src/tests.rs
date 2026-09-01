@@ -538,6 +538,202 @@ mod integration {
     }
 
     #[tokio::test]
+    async fn deterministic_structuring_survives_llm_outage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let llm = crate::llm::LlmClient::new(
+            state.config.llm_api_url.clone(),
+            String::new(),
+            "test-model".to_string(),
+        );
+        let http = reqwest::Client::new();
+        let settings = crate::routes::settings::LlmSettings::default();
+        let lines: Vec<String> = [
+            "## Sauce",
+            "½ kg potatoes",
+            "2 cups flour",
+            "salt to taste",
+            "",
+        ]
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+
+        let ings = crate::routes::parse_recipe::structure_ingredients(
+            &llm, &http, &state, &settings, &lines,
+        )
+        .await;
+
+        assert_eq!(ings[0].section.as_deref(), Some("Sauce"));
+        assert_eq!(ings[1].quantity, Some(0.5));
+        assert_eq!(ings[1].unit.as_deref(), Some("kg"));
+        assert_eq!(ings[1].name, "potatoes");
+        assert_eq!(ings[1].raw_text.as_deref(), Some("½ kg potatoes"));
+        assert!(ings[1].ingredient_id.is_some());
+        assert!(!ings[1].raw);
+
+        // "2 cups flour" needs the LLM, which is unavailable: it falls back
+        // to the deterministic parse instead of failing the import.
+        assert_eq!(ings[2].quantity, Some(2.0));
+        assert_eq!(ings[2].unit, None);
+        assert_eq!(ings[2].name, "cups flour");
+        assert_eq!(ings[2].raw_text.as_deref(), Some("2 cups flour"));
+
+        assert_eq!(ings[3].name, "salt");
+        assert_eq!(ings[3].prep.as_deref(), Some("to taste"));
+    }
+
+    async fn seed_food_alias(pool: &sqlx::SqlitePool, canonical: &str, alias: &str) -> i64 {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO foods (canonical_name, normalized_name) \
+             VALUES (?, ?) RETURNING id",
+        )
+        .bind(canonical)
+        .bind(canonical)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO food_aliases (alias, normalized_alias, food_id, source, confirmed) \
+             VALUES (?, ?, ?, 'automatic', 1)",
+        )
+        .bind(alias)
+        .bind(alias)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn recipe_create_structures_and_resolves_raw_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+        let potato = seed_food_alias(pool, "potato", "potatoes").await;
+        let salt = seed_food_alias(pool, "salt", "salt").await;
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        let new_recipe = json!({
+            "title": "Mash",
+            "ingredients": [
+                {"name": "2 potatoes", "raw": true},
+                {"quantity": 1.0, "unit": "tsp", "name": "Salt", "raw": false}
+            ],
+            "instructions": ["Mash"]
+        });
+
+        let resp = app
+            .clone()
+            .oneshot(auth_json("POST", "/recipes", &token, &new_recipe))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let created = json_body(resp.into_body()).await;
+        let id = created["id"].as_i64().unwrap();
+
+        let resp = app
+            .oneshot(auth_get(&format!("/recipes/{id}"), &token))
+            .await
+            .unwrap();
+        let fetched = json_body(resp.into_body()).await;
+
+        // Raw line was structured server-side and resolved via the alias.
+        let ing0 = &fetched["ingredients"][0];
+        assert_eq!(ing0["raw"], false);
+        assert_eq!(ing0["quantity"], 2.0);
+        assert_eq!(ing0["name"], "potatoes", "recipe wording preserved");
+        assert_eq!(ing0["food_id"], potato);
+        assert_eq!(ing0["resolution_source"], "confirmed_alias");
+        assert_eq!(ing0["needs_review"], false);
+        assert!(ing0["ingredient_id"].is_string());
+
+        // Case differences resolve through normalization.
+        let ing1 = &fetched["ingredients"][1];
+        assert_eq!(ing1["food_id"], salt);
+        assert_eq!(ing1["needs_review"], false);
+    }
+
+    #[tokio::test]
+    async fn recipe_update_preserves_and_re_resolves_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+        let potato = seed_food_alias(pool, "potato", "potatoes").await;
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        let created = json_body(
+            app.clone()
+                .oneshot(auth_json(
+                    "POST",
+                    "/recipes",
+                    &token,
+                    &json!({
+                        "title": "Mash",
+                        "ingredients": [
+                            {"name": "2 potatoes", "raw": true}
+                        ],
+                        "instructions": ["Mash"]
+                    }),
+                ))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let ing_id = created["ingredients"][0]["ingredient_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Quantity-only edit: same name, same ingredient_id → identity kept.
+        let resp = app
+            .clone()
+            .oneshot(auth_json(
+                "PATCH",
+                &format!("/recipes/{id}"),
+                &token,
+                &json!({"ingredients": [
+                    {"quantity": 5.0, "unit": null, "name": "potatoes",
+                     "ingredient_id": ing_id, "prep": null, "raw": false}
+                ]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let updated = json_body(resp.into_body()).await;
+        assert_eq!(updated["ingredients"][0]["food_id"], potato);
+        assert_eq!(updated["ingredients"][0]["quantity"], 5.0);
+        assert_eq!(updated["ingredients"][0]["needs_review"], false);
+
+        // Name change to an unknown food: stale identity is cleared and the
+        // ingredient is flagged for review (no LLM available to resolve).
+        let resp = app
+            .clone()
+            .oneshot(auth_json(
+                "PATCH",
+                &format!("/recipes/{id}"),
+                &token,
+                &json!({"ingredients": [
+                    {"quantity": 5.0, "unit": null, "name": "sweet potatoes",
+                     "ingredient_id": ing_id, "prep": null, "raw": false}
+                ]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let updated = json_body(resp.into_body()).await;
+        assert_eq!(updated["ingredients"][0]["food_id"], serde_json::Value::Null);
+        assert_eq!(updated["ingredients"][0]["needs_review"], true);
+    }
+
+    #[tokio::test]
     async fn shopping_list_starts_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;
