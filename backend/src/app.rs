@@ -129,6 +129,10 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route("/shopping/merge", post(shopping::merge_items))
         .route(
+            "/shopping/sources/remove",
+            post(shopping::remove_recipe_sources),
+        )
+        .route(
             "/categories",
             get(categories::list).post(categories::create),
         )

@@ -236,7 +236,21 @@ pub struct AssignRecipe {
 
 /* ---------- Shopping list ---------- */
 
-#[derive(Serialize, sqlx::FromRow, Clone)]
+/// One recorded contribution to a shopping row (recipe/manual add).
+#[derive(Serialize, Clone, Debug)]
+pub struct ShoppingSource {
+    pub source_type: String,
+    pub recipe_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipe_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipe_ingredient_id: Option<String>,
+    pub quantity: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
 pub struct ShoppingItemView {
     pub id: i64,
     pub text: String,
@@ -251,6 +265,7 @@ pub struct ShoppingItemView {
     pub unit: Option<String>,
     pub category_id: Option<i64>,
     pub category_is_override: bool,
+    pub sources: Vec<ShoppingSource>,
 }
 
 #[derive(Deserialize, Default)]

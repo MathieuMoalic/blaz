@@ -473,6 +473,11 @@ pub async fn permanent_delete(
     if res.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND.into());
     }
+    // Shopping provenance references the recipe: remove those rows too.
+    sqlx::query("DELETE FROM shopping_item_sources WHERE recipe_id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

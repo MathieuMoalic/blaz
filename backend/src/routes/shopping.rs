@@ -12,7 +12,7 @@ use sqlx::{QueryBuilder, Sqlite};
 
 use crate::error::AppResult;
 use crate::ingredients::parser::parse_ingredient_line;
-use crate::models::{AppState, NewItem, ShoppingItemView};
+use crate::models::{AppState, NewItem, ShoppingItemView, ShoppingSource};
 use crate::units::{normalize_name, to_storage_qty_unit};
 
 fn internal_err<E: std::fmt::Display>(err: E) -> AppError {
@@ -64,6 +64,8 @@ pub struct InIngredient {
     pub name: String,
     #[serde(default)]
     pub food_id: Option<i64>,
+    #[serde(default)]
+    pub ingredient_id: Option<String>,
     pub category: Option<String>,
 }
 
@@ -190,12 +192,129 @@ async fn resolve_shopping_line(
 const VIEW_COLS: &str = "id, text, done, category, notes, recipe_ids, recipe_titles, \
                           food_id, name, quantity, unit, category_id, category_is_override";
 
+/// Base view columns (sources are attached separately).
+#[derive(sqlx::FromRow)]
+struct ViewRow {
+    id: i64,
+    text: String,
+    done: i64,
+    category: Option<String>,
+    notes: String,
+    recipe_ids: String,
+    recipe_titles: Option<String>,
+    food_id: Option<i64>,
+    name: Option<String>,
+    quantity: Option<f64>,
+    unit: Option<String>,
+    category_id: Option<i64>,
+    category_is_override: bool,
+}
+
+impl ViewRow {
+    fn into_view(self) -> ShoppingItemView {
+        ShoppingItemView {
+            id: self.id,
+            text: self.text,
+            done: self.done,
+            category: self.category,
+            notes: self.notes,
+            recipe_ids: self.recipe_ids,
+            recipe_titles: self.recipe_titles,
+            food_id: self.food_id,
+            name: self.name,
+            quantity: self.quantity,
+            unit: self.unit,
+            category_id: self.category_id,
+            category_is_override: self.category_is_override,
+            sources: Vec::new(),
+        }
+    }
+}
+
+type SourceRow = (
+    i64,
+    String,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<f64>,
+    Option<String>,
+);
+
+/// Attach recorded contributions to shopping rows.
+async fn attach_sources(
+    state: &AppState,
+    items: &mut [ShoppingItemView],
+) -> Result<(), sqlx::Error> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<i64> = items.iter().map(|i| i.id).collect();
+    let mut qb =
+        QueryBuilder::<Sqlite>::new("SELECT s.shopping_item_id, s.source_type, s.recipe_id, r.title, \
+                                     s.recipe_ingredient_id, s.quantity, s.unit \
+                                     FROM shopping_item_sources s \
+                                     LEFT JOIN recipes r ON r.id = s.recipe_id \
+                                     WHERE s.shopping_item_id IN (");
+    let mut separated = qb.separated(", ");
+    for id in &ids {
+        separated.push_bind(*id);
+    }
+    separated.push_unseparated(")");
+
+    let rows: Vec<SourceRow> =
+        qb.build_query_as().fetch_all(&state.pool).await?;
+
+    let mut grouped: std::collections::HashMap<i64, Vec<ShoppingSource>> =
+        std::collections::HashMap::new();
+    for (item_id, source_type, recipe_id, recipe_title, recipe_ingredient_id, quantity, unit) in rows {
+        grouped.entry(item_id).or_default().push(ShoppingSource {
+            source_type,
+            recipe_id,
+            recipe_title,
+            recipe_ingredient_id,
+            quantity,
+            unit,
+        });
+    }
+    for item in items {
+        item.sources = grouped.remove(&item.id).unwrap_or_default();
+    }
+    Ok(())
+}
+
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
     let sql = format!("SELECT {VIEW_COLS} FROM shopping_items_view WHERE id = ?");
-    sqlx::query_as::<_, ShoppingItemView>(&sql)
-        .bind(id)
-        .fetch_one(&state.pool)
-        .await
+    let row: ViewRow = sqlx::query_as(&sql).bind(id).fetch_one(&state.pool).await?;
+    let mut view = row.into_view();
+    attach_sources(state, std::slice::from_mut(&mut view)).await?;
+    Ok(view)
+}
+
+/// Record a contribution for a shopping row (recipe or manual add).
+async fn record_source(
+    state: &AppState,
+    item_id: i64,
+    source_type: &str,
+    recipe_id: Option<i64>,
+    recipe_ingredient_id: Option<&str>,
+    quantity: Option<f64>,
+    unit: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO shopping_item_sources \
+         (shopping_item_id, source_type, recipe_id, recipe_ingredient_id, quantity, unit) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item_id)
+    .bind(source_type)
+    .bind(recipe_id)
+    .bind(recipe_ingredient_id)
+    .bind(quantity)
+    .bind(unit)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]
@@ -580,11 +699,78 @@ fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
 ///
 /// # Errors
 /// Err if querying the database fails.
+/// DELETE-grade subtraction: `POST /shopping/sources/remove`
+#[derive(Deserialize)]
+pub struct RemoveSourcesReq {
+    pub recipe_id: i64,
+}
+
+/// `POST /shopping/sources/remove`
+///
+/// Removes one recipe's contributions from the list and recomputes each
+/// affected row's quantity from its remaining sources (rows left with no
+/// sources are deleted). Other recipes' contributions stay intact.
+///
+/// # Errors
+///
+/// Err if a database operation fails.
+pub async fn remove_recipe_sources(
+    State(state): State<AppState>,
+    Json(req): Json<RemoveSourcesReq>,
+) -> AppResult<Json<Vec<ShoppingItemView>>> {
+    let affected_items: Vec<i64> =
+        sqlx::query_scalar("SELECT DISTINCT shopping_item_id FROM shopping_item_sources WHERE recipe_id = ?")
+            .bind(req.recipe_id)
+            .fetch_all(&state.pool)
+            .await?;
+
+    sqlx::query("DELETE FROM shopping_item_sources WHERE recipe_id = ?")
+        .bind(req.recipe_id)
+        .execute(&state.pool)
+        .await?;
+
+    for item_id in affected_items {
+        let remaining: Option<f64> = sqlx::query_scalar(
+            "SELECT SUM(quantity) FROM shopping_item_sources WHERE shopping_item_id = ?",
+        )
+        .bind(item_id)
+        .fetch_one(&state.pool)
+        .await?;
+
+        match remaining {
+            None | Some(0.0) => {
+                sqlx::query("DELETE FROM shopping_items WHERE id = ?")
+                    .bind(item_id)
+                    .execute(&state.pool)
+                    .await?;
+            }
+            Some(total) => {
+                sqlx::query(
+                    "UPDATE shopping_items SET quantity = ?, recipe_ids = ( \
+                       SELECT json_group_array(DISTINCT recipe_id) \
+                       FROM shopping_item_sources \
+                       WHERE shopping_item_id = ? AND recipe_id IS NOT NULL \
+                     ) WHERE id = ?",
+                )
+                .bind(total)
+                .bind(item_id)
+                .bind(item_id)
+                .execute(&state.pool)
+                .await?;
+            }
+        }
+    }
+
+    list(State(state)).await
+}
+
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
     let sql = format!(
         "SELECT {VIEW_COLS} FROM shopping_items_view WHERE done = 0 ORDER BY id"
     );
-    let mut rows: Vec<ShoppingItemView> = sqlx::query_as(&sql).fetch_all(&state.pool).await?;
+    let rows: Vec<ViewRow> = sqlx::query_as(&sql).fetch_all(&state.pool).await?;
+    let mut rows: Vec<ShoppingItemView> = rows.into_iter().map(ViewRow::into_view).collect();
+    attach_sources(&state, &mut rows).await?;
 
     // Nicer ordering: user's category order, then insertion order.
     // Rows without any category sort last (they display as Uncategorized).
@@ -702,6 +888,17 @@ pub async fn create(
         .bind(&line.key)
         .fetch_one(&state.pool)
         .await?;
+
+    record_source(
+        &state,
+        id,
+        "manual",
+        None,
+        None,
+        line.quantity,
+        line.unit.as_deref(),
+    )
+    .await?;
 
     let row = fetch_view_by_id(&state, id).await?;
     Ok(Json(row))
@@ -1016,6 +1213,15 @@ pub async fn patch_shopping_item(
         Err(err) => return Err(patch_update_err(err)),
     };
 
+    // Marking an item done resets for the next trip: clear its history.
+    if payload.done == Some(true) {
+        sqlx::query("DELETE FROM shopping_item_sources WHERE shopping_item_id = ?")
+            .bind(rid)
+            .execute(&state.pool)
+            .await
+            .map_err(internal_err)?;
+    }
+
     let dto = fetch_view_by_id(&state, rid).await.map_err(internal_err)?;
     Ok(Json(dto))
 }
@@ -1125,6 +1331,25 @@ pub async fn merge_items(
         .bind(line.food_id)
         .execute(&state.pool)
         .await?;
+
+        // Record the exact contribution (recipe provenance).
+        if let Some(recipe_id) = req.recipe_id {
+            let (item_id,): (i64,) =
+                sqlx::query_as("SELECT id FROM shopping_items WHERE key = ?")
+                    .bind(&line.key)
+                    .fetch_one(&state.pool)
+                    .await?;
+            record_source(
+                &state,
+                item_id,
+                "recipe",
+                Some(recipe_id),
+                it.ingredient_id.as_deref(),
+                it.quantity,
+                it.unit.as_deref(),
+            )
+            .await?;
+        }
     }
 
     // Return the active (not done) list

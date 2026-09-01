@@ -1135,6 +1135,91 @@ mod integration {
     }
 
     #[tokio::test]
+    async fn shopping_sources_track_and_subtract_recipes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = state.pool.clone();
+        seed_food_alias(&pool, "potato", "potatoes").await;
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        let merge = |recipe_id: i64, qty: f64| {
+            let app = app.clone();
+            let token = token.clone();
+            async move {
+                json_body(
+                    app.oneshot(auth_json(
+                        "POST",
+                        "/shopping/merge",
+                        &token,
+                        &json!({"items": [
+                            {"name": "potatoes", "quantity": qty, "ingredient_id": "ing-a"}
+                        ], "recipe_id": recipe_id}),
+                    ))
+                    .await
+                    .unwrap()
+                    .into_body(),
+                )
+                .await
+            }
+        };
+
+        // Recipe A contributes 3, Recipe B contributes 2.
+        merge(1, 3.0).await;
+        merge(2, 2.0).await;
+
+        // Manual contribution.
+        app.clone()
+            .oneshot(auth_json(
+                "POST",
+                "/shopping",
+                &token,
+                &json!({"text": "1 potato"}),
+            ))
+            .await
+            .unwrap();
+
+        let list = json_body(
+            app.clone()
+                .oneshot(auth_get("/shopping", &token))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        assert_eq!(list[0]["quantity"], 6.0);
+        let sources = list[0]["sources"].as_array().unwrap();
+        assert_eq!(sources.len(), 3, "two recipes + one manual contribution");
+
+        // Removing recipe A leaves recipe B + manual contributions intact.
+        let list = json_body(
+            app.clone()
+                .oneshot(auth_json(
+                    "POST",
+                    "/shopping/sources/remove",
+                    &token,
+                    &json!({"recipe_id": 1}),
+                ))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["quantity"], 3.0);
+        let sources = arr[0]["sources"].as_array().unwrap();
+        assert_eq!(sources.len(), 2);
+        assert!(
+            sources
+                .iter()
+                .all(|s| s["recipe_id"].as_i64() != Some(1))
+        );
+    }
+
+    #[tokio::test]
     async fn shopping_list_starts_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;
