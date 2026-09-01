@@ -14,9 +14,6 @@
 //! category. LLM failures never silently become "Other": unresolved phrases
 //! stay `food_id = NULL` with `needs_review = true`.
 
-// Transitional: this module is wired into recipe import in commit 6 and the
-// /ingredients/resolve endpoint in commit 7. Remove this allow then.
-#![allow(dead_code)]
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};

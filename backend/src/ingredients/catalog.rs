@@ -60,7 +60,6 @@ pub async fn get_food_by_name(pool: &SqlitePool, name: &str) -> anyhow::Result<O
 /// # Errors
 ///
 /// Returns an error if the database lookup fails.
-#[allow(dead_code)] // consumed from commit 4 (resolver) onwards
 pub async fn find_alias(pool: &SqlitePool, name: &str) -> anyhow::Result<Option<FoodAlias>> {
     let normalized = normalize_name(name);
     if normalized.is_empty() {
@@ -190,7 +189,6 @@ pub async fn create_alias(
 ///
 /// Returns an error when the alias normalizes to an empty string, the food
 /// does not exist, or the database write fails.
-#[allow(dead_code)] // consumed from commit 7 (user corrections) onwards
 pub async fn confirm_alias(pool: &SqlitePool, alias: &str, food_id: i64) -> anyhow::Result<FoodAlias> {
     let alias = alias.trim();
     let normalized = normalize_name(alias);
@@ -236,7 +234,6 @@ pub async fn confirm_alias(pool: &SqlitePool, alias: &str, food_id: i64) -> anyh
 ///
 /// Returns an error when the food or the target category does not exist, or
 /// the database write fails.
-#[allow(dead_code)] // consumed from commit 4 (resolver) onwards
 pub async fn set_food_category(
     pool: &SqlitePool,
     food_id: i64,
@@ -294,7 +291,6 @@ pub async fn set_food_category(
 type NameHitRow = (i64, String, String, Option<i64>, Option<String>);
 type AliasHitRow = (i64, String, String, Option<i64>, Option<String>, String);
 
-#[allow(dead_code)] // consumed from commit 9 (foods search) onwards
 fn escape_like(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
@@ -306,7 +302,6 @@ fn escape_like(input: &str) -> String {
     out
 }
 
-#[allow(dead_code)] // consumed from commit 9 (foods search) onwards
 fn match_rank(normalized: &str, needle: &str) -> u8 {
     if normalized == needle {
         0
@@ -416,7 +411,6 @@ pub async fn search_foods(
 /// # Errors
 ///
 /// Returns an error if the database lookup fails.
-#[allow(dead_code)] // consumed from commit 4 (resolver) onwards
 pub async fn list_categories(pool: &SqlitePool) -> anyhow::Result<Vec<(i64, String)>> {
     Ok(
         sqlx::query_as("SELECT id, name FROM shopping_categories ORDER BY sort_order")
@@ -430,7 +424,6 @@ pub async fn list_categories(pool: &SqlitePool) -> anyhow::Result<Vec<(i64, Stri
 /// # Errors
 ///
 /// Returns an error if a database lookup fails.
-#[allow(dead_code)] // consumed from commit 4 (resolver) onwards
 pub async fn load_catalog_snapshot(pool: &SqlitePool) -> anyhow::Result<CatalogSnapshot> {
     let foods: Vec<CatalogFoodRef> =
         sqlx::query_as("SELECT id, canonical_name, normalized_name FROM foods")

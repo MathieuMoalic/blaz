@@ -81,7 +81,6 @@ impl Ingredient {
 
     /// A structured ingredient from the deterministic parser.
     #[must_use]
-    #[allow(dead_code)] // consumed from commit 6 (import pipeline) onwards
     pub fn from_parsed(parsed: &crate::ingredients::parser::ParsedIngredient) -> Self {
         Self {
             section: None,
