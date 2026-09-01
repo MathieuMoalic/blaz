@@ -16,6 +16,7 @@ mod embedded_web;
 mod error;
 mod html;
 mod image_io;
+mod ingredients;
 mod llm;
 mod logging;
 mod models;
@@ -119,6 +120,12 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = make_pool(config.database_path.clone()).await?;
     tokio::fs::create_dir_all(&config.media_dir).await.ok();
+
+    // Seed canonical foods/aliases from the legacy string-based alias system.
+    // Idempotent: no-ops once everything has been migrated.
+    if let Err(e) = crate::ingredients::catalog::seed_legacy_aliases(&pool).await {
+        tracing::warn!(?e, "legacy food alias seeding failed");
+    }
 
     cleanup_broken_image_paths(&pool, &config.media_dir).await;
 
