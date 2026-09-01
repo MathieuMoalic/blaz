@@ -5,6 +5,9 @@
 //! wording and preparation stay on recipe ingredients; only the stable
 //! identity and canonical metadata live here.
 
+pub mod backfill;
+#[cfg(test)]
+mod backfill_tests;
 pub mod catalog;
 pub mod parser;
 pub mod resolver;

@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Handle subcommands
     if let Some(command) = cli.command {
-        return handle_command(command);
+        return handle_command(command, &cli.config).await;
     }
 
     let mut config = cli.config;
@@ -147,10 +147,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_command(command: Commands) -> anyhow::Result<()> {
+async fn handle_command(command: Commands, config: &config::Config) -> anyhow::Result<()> {
     match command {
         Commands::HashPassword => hash_password_interactive(),
+        Commands::BackfillIngredients => run_backfill(config).await,
     }
+}
+
+/// Backfill legacy ingredients to canonical Food identity (idempotent).
+async fn run_backfill(config: &config::Config) -> anyhow::Result<()> {
+    let pool = make_pool(config.database_path.clone()).await?;
+    let stats = crate::ingredients::backfill::run(&pool, config).await?;
+    crate::ingredients::backfill::print_summary(&stats);
+    Ok(())
 }
 
 /// On startup, null-out `image_path_small` / `image_path_full` for recipes

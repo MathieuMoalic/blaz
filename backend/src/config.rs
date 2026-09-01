@@ -15,6 +15,8 @@ pub struct Cli {
 pub enum Commands {
     /// Generate an Argon2 password hash for authentication
     HashPassword,
+    /// Backfill legacy ingredients to canonical Food identity (idempotent)
+    BackfillIngredients,
 }
 
 /// Blaz server configuration
