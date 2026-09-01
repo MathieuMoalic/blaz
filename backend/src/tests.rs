@@ -932,6 +932,86 @@ mod integration {
     }
 
     #[tokio::test]
+    async fn foods_search_and_structured_add() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+        let potato = seed_food_alias(pool, "potato", "spuds").await;
+        let sweet = seed_food_alias(pool, "sweet potato", "sweet potatoes").await;
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        // Search finds names and aliases, exact/prefix ranked first.
+        let resp = app
+            .clone()
+            .oneshot(auth_get("/foods?q=pot", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let hits = json_body(resp.into_body()).await;
+        let arr = hits.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], potato);
+        assert_eq!(arr[0]["name"], "potato");
+        assert_eq!(arr[1]["id"], sweet);
+
+        let resp = app
+            .clone()
+            .oneshot(auth_get("/foods?q=spud", &token))
+            .await
+            .unwrap();
+        let hits = json_body(resp.into_body()).await;
+        assert_eq!(hits[0]["id"], potato);
+        assert_eq!(hits[0]["matched_alias"], "spuds");
+
+        // Structured add by food_id merges with free-form adds of the same food.
+        app.clone()
+            .oneshot(auth_json(
+                "POST",
+                "/shopping",
+                &token,
+                &json!({"food_id": potato, "quantity": 2.0}),
+            ))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(auth_json(
+                "POST",
+                "/shopping",
+                &token,
+                &json!({"text": "1 potato"}),
+            ))
+            .await
+            .unwrap();
+
+        let list = json_body(
+            app.clone()
+                .oneshot(auth_get("/shopping", &token))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["quantity"], 3.0);
+        assert_eq!(arr[0]["name"], "potato");
+
+        // Unknown food ids are rejected.
+        let resp = app
+            .oneshot(auth_json(
+                "POST",
+                "/shopping",
+                &token,
+                &json!({"food_id": 9999}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn shopping_list_starts_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;

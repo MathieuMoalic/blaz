@@ -573,21 +573,39 @@ pub async fn create(
     Json(new): Json<NewItem>,
 ) -> AppResult<Json<ShoppingItemView>> {
     let text = new.text.trim();
-    if text.is_empty() {
+    if text.is_empty() && new.food_id.is_none() {
         return Err(StatusCode::BAD_REQUEST.into());
     }
 
-    let parsed = parse_item_line(text).ok_or(StatusCode::BAD_REQUEST)?;
-
-    let line = resolve_shopping_line(
-        &state,
-        None,
-        &parsed.name_raw,
-        parsed.unit.as_deref(),
-        parsed.qty,
-    )
-    .await
-    .map_err(internal_err)?;
+    let line = if let Some(food_id) = new.food_id {
+        if catalog::get_food_by_id(&state.pool, food_id)
+            .await
+            .map_err(internal_err)?
+            .is_none()
+        {
+            return Err((StatusCode::BAD_REQUEST, "unknown food".into()).into());
+        }
+        shopping_line_for_food(
+            &state,
+            Some(food_id),
+            "",
+            new.unit.as_deref(),
+            new.quantity,
+        )
+        .await
+        .map_err(internal_err)?
+    } else {
+        let parsed = parse_item_line(text).ok_or(StatusCode::BAD_REQUEST)?;
+        resolve_shopping_line(
+            &state,
+            None,
+            &parsed.name_raw,
+            parsed.unit.as_deref(),
+            parsed.qty,
+        )
+        .await
+        .map_err(internal_err)?
+    };
 
     sqlx::query(
         r"

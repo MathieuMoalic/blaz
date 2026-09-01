@@ -1363,6 +1363,68 @@ Future<ShoppingItem> createShoppingItem(String text) async {
   return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
 }
 
+/// A canonical food search result (autocomplete / food picker).
+class FoodResult {
+  final int id;
+  final String name;
+  final int? categoryId;
+  final String? category;
+  final String? matchedAlias;
+
+  const FoodResult({
+    required this.id,
+    required this.name,
+    this.categoryId,
+    this.category,
+    this.matchedAlias,
+  });
+
+  factory FoodResult.fromJson(Map<String, dynamic> j) => FoodResult(
+        id: j['id'] as int,
+        name: j['name'] as String? ?? '',
+        categoryId: j['category_id'] is num ? (j['category_id'] as num).toInt() : null,
+        category: j['category'] as String?,
+        matchedAlias: j['matched_alias'] as String?,
+      );
+}
+
+/// Search canonical foods + aliases on the backend (shopping autocomplete
+/// and recipe food pickers).
+Future<List<FoodResult>> fetchFoods(String query, {int limit = 20}) async {
+  final q = query.trim();
+  if (q.isEmpty) return const [];
+  final r = await http.get(
+    _u('/foods', {'q': q, 'limit': '$limit'}),
+    headers: _headers(),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final List data = jsonDecode(r.body) as List;
+  return data
+      .whereType<Map<String, dynamic>>()
+      .map(FoodResult.fromJson)
+      .toList();
+}
+
+/// Add a known food to the shopping list directly by identity (autocomplete
+/// picks). Merges with any spelling of the same food.
+Future<ShoppingItem> createShoppingItemByFood({
+  required int foodId,
+  double? quantity,
+  String? unit,
+}) async {
+  final r = await http.post(
+    _u('/shopping'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({
+      'food_id': foodId,
+      if (quantity != null) 'quantity': quantity,
+      if (unit != null && unit.isNotEmpty) 'unit': unit,
+    }),
+  );
+  if (r.statusCode != 200) _throw(r);
+  return ShoppingItem.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+}
+
 Future<ShoppingItem> toggleShoppingItem({
   required int id,
   required bool done,

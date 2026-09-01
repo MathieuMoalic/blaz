@@ -28,11 +28,12 @@ pub struct FoodAlias {
 }
 
 /// One food search / autocomplete result.
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // consumed from commit 9 (foods endpoint) onwards
+#[derive(Debug, Clone, serde::Serialize)]
+#[allow(dead_code)] // remove when the resolver consumes it or commit 9 wires search
 #[allow(clippy::struct_field_names)]
 pub struct FoodSearchRow {
     pub id: i64,
+    #[serde(rename = "name")]
     pub canonical_name: String,
     pub category_id: Option<i64>,
     pub category: Option<String>,

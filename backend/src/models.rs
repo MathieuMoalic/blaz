@@ -253,9 +253,18 @@ pub struct ShoppingItemView {
     pub category_is_override: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct NewItem {
+    /// Free-form text line (parsed + resolved server-side).
+    #[serde(default)]
     pub text: String,
+    /// Structured add: add a known Food directly by ID (autocomplete picks).
+    #[serde(default)]
+    pub food_id: Option<i64>,
+    #[serde(default)]
+    pub quantity: Option<f64>,
+    #[serde(default)]
+    pub unit: Option<String>,
 }
 
 /* ---------- Shopping categories ---------- */

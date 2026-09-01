@@ -7,14 +7,47 @@
 //! wording is never rewritten; only identity metadata is attached.
 
 use crate::error::AppResult;
+use crate::ingredients::catalog;
 use crate::ingredients::parser::parse_ingredient_line;
 use crate::ingredients::resolver::{self, OpenRouterFoodLlm};
 use crate::models::{AppState, Ingredient};
 use axum::{
     Json,
-    extract::State,
+    extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
+
+/* =========================
+ * GET /foods
+ * ========================= */
+
+#[derive(Deserialize, Debug, Default)]
+pub struct FoodSearchQuery {
+    #[serde(default)]
+    pub q: String,
+    #[serde(default = "default_food_limit")]
+    pub limit: usize,
+}
+
+const fn default_food_limit() -> usize {
+    20
+}
+
+/// `GET /foods?q=pot&limit=20`
+///
+/// Search canonical food names and aliases (case-insensitive substring).
+/// Powers shopping autocomplete and recipe-edit food pickers.
+///
+/// # Errors
+///
+/// Err if the database lookup fails.
+pub async fn search_foods(
+    State(state): State<AppState>,
+    Query(query): Query<FoodSearchQuery>,
+) -> AppResult<Json<Vec<crate::ingredients::types::FoodSearchRow>>> {
+    let rows = catalog::search_foods(&state.pool, &query.q, query.limit).await?;
+    Ok(Json(rows))
+}
 
 /* =========================
  * POST /ingredients/resolve

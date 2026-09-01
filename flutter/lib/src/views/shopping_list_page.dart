@@ -564,10 +564,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
 
   Future<void> _showAddItemDialog() async {
     _ctrl.clear();
-    
-    // Get all unique item texts including done items for suggestions
-    final allItemTexts = await fetchAllShoppingTexts();
-    
+
     if (!mounted) return;
     await showDialog(
       context: context,
@@ -575,11 +572,35 @@ class ShoppingListPageState extends State<ShoppingListPage> {
       builder: (ctx) {
         return _AddItemDialog(
           controller: _ctrl,
-          allItemTexts: allItemTexts,
           onAdd: _add,
+          onAddFood: _addByFood,
         );
       },
     );
+  }
+
+  /// Add a known food by identity (autocomplete pick); the backend merges
+  /// with any spelling of the same food.
+  Future<void> _addByFood(FoodResult food) async {
+    try {
+      final created = await createShoppingItemByFood(foodId: food.id);
+      if (!mounted) return;
+      _applyLocalUpdate((list) {
+        final existingIdx = list.indexWhere((x) => x.id == created.id);
+        if (existingIdx != -1) {
+          list[existingIdx] = created;
+        } else {
+          list.insert(0, created);
+        }
+        return list;
+      });
+      unawaited(refresh());
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not add item: $e')));
+    }
   }
 
   // _editItem unchanged except replace any _refresh() calls with refresh()
@@ -988,13 +1009,13 @@ class _RowTile extends StatelessWidget {
 /// Stateful dialog for adding items with fuzzy search suggestions
 class _AddItemDialog extends StatefulWidget {
   final TextEditingController controller;
-  final List<String> allItemTexts;
   final Future<void> Function(String) onAdd;
+  final Future<void> Function(FoodResult) onAddFood;
 
   const _AddItemDialog({
     required this.controller,
-    required this.allItemTexts,
     required this.onAdd,
+    required this.onAddFood,
   });
 
   @override
@@ -1002,104 +1023,65 @@ class _AddItemDialog extends StatefulWidget {
 }
 
 class _AddItemDialogState extends State<_AddItemDialog> {
-  List<String> _suggestions = [];
+  List<FoodResult> _suggestions = [];
   bool _saving = false;
   String? _error;
-  
+  Timer? _debounce;
+  int _searchSeq = 0;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onTextChanged);
   }
-  
+
   @override
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
+    _debounce?.cancel();
     super.dispose();
   }
-  
+
   void _onTextChanged() {
-    if (!mounted) return;
-    
+    _debounce?.cancel();
+    final query = widget.controller.text.trim();
+    if (query.isEmpty) {
+      setState(() => _suggestions = []);
+      return;
+    }
+    // Debounced backend food search; spelling-independent suggestions.
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      final seq = ++_searchSeq;
+      try {
+        final hits = await fetchFoods(query);
+        if (!mounted || seq != _searchSeq) return;
+        setState(() => _suggestions = hits);
+      } catch (_) {
+        if (!mounted || seq != _searchSeq) return;
+        setState(() => _suggestions = []);
+      }
+    });
+  }
+
+  Future<void> _submitFood(FoodResult food) async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
-      final query = widget.controller.text.trim().toLowerCase();
-      
-      if (query.isEmpty) {
-        setState(() => _suggestions = []);
-        return;
-      }
-      
-      // Fuzzy match and score all items
-      final scored = <({String text, double score})>[];
-      for (final text in widget.allItemTexts) {
-        final score = fuzzyScore(text, query);
-        if (score > 0) {
-          scored.add((text: text, score: score));
-        }
-      }
-      
-      scored.sort((a, b) => b.score.compareTo(a.score));
-      final newSuggestions = scored.take(5).map((item) => item.text).toList();
-      
-      if (mounted) {
-        setState(() => _suggestions = newSuggestions);
-      }
+      await widget.onAddFood(food);
+      if (!mounted) return;
+      Navigator.pop(context);
     } catch (e) {
-      // If there's an error, just clear suggestions
-      if (mounted) {
-        setState(() => _suggestions = []);
-      }
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Could not add item: $e';
+      });
     }
   }
-  
-  double fuzzyScore(String text, String query) {
-    final textLower = text.toLowerCase();
-    
-    // Exact match
-    if (textLower == query) return 1000;
-    
-    // Starts with
-    if (textLower.startsWith(query)) return 900;
-    
-    // Word boundary match
-    final words = textLower.split(' ');
-    for (final word in words) {
-      if (word.startsWith(query)) return 800;
-    }
-    
-    // Contains substring
-    if (textLower.contains(query)) return 700;
-    
-    // Fuzzy character-by-character match
-    return fuzzyCharMatch(textLower, query);
-  }
-  
-  double fuzzyCharMatch(String text, String pattern) {
-    int textIdx = 0;
-    int patternIdx = 0;
-    int matchCount = 0;
-    int consecutiveMatches = 0;
-    double score = 0;
-    
-    while (textIdx < text.length && patternIdx < pattern.length) {
-      if (text[textIdx] == pattern[patternIdx]) {
-        matchCount++;
-        consecutiveMatches++;
-        score += 10 + consecutiveMatches;
-        patternIdx++;
-      } else {
-        consecutiveMatches = 0;
-      }
-      textIdx++;
-    }
-    
-    if (patternIdx != pattern.length) return 0;
-    
-    final matchRatio = matchCount / pattern.length;
-    final lengthRatio = pattern.length / text.length;
-    return score * matchRatio * lengthRatio;
-  }
-  
+
   Future<void> _submitText() async {
     final text = widget.controller.text.trim();
     if (text.isEmpty || _saving) return;
@@ -1154,17 +1136,23 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                 ),
                 const SizedBox(height: 4),
                 ...List.generate(_suggestions.length, (index) {
-                  final suggestion = _suggestions[index];
+                  final food = _suggestions[index];
                   return ListTile(
                     dense: true,
                     visualDensity: VisualDensity.compact,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    title: Text(_formatItemText(suggestion)),
+                    title: Text(food.name),
+                    subtitle: food.category != null
+                        ? Text(
+                            food.category!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(context).hintColor,
+                            ),
+                          )
+                        : null,
                     trailing: const Icon(Icons.arrow_forward, size: 16),
-                    onTap: () {
-                      widget.controller.text = suggestion;
-                      _submitText();
-                    },
+                    onTap: () => _submitFood(food),
                   );
                 }),
               ],
