@@ -363,7 +363,12 @@ pub async fn create(
         }
     }
 
-    let ingredients_json = serialize_json_or_empty(&new.ingredients);
+    // Resolve canonical names for better shopping list merging
+    let ingredients = new.ingredients.clone();
+    // TODO: Implement canonical name resolution when LLM settings are available
+    // For now, we skip resolution to avoid blocking recipe creation
+
+    let ingredients_json = serialize_json_or_empty(&ingredients);
     let instructions_json = serialize_json_or_empty(&new.instructions);
 
     let sql = format!(

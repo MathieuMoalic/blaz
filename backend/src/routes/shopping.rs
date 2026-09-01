@@ -52,6 +52,7 @@ pub struct InIngredient {
     pub quantity: Option<f64>,
     pub unit: Option<String>, // "g","kg","ml","L","tsp","tbsp" or null
     pub name: String,
+    pub canonical_name: Option<String>,
     pub category: Option<String>,
 }
 
@@ -1037,7 +1038,26 @@ pub async fn merge_items(
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
     for it in &req.items {
-        let merge_name_norm = normalize_name(&it.name);
+        // Use canonical_name if available; if not, try to resolve from aliases or use normalized name
+        let merge_name = if let Some(canonical) = &it.canonical_name {
+            canonical.clone()
+        } else {
+            let norm = normalize_name(&it.name);
+            // Try to resolve from aliases table
+            if let Ok(Some((canonical_name, _))) = sqlx::query_as::<_, (String, i32)>(
+                "SELECT canonical_name, confirmed FROM ingredient_aliases WHERE raw_name = ?",
+            )
+            .bind(&norm)
+            .fetch_optional(&state.pool)
+            .await
+            {
+                canonical_name
+            } else {
+                norm
+            }
+        };
+
+        let merge_name_norm = normalize_name(&merge_name);
 
         // Parse qty/unit from the ingredient fields
         let (mut unit_norm, qty_norm) = to_canonical_qty_unit(it.unit.as_deref(), it.quantity);

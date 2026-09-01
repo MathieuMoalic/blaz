@@ -29,6 +29,10 @@ pub struct Ingredient {
     /// `true` = raw unparsed text; `false` = user-confirmed structured ingredient.
     #[serde(default)]
     pub raw: bool,
+    /// Canonical ingredient name for merging shopping list items
+    /// (e.g., "potatoes" and "large potatoes" both map to "potato")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

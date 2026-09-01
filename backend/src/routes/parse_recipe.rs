@@ -766,6 +766,7 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                                 name: String::new(),
                                 prep: None,
                                 raw: false,
+                                canonical_name: None,
                             });
                         }
                     }
@@ -807,6 +808,7 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                         name,
                         prep,
                         raw: false,
+                        canonical_name: None,
                     })
                 }
                 _ => None, // NO STRINGS ACCEPTED

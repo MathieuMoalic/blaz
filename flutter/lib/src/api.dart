@@ -444,10 +444,20 @@ class Ingredient {
   final bool raw;
   /// Non-null → this item is a section header (not an actual ingredient).
   final String? section;
+  /// Canonical ingredient name for merging shopping list items
+  /// (e.g., "potatoes" and "large potatoes" both map to "potato")
+  final String? canonicalName;
 
   bool get isSection => section != null;
 
-  Ingredient({this.quantity, this.unit, required this.name, this.prep, this.raw = false, this.section});
+  Ingredient(
+      {this.quantity,
+      this.unit,
+      required this.name,
+      this.prep,
+      this.raw = false,
+      this.section,
+      this.canonicalName});
 
   /// Creates a section-header placeholder (not a real ingredient).
   Ingredient.sectionHeader(String sectionName)
@@ -456,7 +466,8 @@ class Ingredient {
         name = '',
         prep = null,
         raw = false,
-        section = sectionName;
+        section = sectionName,
+        canonicalName = null;
 
   factory Ingredient.fromJson(Map<String, dynamic> j) {
     // Section header: {"section": "Sauce"}
@@ -482,6 +493,12 @@ class Ingredient {
       }
     }
 
+    String? canonicalName;
+    final cn = j['canonical_name'];
+    if (cn is String && cn.trim().isNotEmpty) {
+      canonicalName = cn.trim();
+    }
+
     return Ingredient(
       quantity: (j['quantity'] is num)
           ? (j['quantity'] as num).toDouble()
@@ -492,6 +509,7 @@ class Ingredient {
       name: j['name'] as String? ?? '',
       prep: prep,
       raw: j['raw'] == true,
+      canonicalName: canonicalName,
     );
   }
 
@@ -503,6 +521,7 @@ class Ingredient {
       'name': name,
       if (prep != null) 'prep': prep,
       'raw': raw,
+      if (canonicalName != null) 'canonical_name': canonicalName,
     };
   }
 }

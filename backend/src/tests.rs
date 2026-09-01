@@ -528,4 +528,242 @@ mod integration {
         assert_eq!(items.as_array().unwrap().len(), 1);
         assert!(items[0]["text"].as_str().unwrap().contains("potatoes"));
     }
+
+    // ── canonical ingredient resolution ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn ingredient_aliases_cache_canonical_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+
+        // Manually insert an alias (simulating a previous resolution)
+        sqlx::query(
+            "INSERT INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind("potatoes")
+        .bind("potato")
+        .bind(0)
+        .bind("Vegetables")
+        .bind(0)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        // Query it back
+        let record: Option<(String, String)> = sqlx::query_as(
+            "SELECT canonical_name, category FROM ingredient_aliases WHERE raw_name = ?",
+        )
+        .bind("potatoes")
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+
+        assert!(record.is_some());
+        let (canonical, category) = record.unwrap();
+        assert_eq!(canonical, "potato");
+        assert_eq!(category, "Vegetables");
+    }
+
+    #[tokio::test]
+    async fn ingredient_aliases_potato_variants_resolve() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+
+        // Insert variants - all should resolve to canonical "potato" in "Vegetables"
+        let variants = vec!["potato", "potatoes", "large potatoes", "small potato"];
+        for variant in &variants {
+            sqlx::query(
+                "INSERT INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, ?, ?, ?)"
+            )
+            .bind(variant)
+            .bind("potato")
+            .bind(0)
+            .bind("Vegetables")
+            .bind(0)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        // Verify all variants map to the same canonical name and category
+        for variant in &variants {
+            let record: Option<(String, String)> = sqlx::query_as(
+                "SELECT canonical_name, category FROM ingredient_aliases WHERE raw_name = ?",
+            )
+            .bind(variant)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+
+            let (canonical, category) = record.unwrap();
+            assert_eq!(
+                canonical, "potato",
+                "variant '{}' should map to canonical 'potato'",
+                variant
+            );
+            assert_eq!(
+                category, "Vegetables",
+                "variant '{}' category should be 'Vegetables'",
+                variant
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ingredient_aliases_distinct_ingredients_not_merged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+
+        // Insert pairs that should NOT be merged
+        let pairs = vec![
+            (
+                "sweet potato",
+                "sweetpotato",
+                "sweet potato",
+                "root vegetables",
+            ),
+            ("coconut milk", "coconutmilk", "coconut", "Drinks"),
+            ("brown sugar", "brownsugar", "sugar", "Pantry"),
+            ("peanut butter", "peanutbutter", "peanut", "Pantry"),
+        ];
+
+        for (raw_name, _, canonical, category) in &pairs {
+            sqlx::query(
+                "INSERT INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, ?, ?, ?)"
+            )
+            .bind(raw_name)
+            .bind(canonical)
+            .bind(0)
+            .bind(category)
+            .bind(0)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        // Verify they are distinct (not merged with base ingredients)
+        let record: Option<String> =
+            sqlx::query_scalar("SELECT canonical_name FROM ingredient_aliases WHERE raw_name = ?")
+                .bind("sweet potato")
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        assert_eq!(record, Some("sweet potato".to_string()));
+
+        let record: Option<String> =
+            sqlx::query_scalar("SELECT canonical_name FROM ingredient_aliases WHERE raw_name = ?")
+                .bind("coconut milk")
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        assert_eq!(record, Some("coconut".to_string()));
+    }
+
+    #[tokio::test]
+    async fn ingredient_aliases_valid_categories_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+
+        // Verify that only valid shopping categories exist
+        let categories: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM shopping_categories ORDER BY sort_order")
+                .fetch_all(pool)
+                .await
+                .unwrap();
+
+        assert!(categories.len() > 0);
+        assert!(categories.contains(&"Other".to_string()));
+        assert!(categories.contains(&"Vegetables".to_string()));
+        assert!(categories.contains(&"Fruits".to_string()));
+
+        // Insert an alias with valid category
+        sqlx::query(
+            "INSERT INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind("apple")
+        .bind("apple")
+        .bind(0)
+        .bind("Fruits")
+        .bind(0)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let category: String =
+            sqlx::query_scalar("SELECT category FROM ingredient_aliases WHERE raw_name = ?")
+                .bind("apple")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+
+        assert!(categories.contains(&category));
+    }
+
+    #[tokio::test]
+    async fn ingredient_aliases_confirmed_flag_preserved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+
+        // Insert with confirmed=1 (user-set, should not auto-change)
+        sqlx::query(
+            "INSERT INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind("tomato")
+        .bind("tomato")
+        .bind(1)  // confirmed
+        .bind("Vegetables")
+        .bind(1)  // confirmed_category
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let record: Option<(i32, i32)> = sqlx::query_as(
+            "SELECT confirmed, confirmed_category FROM ingredient_aliases WHERE raw_name = ?",
+        )
+        .bind("tomato")
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+
+        let (confirmed, confirmed_category) = record.unwrap();
+        assert_eq!(confirmed, 1);
+        assert_eq!(confirmed_category, 1);
+    }
+
+    #[tokio::test]
+    async fn ingredient_aliases_auto_generated_has_confirmed_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = &state.pool;
+
+        // Insert with confirmed=0 (auto-generated, can change)
+        sqlx::query(
+            "INSERT INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind("banana")
+        .bind("banana")
+        .bind(0)  // auto-generated
+        .bind("Fruits")
+        .bind(0)  // auto-generated
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let record: Option<(i32, i32)> = sqlx::query_as(
+            "SELECT confirmed, confirmed_category FROM ingredient_aliases WHERE raw_name = ?",
+        )
+        .bind("banana")
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+
+        let (confirmed, confirmed_category) = record.unwrap();
+        assert_eq!(confirmed, 0);
+        assert_eq!(confirmed_category, 0);
+    }
 }

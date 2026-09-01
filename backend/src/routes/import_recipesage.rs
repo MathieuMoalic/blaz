@@ -130,6 +130,7 @@ async fn import_single_recipe(state: &AppState, recipe: JsonLdRecipe) -> Result<
             name: ing_str.clone(),
             prep: None,
             raw: true,
+            canonical_name: None,
         })
         .collect();
 
