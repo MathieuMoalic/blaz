@@ -195,6 +195,8 @@ Future<ShoppingItem> updateShoppingItem({
   required int id,
   bool? done,
   String? category,
+  int? categoryId,
+  bool? alwaysUseCategory,
   String? notes,
   String? text,
   String? name,
@@ -204,6 +206,8 @@ Future<ShoppingItem> updateShoppingItem({
   final body = <String, dynamic>{
     if (done != null) 'done': done,
     if (category != null) 'category': category,
+    if (categoryId != null) 'category_id': categoryId,
+    if (alwaysUseCategory != null) 'always_use_category': alwaysUseCategory,
     if (notes != null) 'notes': notes,
     if (text != null) 'text': text,
     if (name != null) 'name': name,
@@ -392,6 +396,12 @@ class ShoppingItem {
   final String notes;
   final List<int> recipeIds;
   final String? recipeTitles; // Comma-separated
+  final int? foodId;
+  final String? name;
+  final double? quantity;
+  final String? unit;
+  final int? categoryId;
+  final bool categoryIsOverride;
 
   ShoppingItem({
     required this.id,
@@ -401,6 +411,12 @@ class ShoppingItem {
     this.notes = '',
     this.recipeIds = const [],
     this.recipeTitles,
+    this.foodId,
+    this.name,
+    this.quantity,
+    this.unit,
+    this.categoryId,
+    this.categoryIsOverride = false,
   });
 
   factory ShoppingItem.fromJson(Map<String, dynamic> j) {
@@ -433,6 +449,12 @@ class ShoppingItem {
       notes: (j['notes'] as String?) ?? '',
       recipeIds: recipeIds,
       recipeTitles: j['recipe_titles'] as String?,
+      foodId: j['food_id'] is num ? (j['food_id'] as num).toInt() : null,
+      name: j['name'] as String?,
+      quantity: j['quantity'] is num ? (j['quantity'] as num).toDouble() : null,
+      unit: j['unit'] as String?,
+      categoryId: j['category_id'] is num ? (j['category_id'] as num).toInt() : null,
+      categoryIsOverride: j['category_is_override'] == true,
     );
   }
 }

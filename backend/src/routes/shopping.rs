@@ -37,7 +37,14 @@ fn patch_update_err(err: sqlx::Error) -> AppError {
 #[derive(Deserialize, Debug)]
 pub struct UpdateShoppingItem {
     pub done: Option<bool>,
+    /// One-time category override (legacy name form). Empty string clears.
     pub category: Option<String>,
+    /// One-time category override (by category id; wins over `category`).
+    #[serde(default)]
+    pub category_id: Option<i64>,
+    /// Persist the chosen category as the Food's default (`user`-locked).
+    #[serde(default)]
+    pub always_use_category: Option<bool>,
     pub notes: Option<String>,
 
     /// Backwards-compatible free-form update.
@@ -222,6 +229,63 @@ async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, s
     .bind(id)
     .fetch_one(&state.pool)
     .await
+}
+
+/// Record "always use this category" on the item's Food.
+async fn apply_always_use_category(state: &AppState, id: i64) -> AppResult<()> {
+    let row = fetch_raw_by_id(state, id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let Some(food_id) = row.food_id else {
+        return Err((StatusCode::BAD_REQUEST, "item has no food identity".into()).into());
+    };
+
+    let category_id: Option<i64> =
+        sqlx::query_scalar("SELECT category_id FROM shopping_items_view WHERE id = ?")
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await?;
+
+    crate::ingredients::catalog::set_food_category(
+        &state.pool,
+        food_id,
+        category_id,
+        "user",
+        None,
+        true,
+    )
+    .await
+    .map_err(|e| -> AppError { (StatusCode::BAD_REQUEST, e.to_string()).into() })?;
+    Ok(())
+}
+
+async fn category_id_exists(state: &AppState, id: i64) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT id FROM shopping_categories WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+async fn category_id_by_name(state: &AppState, name: &str) -> Option<i64> {
+    sqlx::query_scalar("SELECT id FROM shopping_categories WHERE name = ?")
+        .bind(name)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn category_name_by_id(state: &AppState, id: Option<i64>) -> Option<String> {
+    let cid = id?;
+    sqlx::query_scalar("SELECT name FROM shopping_categories WHERE id = ?")
+        .bind(cid)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
 }
 
 #[derive(Debug)]
@@ -683,26 +747,48 @@ async fn apply_category_update(
     qb: &mut QueryBuilder<'_, Sqlite>,
     wrote: &mut bool,
     state: &AppState,
-    category: Option<String>,
+    payload: &UpdateShoppingItem,
 ) -> AppResult<()> {
-    let Some(mut cat) = category else {
-        return Ok(());
+    // Resolve the desired one-time override: an explicit `category_id` wins
+    // over the legacy `category` *name*; an empty name clears the override.
+    let category_id = match (payload.category_id, payload.category.as_deref()) {
+        (Some(cid), _) => {
+            if category_id_exists(state, cid).await {
+                Some(cid)
+            } else {
+                return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
+            }
+        }
+        (None, Some(name)) => {
+            let name = crate::units::norm_whitespace(name);
+            if name.is_empty() {
+                None // clear the override
+            } else if let Some(cid) = category_id_by_name(state, &name).await {
+                Some(cid)
+            } else {
+                return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
+            }
+        }
+        (None, None) => return Ok(()), // untouched
     };
 
+    let name = category_name_by_id(state, category_id).await;
+
     push_sep(qb, wrote);
-
-    cat = cat.trim().to_string();
-    if cat.is_empty() {
-        qb.push("category = NULL");
-        return Ok(());
+    qb.push("category_override_id = ");
+    if let Some(cid) = category_id {
+        qb.push_bind(cid);
+    } else {
+        qb.push("NULL");
     }
 
-    if !validate_category(state, &cat).await {
-        return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
-    }
-
+    push_sep(qb, wrote);
     qb.push("category = ");
-    qb.push_bind(cat);
+    if let Some(n) = name {
+        qb.push_bind(n);
+    } else {
+        qb.push("NULL");
+    }
 
     Ok(())
 }
@@ -897,7 +983,7 @@ pub async fn patch_shopping_item(
     let mut wrote = false;
 
     apply_done_update(&mut qb, &mut wrote, payload.done);
-    apply_category_update(&mut qb, &mut wrote, &state, payload.category.clone()).await?;
+    apply_category_update(&mut qb, &mut wrote, &state, &payload).await?;
     apply_notes_update(&mut qb, &mut wrote, payload.notes.clone());
 
     // `text` takes priority over structured fields.
@@ -905,6 +991,12 @@ pub async fn patch_shopping_item(
     if !did_text {
         let _did_struct =
             apply_structured_update(&mut qb, &mut wrote, &state, id, &payload).await?;
+    }
+
+    // Persistent category preference ("Always use this category for <Food>").
+    // Runs even for category-only patches that don't write a column directly.
+    if payload.always_use_category == Some(true) {
+        apply_always_use_category(&state, id).await?;
     }
 
     if !wrote {

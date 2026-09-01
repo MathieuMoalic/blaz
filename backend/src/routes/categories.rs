@@ -224,6 +224,20 @@ pub async fn delete(
             .into());
     }
 
+    // Foods reference categories by ID: never leave broken references.
+    let food_count: i64 = sqlx::query_scalar(r"SELECT COUNT(*) FROM foods WHERE category_id = ?")
+        .bind(existing.id)
+        .fetch_one(&state.pool)
+        .await?;
+
+    if food_count > 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("{food_count} ingredient(s) use this category. Reassign them first."),
+        )
+            .into());
+    }
+
     // Delete the category
     sqlx::query(r"DELETE FROM shopping_categories WHERE id = ?")
         .bind(id)

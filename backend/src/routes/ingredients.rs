@@ -13,9 +13,90 @@ use crate::ingredients::resolver::{self, OpenRouterFoodLlm};
 use crate::models::{AppState, Ingredient};
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
+    http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
+
+/* =========================
+ * PATCH /foods/{id}
+ * ========================= */
+
+#[derive(Deserialize, Debug, Default)]
+pub struct UpdateFoodReq {
+    /// Food's default category (persisted as a user choice).
+    #[serde(default)]
+    pub category_id: Option<i64>,
+    /// Optional canonical name rename.
+    #[serde(default)]
+    pub canonical_name: Option<String>,
+}
+
+/// `PATCH /foods/{id}` — change a Food's default category or rename it.
+///
+/// Category changes are stored with `category_source = 'user'` and are never
+/// overwritten by automatic resolution afterwards.
+///
+/// # Errors
+///
+/// `404` if the food does not exist; `400` for unknown categories or empty
+/// names; `409` if the new name collides with an existing Food.
+pub async fn update_food(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<UpdateFoodReq>,
+) -> AppResult<Json<crate::ingredients::types::Food>> {
+    if catalog::get_food_by_id(&state.pool, id).await?.is_none() {
+        return Err(StatusCode::NOT_FOUND.into());
+    }
+
+    if let Some(name) = req.canonical_name {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "empty food name".into()).into());
+        }
+        let normalized = crate::units::normalize_name(name);
+        if normalized.is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "invalid food name".into()).into());
+        }
+        let res = match sqlx::query(
+            "UPDATE foods SET canonical_name = ?, normalized_name = ?, updated_at = unixepoch() \
+              WHERE id = ?",
+        )
+        .bind(name)
+        .bind(&normalized)
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        {
+            Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                return Err((StatusCode::CONFLICT, "food name already exists".into()).into());
+            }
+            Err(e) => return Err(e.into()),
+            Ok(res) => res,
+        };
+        if res.rows_affected() == 0 {
+            return Err(StatusCode::NOT_FOUND.into());
+        }
+    }
+
+    if let Some(category_id) = req.category_id {
+        let known: Option<i64> = sqlx::query_scalar("SELECT id FROM shopping_categories WHERE id = ?")
+            .bind(category_id)
+            .fetch_optional(&state.pool)
+            .await?;
+        if known.is_none() {
+            return Err((StatusCode::BAD_REQUEST, "unknown category".into()).into());
+        }
+        catalog::set_food_category(&state.pool, id, Some(category_id), "user", None, true).await?;
+    }
+
+    Ok(Json(
+        catalog::get_food_by_id(&state.pool, id)
+            .await?
+            .ok_or(StatusCode::NOT_FOUND)?,
+    ))
+}
 
 /* =========================
  * GET /foods

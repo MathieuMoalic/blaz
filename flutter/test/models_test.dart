@@ -354,6 +354,24 @@ void main() {
           'recipe_ids': '[]',
         };
 
+    test('structured identity fields are parsed', () {
+      final item = ShoppingItem.fromJson({
+        ...base(),
+        'food_id': 42,
+        'name': 'potato',
+        'quantity': 1500.0,
+        'unit': 'g',
+        'category_id': 3,
+        'category_is_override': true,
+      });
+      expect(item.foodId, 42);
+      expect(item.name, 'potato');
+      expect(item.quantity, 1500.0);
+      expect(item.unit, 'g');
+      expect(item.categoryId, 3);
+      expect(item.categoryIsOverride, isTrue);
+    });
+
     test('done=0 (int) → false', () {
       expect(ShoppingItem.fromJson(base(done: 0)).done, isFalse);
     });

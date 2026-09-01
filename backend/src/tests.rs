@@ -1012,6 +1012,129 @@ mod integration {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn category_override_and_always_use_flow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = state.pool.clone();
+        let potato = seed_food_alias(&pool, "potato", "potatoes").await;
+        let (vegetables, pantry): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT id FROM shopping_categories WHERE name='Vegetables'), \
+                    (SELECT id FROM shopping_categories WHERE name='Pantry')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE foods SET category_id = ? WHERE id = ?")
+            .bind(vegetables)
+            .bind(potato)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        // Food-backed add inherits the Food's category (zero per-item guessing).
+        let item = json_body(
+            app.clone()
+                .oneshot(auth_json(
+                    "POST",
+                    "/shopping",
+                    &token,
+                    &json!({"text": "1 potato"}),
+                ))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let id = item["id"].as_i64().unwrap();
+        assert_eq!(item["category"], "Vegetables");
+        assert_eq!(item["category_id"], vegetables);
+        assert_eq!(item["category_is_override"], false);
+
+        // One-time override does not touch the Food.
+        let patched = json_body(
+            app.clone()
+                .oneshot(auth_json(
+                    "PATCH",
+                    &format!("/shopping/{id}"),
+                    &token,
+                    &json!({"category_id": pantry}),
+                ))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        assert_eq!(patched["category"], "Pantry");
+        assert_eq!(patched["category_id"], pantry);
+        assert_eq!(patched["category_is_override"], true);
+
+        let food: (Option<i64>, String) = sqlx::query_as(
+            "SELECT category_id, category_source FROM foods WHERE id = ?",
+        )
+        .bind(potato)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(food.0, Some(vegetables), "one-time override leaves Food alone");
+        assert_eq!(food.1, "unknown", "Food category untouched");
+
+        // "Always use this category" persists as a user choice on the Food.
+        let resp = app
+            .clone()
+            .oneshot(auth_json(
+                "PATCH",
+                &format!("/shopping/{id}"),
+                &token,
+                &json!({"always_use_category": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let food: (Option<i64>, String) = sqlx::query_as(
+            "SELECT category_id, category_source FROM foods WHERE id = ?",
+        )
+        .bind(potato)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(food.0, Some(pantry));
+        assert_eq!(food.1, "user");
+
+        // PATCH /foods: category_id persisted, invalid ones rejected.
+        let resp = app
+            .clone()
+            .oneshot(auth_json(
+                "PATCH",
+                &format!("/foods/{potato}"),
+                &token,
+                &json!({"category_id": 424_242}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = app
+            .clone()
+            .oneshot(auth_json(
+                "PATCH",
+                &format!("/foods/{potato}"),
+                &token,
+                &json!({"category_id": vegetables}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let food_json = json_body(resp.into_body()).await;
+        assert_eq!(food_json["category_id"], vegetables);
+        assert_eq!(food_json["category_source"], "user");
+    }
+
+    #[tokio::test]
     async fn shopping_list_starts_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;

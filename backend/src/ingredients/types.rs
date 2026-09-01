@@ -1,7 +1,7 @@
 //! Shared row and DTO types for the ingredient pipeline.
 
 /// A canonical food row.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
 #[allow(dead_code)] // consumed from commit 4 (resolver) onwards
 #[allow(clippy::struct_field_names)]
 pub struct Food {

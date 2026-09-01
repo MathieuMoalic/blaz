@@ -45,7 +45,7 @@ String _formatItemText(String text) {
 }
 
 String _catValue(String? c) =>
-    (c == null || c.trim().isEmpty) ? 'Other' : c.trim();
+    (c == null || c.trim().isEmpty) ? 'Uncategorized' : c.trim();
 
 /// Format date from "Recipe Title (2026-02-20)" format
 /// Returns formatted like "Recipe Title (Today)", "Recipe Title (in 2 days)", "Recipe Title (Feb 20)"
@@ -272,7 +272,7 @@ class ShoppingListPageState extends State<ShoppingListPage> {
   }
 
   String _catValue(String? c) =>
-      (c == null || c.trim().isEmpty) ? 'Other' : c.trim();
+      (c == null || c.trim().isEmpty) ? 'Uncategorized' : c.trim();
 
   Map<String, List<ShoppingItem>> _group(List<ShoppingItem> items) {
     final map = <String, List<ShoppingItem>>{};
@@ -640,6 +640,7 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _notesCtrl;
   late String _cat;
+  bool _alwaysUse = false;
 
   /// Get the list of category names to use (dynamic or fallback to hardcoded)
   List<String> get _categoryNames => widget.categories.isNotEmpty
@@ -779,6 +780,21 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                     ),
                   ],
                 ),
+                if (widget.item.foodId != null) ...[
+                  const SizedBox(height: 4),
+                  CheckboxListTile(
+                    value: _alwaysUse,
+                    onChanged: (v) => setState(() => _alwaysUse = v ?? false),
+                    title: Text(
+                      'Always use this category for ${widget.item.name ?? ''}',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
                 if (widget.item.recipeTitles != null &&
                     widget.item.recipeTitles!.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -859,6 +875,7 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                         unit: unit,
                         category: newCat,
                         notes: _notesCtrl.text.trim(),
+                        alwaysUseCategory: _alwaysUse ? true : null,
                       );
                       if (!context.mounted) return;
                       Navigator.pop(context, updated);

@@ -98,6 +98,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/recipes/import", post(parse_recipe::import_from_url))
         .route("/ingredients/resolve", post(ingredients::resolve_lines))
         .route("/foods", get(ingredients::search_foods))
+        .route("/foods/{id}", patch(ingredients::update_food))
         .route(
             "/recipes/import/images",
             post(import_recipe_images::import_from_images),
