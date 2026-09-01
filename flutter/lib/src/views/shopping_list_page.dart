@@ -650,16 +650,17 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
   @override
   void initState() {
     super.initState();
-    final parsed = parseIngredientLine(widget.item.text);
+    // Structured fields come straight from the server (no client parsing).
+    final qty = widget.item.quantity;
+    final unit = widget.item.unit;
+    final name = widget.item.name;
     _qtyCtrl = TextEditingController(
-      text: parsed.quantity != null
-          ? (parsed.quantity! % 1 == 0
-              ? parsed.quantity!.toInt().toString()
-              : parsed.quantity!.toString())
+      text: qty != null
+          ? (qty % 1 == 0 ? qty.toInt().toString() : qty.toString())
           : '',
     );
-    _unitCtrl = TextEditingController(text: parsed.unit ?? '');
-    _nameCtrl = TextEditingController(text: parsed.name);
+    _unitCtrl = TextEditingController(text: unit ?? '');
+    _nameCtrl = TextEditingController(text: name ?? '');
     _notesCtrl = TextEditingController(text: widget.item.notes);
 
     // Ensure category is valid (exists in the list)

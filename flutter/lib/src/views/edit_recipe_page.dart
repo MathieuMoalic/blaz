@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 import '../api.dart';
@@ -300,43 +301,12 @@ class _EditRecipePageState extends State<EditRecipePage> {
     }
   }
 
-  Future<void> _parseAll() async {
-    final rawIndices = <int>[];
-    for (var i = 0; i < _ingredients.length; i++) {
-      if (_ingredients[i].raw) rawIndices.add(i);
-    }
-    if (rawIndices.isEmpty) return;
-
-    List<String> knownNames;
-    try {
-      knownNames = await fetchAllShoppingTexts();
-    } catch (_) {
-      knownNames = const [];
-    }
-
-    for (final i in rawIndices) {
-      if (!mounted) return;
-      final result = await showDialog<Ingredient>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => ParseIngredientDialog(
-          rawText: _ingredients[i].name,
-          knownNames: knownNames,
-          current: rawIndices.indexOf(i) + 1,
-          total: rawIndices.length,
-        ),
-      );
-      if (result != null) {
-        setState(() => _ingredients[i] = result);
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final gap = const SizedBox(height: 12);
     final theme = Theme.of(context);
-    final hasUnparsed = _ingredients.any((i) => i.raw);
+    final needsReviewCount =
+      _ingredients.where((i) => i.needsReview && !i.isSection).length;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Edit recipe')),
@@ -384,18 +354,37 @@ class _EditRecipePageState extends State<EditRecipePage> {
                 children: [
                   Text('Ingredients', style: theme.textTheme.titleSmall),
                   const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.auto_awesome, size: 18),
-                    tooltip: 'Re-parse with AI',
-                    onPressed: _busy ? null : _reparseWithAi,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  if (hasUnparsed)
-                    TextButton.icon(
-                      icon: const Icon(Icons.auto_fix_high, size: 16),
-                      label: const Text('Parse all'),
-                      onPressed: _busy ? null : _parseAll,
+                  if (needsReviewCount > 0) ...[
+                    Chip(
+                      label: Text('$needsReviewCount need review'),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize:
+                          MaterialTapTargetSize.shrinkWrap,
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.tertiaryContainer,
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onTertiaryContainer,
+                      ),
                     ),
+                    const SizedBox(width: 4),
+                  ],
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, size: 18),
+                    tooltip: 'More',
+                    onSelected: (v) {
+                      if (v == 'reinterpret') _reparseWithAi();
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'reinterpret',
+                        child: Text('Reinterpret ingredients'),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -743,6 +732,8 @@ class _IngredientDialogState extends State<_IngredientDialog> {
   late final TextEditingController _unit;
   late final TextEditingController _name;
   late final TextEditingController _prep;
+  int? _foodId;
+  String? _foodName;
 
   @override
   void initState() {
@@ -754,6 +745,34 @@ class _IngredientDialogState extends State<_IngredientDialog> {
     _unit = TextEditingController(text: i?.unit ?? '');
     _name = TextEditingController(text: i?.name ?? '');
     _prep = TextEditingController(text: i?.prep ?? '');
+    _foodId = i?.foodId;
+    _foodName = i?.canonicalName;
+  }
+
+  Future<void> _pickFood() async {
+    final picked = await showModalBottomSheet<FoodResult>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => const _FoodChooserSheet(),
+    );
+    if (picked == null || !mounted) return;
+    // User correction teaches the system: lock this wording to the Food.
+    final alias = (widget.initial?.name.trim() ?? '').isNotEmpty
+        ? widget.initial!.name.trim()
+        : _name.text.trim();
+    if (alias.isNotEmpty) {
+      try {
+        await confirmFoodAlias(foodId: picked.id, alias: alias);
+      } catch (_) {
+        // Learning is best-effort; the selection still applies.
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _foodId = picked.id;
+      _foodName = picked.name;
+    });
   }
 
   @override
@@ -768,6 +787,7 @@ class _IngredientDialogState extends State<_IngredientDialog> {
   void _submit() {
     final name = _name.text.trim();
     if (name.isEmpty) return;
+    final base = widget.initial;
     Navigator.pop(
       context,
       Ingredient(
@@ -775,6 +795,16 @@ class _IngredientDialogState extends State<_IngredientDialog> {
         unit: _unit.text.trim().isEmpty ? null : _unit.text.trim(),
         name: name,
         prep: _prep.text.trim().isEmpty ? null : _prep.text.trim(),
+        ingredientId: base?.ingredientId,
+        rawText: base?.rawText,
+        foodId: _foodId ?? base?.foodId,
+        qualifiers: base?.qualifiers ?? const [],
+        resolutionSource: base?.resolutionSource,
+        resolutionConfidence: base?.resolutionConfidence,
+        needsReview: _foodId != null ? false : (base?.needsReview ?? false),
+        raw: false,
+        section: base?.section,
+        canonicalName: _foodName ?? base?.canonicalName,
       ),
     );
   }
@@ -840,6 +870,23 @@ class _IngredientDialogState extends State<_IngredientDialog> {
                 isDense: true,
               ),
               onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.restaurant, size: 16),
+                    label: Text(
+                      _foodName != null
+                          ? 'Food: $_foodName'
+                          : 'Pick food (optional)',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onPressed: _pickFood,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -922,210 +969,96 @@ class _InstructionDialogState extends State<_InstructionDialog> {
 }
 
 // ---------------------------------------------------------------------------
-// Parse-all confirmation dialog
+// Food chooser sheet (identity picker)
 
-// ---------------------------------------------------------------------------
-// Parse-one-at-a-time dialog
-
-String _normalizeName(String s) {
-  final lower = s.toLowerCase().trim();
-  if (lower.endsWith('ies')) return '${lower.substring(0, lower.length - 3)}y';
-  if (lower.endsWith('ves')) return '${lower.substring(0, lower.length - 3)}f';
-  if (lower.endsWith('es') && lower.length > 3) {
-    return lower.substring(0, lower.length - 2);
-  }
-  if (lower.endsWith('s') && lower.length > 2) {
-    return lower.substring(0, lower.length - 1);
-  }
-  return lower;
-}
-
-class ParseIngredientDialog extends StatefulWidget {
-  final String rawText;
-  final List<String> knownNames;
-  final int current;
-  final int total;
-
-  /// Optional LLM-proposed parse to pre-fill instead of the local parser.
-  final Ingredient? prefill;
-
-  const ParseIngredientDialog({
-    super.key,
-    required this.rawText,
-    required this.knownNames,
-    required this.current,
-    required this.total,
-    this.prefill,
-  });
+class _FoodChooserSheet extends StatefulWidget {
+  const _FoodChooserSheet();
 
   @override
-  State<ParseIngredientDialog> createState() => _ParseIngredientDialogState();
+  State<_FoodChooserSheet> createState() => _FoodChooserSheetState();
 }
 
-class _ParseIngredientDialogState extends State<ParseIngredientDialog> {
-  late final TextEditingController _qty;
-  late final TextEditingController _unit;
-  late final TextEditingController _name;
-  late final TextEditingController _prep;
-
-  @override
-  void initState() {
-    super.initState();
-    final p = widget.prefill ?? parseIngredientLine(widget.rawText);
-    _qty = TextEditingController(
-      text: p.quantity != null ? _fmtQty(p.quantity!) : '',
-    );
-    _unit = TextEditingController(text: p.unit ?? '');
-    _name = TextEditingController(text: p.name);
-    _prep = TextEditingController(text: p.prep ?? '');
-    _name.addListener(() => setState(() {}));
-  }
+class _FoodChooserSheetState extends State<_FoodChooserSheet> {
+  final _ctrl = TextEditingController();
+  List<FoodResult> _results = [];
+  Timer? _debounce;
+  int _seq = 0;
 
   @override
   void dispose() {
-    _qty.dispose();
-    _unit.dispose();
-    _name.dispose();
-    _prep.dispose();
+    _ctrl.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
-  List<String> get _suggestions {
-    final currentName = _name.text.trim();
-    if (currentName.isEmpty) return const [];
-    final norm = _normalizeName(currentName);
-    return widget.knownNames
-        .where((k) => _normalizeName(k) == norm && k != currentName)
-        .take(5)
-        .toList();
-  }
-
-  void _submit() {
-    final name = _name.text.trim();
-    if (name.isEmpty) return;
-    Navigator.pop(
-      context,
-      Ingredient(
-        quantity: double.tryParse(_qty.text.trim().replaceAll(',', '.')),
-        unit: _unit.text.trim().isEmpty ? null : _unit.text.trim(),
-        name: name,
-        prep: _prep.text.trim().isEmpty ? null : _prep.text.trim(),
-      ),
-    );
+  void _onChanged() {
+    _debounce?.cancel();
+    final q = _ctrl.text.trim();
+    if (q.isEmpty) {
+      setState(() => _results = []);
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      final seq = ++_seq;
+      try {
+        final hits = await fetchFoods(q);
+        if (!mounted || seq != _seq) return;
+        setState(() => _results = hits);
+      } catch (_) {
+        if (!mounted || seq != _seq) return;
+        setState(() => _results = []);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final muted = theme.colorScheme.onSurfaceVariant;
-    final suggestions = _suggestions;
-    const gap = SizedBox(height: 12);
-
-    return AlertDialog(
-      title: Row(
-        children: [
-          Expanded(
-            child: Text('Parse ingredient ${widget.current}/${widget.total}'),
-          ),
-        ],
-      ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                widget.rawText,
-                style: theme.textTheme.bodySmall?.copyWith(color: muted),
-              ),
-            ),
-            gap,
-            Row(
-              children: [
-                Flexible(
-                  flex: 2,
-                  child: TextField(
-                    controller: _qty,
-                    decoration: const InputDecoration(
-                      labelText: 'Qty',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottom),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+          minWidth: 320,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: TextField(
+                  controller: _ctrl,
+                  autofocus: true,
+                  onChanged: (_) => _onChanged(),
+                  decoration: const InputDecoration(
+                    hintText: 'Search foods…',
+                    border: OutlineInputBorder(),
+                    isDense: true,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Flexible(
-                  flex: 2,
-                  child: TextField(
-                    controller: _unit,
-                    decoration: const InputDecoration(
-                      labelText: 'Unit',
-                      hintText: 'g, ml…',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            gap,
-            TextField(
-              controller: _name,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Name *',
-                border: OutlineInputBorder(),
-                isDense: true,
               ),
-              onSubmitted: (_) => _submit(),
-            ),
-            if (suggestions.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                children: [
-                  for (final s in suggestions)
-                    ActionChip(
-                      label: Text(s),
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => setState(() => _name.text = s),
-                    ),
-                ],
-              ),
+              if (_results.isNotEmpty)
+                ...List.generate(_results.length, (index) {
+                  final food = _results[index];
+                  return ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    title: Text(food.name),
+                    subtitle: food.category != null
+                        ? Text(
+                            food.category!,
+                            style: const TextStyle(fontSize: 11),
+                          )
+                        : null,
+                    onTap: () => Navigator.pop(context, food),
+                  );
+                }),
             ],
-            gap,
-            TextField(
-              controller: _prep,
-              decoration: const InputDecoration(
-                labelText: 'Prep (optional)',
-                hintText: 'diced, sifted…',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              onSubmitted: (_) => _submit(),
-            ),
-          ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Skip'),
-        ),
-        FilledButton(
-          onPressed: _name.text.trim().isEmpty ? null : _submit,
-          child: const Text('Save'),
-        ),
-      ],
     );
   }
 }

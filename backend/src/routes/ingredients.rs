@@ -6,6 +6,7 @@
 //! ingredient goes through the semantic Food resolver. Recipe-visible
 //! wording is never rewritten; only identity metadata is attached.
 
+use crate::error::AppError;
 use crate::error::AppResult;
 use crate::ingredients::catalog;
 use crate::ingredients::parser::parse_ingredient_line;
@@ -17,6 +18,42 @@ use axum::{
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
+
+/* =========================
+ * POST /foods/{id}/aliases
+ * ========================= */
+
+#[derive(Deserialize, Debug)]
+pub struct ConfirmAliasReq {
+    /// The ingredient wording to lock to this Food, e.g. "chinese parsley".
+    pub alias: String,
+}
+
+/// `POST /foods/{id}/aliases`
+///
+/// User-confirms that `alias` means this Food (`source = 'user'`,
+/// `confirmed = 1`). The resolver never overwrites it automatically — this
+/// is how user corrections teach the system (§29).
+///
+/// # Errors
+///
+/// `404` if the food does not exist; `400` for an empty alias.
+pub async fn confirm_food_alias(
+    State(state): State<AppState>,
+    Path(food_id): Path<i64>,
+    Json(req): Json<ConfirmAliasReq>,
+) -> AppResult<Json<crate::ingredients::types::FoodAlias>> {
+    let alias = catalog::confirm_alias(&state.pool, &req.alias, food_id)
+        .await
+        .map_err(|e| -> AppError {
+            if e.to_string().contains("does not exist") {
+                (StatusCode::NOT_FOUND, e.to_string()).into()
+            } else {
+                (StatusCode::BAD_REQUEST, e.to_string()).into()
+            }
+        })?;
+    Ok(Json(alias))
+}
 
 /* =========================
  * PATCH /foods/{id}

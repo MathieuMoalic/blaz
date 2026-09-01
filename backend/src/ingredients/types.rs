@@ -14,7 +14,7 @@ pub struct Food {
 }
 
 /// A food alias row.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
 #[allow(dead_code)] // consumed from commit 4 (resolver) onwards
 #[allow(clippy::struct_field_names)]
 pub struct FoodAlias {

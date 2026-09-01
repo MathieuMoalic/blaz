@@ -18,17 +18,6 @@ class RecipeDetailPage extends StatefulWidget {
   State<RecipeDetailPage> createState() => _RecipeDetailPageState();
 }
 
-/// Returns true if the ingredient appears unparsed:
-/// - explicitly marked raw, OR
-/// - has no qty/unit stored but the name itself contains a parseable qty/unit
-///   (e.g. "2 tbsp ginger" stored as raw text before the raw field existed)
-bool _looksUnparsed(api.Ingredient i) {
-  if (i.raw) return true;
-  if (i.quantity != null || i.unit != null) return false;
-  final parsed = api.parseIngredientLine(i.name);
-  return parsed.quantity != null || parsed.unit != null;
-}
-
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
   // Precise Atwater factors (kcal per gram).
   static const double kcalPerGProt = 4.27;
@@ -267,89 +256,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
   /// Parse raw/unparsed ingredients using LLM, save, then open edit mode for review.
   /// Returns the updated recipe, or null if cancelled/failed.
-  Future<api.Recipe?> _parseIngredients(api.Recipe r) async {
-    final toParseIndices = [
-      for (var i = 0; i < r.ingredients.length; i++)
-        if (_looksUnparsed(r.ingredients[i])) i,
-    ];
-    if (toParseIndices.isEmpty) return r;
-
-    // Step 1: call LLM to get proposed parses for the whole recipe at once.
-    List<api.Ingredient> llmResult;
-    try {
-      if (!mounted) return null;
-      // Show a non-dismissible loading dialog while waiting for LLM.
-      final future = api.reparseIngredients(r.id);
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => PopScope(
-          canPop: false,
-          child: AlertDialog(
-            content: Row(
-              children: [
-                const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 16),
-                Text('Parsing ${toParseIndices.length} ingredient(s) with AI…'),
-              ],
-            ),
-          ),
-        ),
-      );
-      llmResult = await future;
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-    } catch (e) {
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('AI parse failed: $e')));
-      }
-      return null;
-    }
-
-    if (!mounted) return null;
-
-    // Step 2: merge all LLM results and save immediately.
-    final ingredients = List<api.Ingredient>.from(r.ingredients);
-    for (var pos = 0; pos < toParseIndices.length; pos++) {
-      final i = toParseIndices[pos];
-      if (i < llmResult.length) {
-        ingredients[i] = llmResult[i];
-      }
-    }
-
-    api.Recipe updated;
-    try {
-      updated = await api.updateRecipe(id: r.id, ingredients: ingredients);
-      _future = Future.value(updated);
-      if (mounted) setState(() {});
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to save: $e')));
-      }
-      return null;
-    }
-
-    if (!mounted) return null;
-
-    // Step 3: open edit page so the user can review and adjust parsed ingredients.
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => EditRecipePage(recipe: updated)));
-    if (mounted) {
-      _future = api.fetchRecipe(widget.recipeId);
-      setState(() {});
-    }
-
-    return updated;
-  }
 
   Future<void> _addIngredients(api.Recipe r) async {
     if (!await _checkAuth('add ingredients to shopping list')) return;
@@ -363,34 +269,6 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     }
 
     var recipe = r;
-    if (recipe.ingredients.any(_looksUnparsed)) {
-      if (!mounted) return;
-      final start = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Unparsed ingredients'),
-          content: const Text(
-            'Some ingredients haven\'t been parsed yet. '
-            'Parse them now before adding to the shopping list?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Start Parsing'),
-            ),
-          ],
-        ),
-      );
-      if (start != true || !mounted) return;
-      final updated = await _parseIngredients(recipe);
-      if (updated == null || !mounted) return;
-      recipe = updated;
-      if (recipe.ingredients.any(_looksUnparsed)) return; // still unparsed
-    }
 
     if (!mounted) return;
     final selected = await _pickIngredientsSheet(
@@ -833,7 +711,9 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                             const SizedBox(height: 8),
-                            if (r.ingredients.any(_looksUnparsed)) ...[
+                            if (r.ingredients
+                                .where((i) => i.needsReview && !i.isSection)
+                                .isNotEmpty) ...[
                               Container(
                                 margin: const EdgeInsets.only(bottom: 10),
                                 padding: const EdgeInsets.symmetric(
@@ -846,48 +726,51 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                   ).colorScheme.secondaryContainer,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.warning_amber_rounded,
-                                      size: 18,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSecondaryContainer,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Some ingredients are not yet parsed',
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => EditRecipePage(
+                                          recipe: r,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.warning_amber_rounded,
+                                        size: 18,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSecondaryContainer,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          '${r.ingredients.where((i) => i.needsReview && !i.isSection).length} '
+                                          'ingredients need review',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSecondaryContainer,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Review',
                                         style: TextStyle(
                                           fontSize: 13,
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSecondaryContainer,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSecondaryContainer,
                                         ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    FilledButton.tonal(
-                                      onPressed: () async {
-                                        final updated = await _parseIngredients(
-                                          r,
-                                        );
-                                        if (updated == null) return;
-                                      },
-                                      style: FilledButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 6,
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'Parse',
-                                        style: TextStyle(fontSize: 13),
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
@@ -1905,6 +1788,16 @@ class _AddIngredientsSheetState extends State<_AddIngredientsSheet> {
           quantity: ing.quantity != null ? ing.quantity! * widget.scale : null,
           unit: ing.unit,
           name: ing.name,
+          prep: ing.prep,
+          ingredientId: ing.ingredientId,
+          rawText: ing.rawText,
+          foodId: ing.foodId,
+          qualifiers: ing.qualifiers,
+          resolutionSource: ing.resolutionSource,
+          resolutionConfidence: ing.resolutionConfidence,
+          needsReview: ing.needsReview,
+          raw: ing.raw,
+          canonicalName: ing.canonicalName,
         ),
       );
     }

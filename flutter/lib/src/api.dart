@@ -845,181 +845,9 @@ Future<Recipe> importRecipeFromImages(
   return Recipe.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
 }
 
-/// Parses a single ingredient text line (e.g. "200 g flour") into a
-/// structured [Ingredient]. Recognises the canonical units stored by the
-/// backend (g, kg, ml, L, tsp, tbsp); everything else is treated as part of
-/// Parses a single ingredient line into a structured [Ingredient] proposal.
-///
-/// The returned ingredient always has `raw: false` — it is a proposed parse,
-/// not a raw unprocessed line.
-double? _parseFraction(String value) {
-  final parts = value.split('/');
-  if (parts.length != 2) return null;
-
-  final numerator = double.tryParse(parts[0].trim());
-  final denominator = double.tryParse(parts[1].trim());
-
-  if (numerator == null || denominator == null || denominator == 0) {
-    return null;
-  }
-
-  return numerator / denominator;
-}
-
-double? _parseQuantityToken(String value) {
-  final token = value.trim().replaceAll(',', '.');
-  if (token.isEmpty) return null;
-
-  // Ranges: "2-3" / "2–3"
-  for (final separator in ['-', '–']) {
-    final index = token.indexOf(separator);
-
-    if (index > 0 &&
-        !token.substring(0, index).contains('/') &&
-        !token.substring(index + 1).contains('/')) {
-      final a = double.tryParse(token.substring(0, index).trim());
-      final b = double.tryParse(token.substring(index + 1).trim());
-
-      if (a != null && b != null) {
-        return (a + b) / 2;
-      }
-    }
-  }
-
-  // Fractions: "1/2"
-  final fraction = _parseFraction(token);
-  if (fraction != null) return fraction;
-
-  // Decimal / integer
-  return double.tryParse(token);
-}
-
-String _replaceUnicodeFractions(String value) {
-  return value
-      .replaceAll('½', ' 0.5')
-      .replaceAll('⅓', ' 0.333333')
-      .replaceAll('⅔', ' 0.666667')
-      .replaceAll('¼', ' 0.25')
-      .replaceAll('¾', ' 0.75')
-      .replaceAll('⅕', ' 0.2')
-      .replaceAll('⅖', ' 0.4')
-      .replaceAll('⅗', ' 0.6')
-      .replaceAll('⅘', ' 0.8')
-      .replaceAll('⅙', ' 0.166667')
-      .replaceAll('⅚', ' 0.833333')
-      .replaceAll('⅛', ' 0.125')
-      .replaceAll('⅜', ' 0.375')
-      .replaceAll('⅝', ' 0.625')
-      .replaceAll('⅞', ' 0.875');
-}
-
-String? _canonicalIngredientUnit(String value) {
-  switch (value.trim().toLowerCase()) {
-    case 'g':
-    case 'gram':
-    case 'grams':
-      return 'g';
-
-    case 'kg':
-    case 'kilogram':
-    case 'kilograms':
-      return 'kg';
-
-    case 'ml':
-    case 'milliliter':
-    case 'milliliters':
-    case 'millilitre':
-    case 'millilitres':
-      return 'ml';
-
-    case 'l':
-    case 'liter':
-    case 'liters':
-    case 'litre':
-    case 'litres':
-      return 'L';
-
-    case 'tsp':
-    case 'teaspoon':
-    case 'teaspoons':
-      return 'tsp';
-
-    case 'tbsp':
-    case 'tablespoon':
-    case 'tablespoons':
-      return 'tbsp';
-
-    default:
-      return null;
-  }
-}
-
-Ingredient parseIngredientLine(String text) {
-  final original = text.trim();
-  if (original.isEmpty) {
-    return Ingredient(name: original);
-  }
-
-  final normalized = _replaceUnicodeFractions(original);
-  final tokens = normalized.trim().split(RegExp(r'\s+'));
-
-  var quantity = _parseQuantityToken(tokens[0]);
-
-  if (quantity == null) {
-    return Ingredient(name: original);
-  }
-
-  var index = 1;
-
-  // Mixed quantities:
-  // "1 1/2 tsp"
-  // "1 ½ tsp" -> after normalization "1 0.5 tsp"
-  if (index < tokens.length) {
-    final fraction = _parseFraction(tokens[index]);
-
-    if (fraction != null) {
-      quantity += fraction;
-      index++;
-    } else {
-      final decimal =
-          double.tryParse(tokens[index].replaceAll(',', '.'));
-
-      if (decimal != null && decimal > 0 && decimal < 1) {
-        quantity += decimal;
-        index++;
-      }
-    }
-  }
-
-  String? unit;
-
-  if (index < tokens.length) {
-    unit = _canonicalIngredientUnit(tokens[index]);
-
-    if (unit != null) {
-      index++;
-    }
-  }
-
-  // "1 tsp of cumin"
-  if (index < tokens.length &&
-      tokens[index].toLowerCase() == 'of') {
-    index++;
-  }
-
-  // Quantity/unit without an actual ingredient name:
-  // preserve the original instead of producing an empty ingredient.
-  if (index >= tokens.length) {
-    return Ingredient(name: original);
-  }
-
-  return Ingredient(
-    quantity: quantity,
-    unit: unit,
-    name: tokens.sublist(index).join(' '),
-  );
-}
-
+/// Ingredient parsing lives server-side (`/ingredients/resolve`).
+/// The client only reads/writes structured ingredients; legacy
+/// `raw` lines are surfaced as-is for the backend to structure.
 Future<Recipe> updateRecipe({
   required int id,
   String? title,
@@ -1425,6 +1253,17 @@ Future<List<FoodResult>> fetchFoods(String query, {int limit = 20}) async {
       .whereType<Map<String, dynamic>>()
       .map(FoodResult.fromJson)
       .toList();
+}
+
+/// User-confirms an ingredient wording as meaning this Food. The mapping is
+/// permanent (`user`-locked) and never overwritten by automatic resolution.
+Future<void> confirmFoodAlias({required int foodId, required String alias}) async {
+  final r = await http.post(
+    _u('/foods/$foodId/aliases'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'alias': alias}),
+  );
+  if (r.statusCode != 200) _throw(r);
 }
 
 /// Add a known food to the shopping list directly by identity (autocomplete
