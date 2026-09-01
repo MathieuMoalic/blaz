@@ -5,6 +5,7 @@ import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import '../api.dart';
+import 'recipe_detail_page.dart';
 import 'edit_recipe_page.dart';
 
 class AddRecipePage extends StatefulWidget {
@@ -114,11 +115,12 @@ class _AddRecipePageState extends State<AddRecipePage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _importing = false;
           _importStep = 0;
         });
+      }
     }
   }
 
@@ -188,7 +190,11 @@ class _AddRecipePageState extends State<AddRecipePage> {
     );
     if (!mounted) return;
     if (saved == true) {
-      Navigator.pop(context, true);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => RecipeDetailPage(recipeId: recipe.id),
+        ),
+      );
     }
   }
 
@@ -256,7 +262,13 @@ class _AddRecipePageState extends State<AddRecipePage> {
         }
       }
 
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => RecipeDetailPage(recipeId: created.id),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -423,11 +435,12 @@ class _AddRecipePageState extends State<AddRecipePage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _importingImages = false;
           _importImageStep = 0;
         });
+      }
     }
   }
 

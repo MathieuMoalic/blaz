@@ -29,8 +29,7 @@ frontend.
 
 ```bash
 nix develop
-cd backend
-just build-web  # Build Flutter web
+just frontend-build-web  # Build Flutter web
 cargo run       # Run backend (web embedded)
 ```
 

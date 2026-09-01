@@ -161,12 +161,11 @@ class RecipesPageState extends State<RecipesPage> {
       return;
     }
 
-    final created = await Navigator.of(
+    await Navigator.of(
       context,
-    ).push<bool>(MaterialPageRoute(builder: (_) => const AddRecipePage()));
-    if (created == true) {
-      await refresh();
-    }
+    ).push(MaterialPageRoute(builder: (_) => const AddRecipePage()));
+    if (!mounted) return;
+    await refresh();
   }
 
   Future<void> _promptLogin(String action) async {
