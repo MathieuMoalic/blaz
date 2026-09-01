@@ -129,6 +129,13 @@ async fn import_single_recipe(state: &AppState, recipe: JsonLdRecipe) -> Result<
             unit: None,
             name: ing_str.clone(),
             prep: None,
+            ingredient_id: None,
+            raw_text: Some(ing_str.clone()),
+            food_id: None,
+            qualifiers: Vec::new(),
+            resolution_source: None,
+            resolution_confidence: None,
+            needs_review: false,
             raw: true,
             canonical_name: None,
         })

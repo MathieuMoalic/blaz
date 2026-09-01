@@ -440,6 +440,18 @@ class Ingredient {
   final String? unit;
   final String name;
   final String? prep;
+  /// Stable instance ID for this line within this recipe (not Food identity).
+  final String? ingredientId;
+  /// Original line before parsing, where available.
+  final String? rawText;
+  /// Stable canonical food identity (server-owned).
+  final int? foodId;
+  /// Semantic qualifiers that don't define food identity (e.g. "large").
+  final List<String> qualifiers;
+  final String? resolutionSource;
+  final double? resolutionConfidence;
+  /// true when semantic identity needs user review.
+  final bool needsReview;
   /// true = raw unparsed text; false = user-confirmed structured ingredient.
   final bool raw;
   /// Non-null → this item is a section header (not an actual ingredient).
@@ -455,6 +467,13 @@ class Ingredient {
       this.unit,
       required this.name,
       this.prep,
+      this.ingredientId,
+      this.rawText,
+      this.foodId,
+      this.qualifiers = const [],
+      this.resolutionSource,
+      this.resolutionConfidence,
+      this.needsReview = false,
       this.raw = false,
       this.section,
       this.canonicalName});
@@ -465,6 +484,13 @@ class Ingredient {
         unit = null,
         name = '',
         prep = null,
+        ingredientId = null,
+        rawText = null,
+        foodId = null,
+        qualifiers = const [],
+        resolutionSource = null,
+        resolutionConfidence = null,
+        needsReview = false,
         raw = false,
         section = sectionName,
         canonicalName = null;
@@ -499,6 +525,12 @@ class Ingredient {
       canonicalName = cn.trim();
     }
 
+    final qualifiers = (j['qualifiers'] as List?)
+            ?.whereType<String>()
+            .where((s) => s.trim().isNotEmpty)
+            .toList() ??
+        const <String>[];
+
     return Ingredient(
       quantity: (j['quantity'] is num)
           ? (j['quantity'] as num).toDouble()
@@ -508,7 +540,53 @@ class Ingredient {
           : null,
       name: j['name'] as String? ?? '',
       prep: prep,
+      ingredientId: (j['ingredient_id'] as String?)?.trim().isNotEmpty == true
+          ? j['ingredient_id'] as String
+          : null,
+      rawText: (j['raw_text'] as String?)?.trim().isNotEmpty == true
+          ? j['raw_text'] as String
+          : null,
+      foodId: j['food_id'] is num ? (j['food_id'] as num).toInt() : null,
+      qualifiers: qualifiers,
+      resolutionSource: (j['resolution_source'] as String?)?.isNotEmpty == true
+          ? j['resolution_source'] as String
+          : null,
+      resolutionConfidence: j['resolution_confidence'] is num
+          ? (j['resolution_confidence'] as num).toDouble()
+          : null,
+      needsReview: j['needs_review'] == true,
       raw: j['raw'] == true,
+      canonicalName: canonicalName,
+    );
+  }
+
+  /// Returns a copy with the given fields replaced (keeps the rest intact).
+  Ingredient copyWith({
+    double? quantity,
+    String? unit,
+    String? name,
+    String? prep,
+    int? foodId,
+    List<String>? qualifiers,
+    String? resolutionSource,
+    double? resolutionConfidence,
+    bool? needsReview,
+    bool? raw,
+  }) {
+    return Ingredient(
+      quantity: quantity ?? this.quantity,
+      unit: unit ?? this.unit,
+      name: name ?? this.name,
+      prep: prep ?? this.prep,
+      ingredientId: ingredientId,
+      rawText: rawText,
+      foodId: foodId ?? this.foodId,
+      qualifiers: qualifiers ?? this.qualifiers,
+      resolutionSource: resolutionSource ?? this.resolutionSource,
+      resolutionConfidence: resolutionConfidence ?? this.resolutionConfidence,
+      needsReview: needsReview ?? this.needsReview,
+      raw: raw ?? this.raw,
+      section: section,
       canonicalName: canonicalName,
     );
   }
@@ -520,6 +598,14 @@ class Ingredient {
       'unit': unit,
       'name': name,
       if (prep != null) 'prep': prep,
+      if (ingredientId != null) 'ingredient_id': ingredientId,
+      if (rawText != null) 'raw_text': rawText,
+      if (foodId != null) 'food_id': foodId,
+      if (qualifiers.isNotEmpty) 'qualifiers': qualifiers,
+      if (resolutionSource != null) 'resolution_source': resolutionSource,
+      if (resolutionConfidence != null)
+        'resolution_confidence': resolutionConfidence,
+      if (needsReview) 'needs_review': needsReview,
       'raw': raw,
       if (canonicalName != null) 'canonical_name': canonicalName,
     };

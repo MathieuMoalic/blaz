@@ -65,6 +65,84 @@ void main() {
       expect(ing.quantity, 2.0);
       expect(ing.quantity, isA<double>());
     });
+
+    test('resolution fields are parsed when present', () {
+      final ing = Ingredient.fromJson({
+        'quantity': 3.0,
+        'unit': null,
+        'name': 'large potatoes',
+        'prep': 'peeled',
+        'ingredient_id': 'uuid-a',
+        'raw_text': '3 large potatoes, peeled',
+        'food_id': 42,
+        'qualifiers': ['large'],
+        'resolution_source': 'alias',
+        'resolution_confidence': 0.9,
+        'needs_review': false,
+        'raw': false,
+      });
+      expect(ing.ingredientId, 'uuid-a');
+      expect(ing.rawText, '3 large potatoes, peeled');
+      expect(ing.foodId, 42);
+      expect(ing.qualifiers, ['large']);
+      expect(ing.resolutionSource, 'alias');
+      expect(ing.resolutionConfidence, 0.9);
+      expect(ing.needsReview, isFalse);
+    });
+
+    test('resolution fields default when absent (legacy JSON)', () {
+      final ing = Ingredient.fromJson({
+        'quantity': 200.0,
+        'unit': 'g',
+        'name': 'flour',
+        'raw': false,
+      });
+      expect(ing.ingredientId, isNull);
+      expect(ing.rawText, isNull);
+      expect(ing.foodId, isNull);
+      expect(ing.qualifiers, isEmpty);
+      expect(ing.resolutionSource, isNull);
+      expect(ing.resolutionConfidence, isNull);
+      expect(ing.needsReview, isFalse);
+    });
+
+    test('toJson round-trips resolution fields', () {
+      final ing = Ingredient(
+        quantity: 0.5,
+        unit: 'tsp',
+        name: 'cumin',
+        ingredientId: 'uuid-b',
+        rawText: '1/2 teaspoon cumin',
+        foodId: 7,
+        qualifiers: const ['ground'],
+        resolutionSource: 'food',
+        needsReview: true,
+      );
+      final j = ing.toJson();
+      expect(j['ingredient_id'], 'uuid-b');
+      expect(j['raw_text'], '1/2 teaspoon cumin');
+      expect(j['food_id'], 7);
+      expect(j['qualifiers'], ['ground']);
+      expect(j['resolution_source'], 'food');
+      expect(j['needs_review'], true);
+      expect(j.containsKey('resolution_confidence'), isFalse);
+    });
+
+    test('copyWith keeps unrelated fields intact', () {
+      final ing = Ingredient(
+        quantity: 3.0,
+        name: 'large potatoes',
+        rawText: '3 large potatoes',
+        foodId: 42,
+        ingredientId: 'uuid-c',
+      );
+      final edited = ing.copyWith(quantity: 5.0);
+      expect(edited.quantity, 5.0);
+      expect(edited.name, 'large potatoes');
+      expect(edited.rawText, '3 large potatoes');
+      expect(edited.foodId, 42);
+      expect(edited.ingredientId, 'uuid-c');
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────

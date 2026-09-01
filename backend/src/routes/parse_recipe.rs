@@ -760,15 +760,7 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                     if let Some(s) = m.get("section").and_then(|v| v.as_str()) {
                         let label = s.trim().to_string();
                         if !label.is_empty() {
-                            return Some(Ingredient {
-                                section: Some(label),
-                                quantity: None,
-                                unit: None,
-                                name: String::new(),
-                                prep: None,
-                                raw: false,
-                                canonical_name: None,
-                            });
+                            return Some(Ingredient::section_header(label));
                         }
                     }
 
@@ -808,6 +800,13 @@ pub fn normalize_ingredients(v: JsonValue) -> Vec<Ingredient> {
                         unit,
                         name,
                         prep,
+                        ingredient_id: Some(uuid::Uuid::new_v4().to_string()),
+                        raw_text: None,
+                        food_id: None,
+                        qualifiers: Vec::new(),
+                        resolution_source: None,
+                        resolution_confidence: None,
+                        needs_review: false,
                         raw: false,
                         canonical_name: None,
                     })

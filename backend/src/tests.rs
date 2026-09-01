@@ -491,6 +491,53 @@ mod integration {
     // ── shopping list ────────────────────────────────────────────────────────
 
     #[tokio::test]
+    async fn recipe_with_resolution_fields_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        let new_recipe = json!({
+            "title": "Curry",
+            "ingredients": [
+                {
+                    "quantity": 3.0, "unit": null, "name": "large potatoes",
+                    "prep": "peeled", "ingredient_id": "uuid-a",
+                    "raw_text": "3 large potatoes, peeled",
+                    "food_id": 42, "qualifiers": ["large"],
+                    "resolution_source": "alias", "needs_review": false, "raw": false
+                }
+            ],
+            "instructions": ["Cook"]
+        });
+
+        let resp = app
+            .clone()
+            .oneshot(auth_json("POST", "/recipes", &token, &new_recipe))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let created = json_body(resp.into_body()).await;
+        let id = created["id"].as_i64().unwrap();
+
+        let resp = app
+            .oneshot(auth_get(&format!("/recipes/{id}"), &token))
+            .await
+            .unwrap();
+        let fetched = json_body(resp.into_body()).await;
+        let ing = &fetched["ingredients"][0];
+        assert_eq!(ing["ingredient_id"], "uuid-a");
+        assert_eq!(ing["raw_text"], "3 large potatoes, peeled");
+        assert_eq!(ing["food_id"], 42);
+        assert_eq!(ing["qualifiers"], json!(["large"]));
+        assert_eq!(ing["resolution_source"], "alias");
+        assert_eq!(ing["needs_review"], false);
+        // Recipe-visible wording is preserved untouched.
+        assert_eq!(ing["name"], "large potatoes");
+        assert_eq!(ing["prep"], "peeled");
+    }
+
+    #[tokio::test]
     async fn shopping_list_starts_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;
