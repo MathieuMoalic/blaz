@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
-use crate::ingredients::types::{Food, FoodAlias, FoodSearchRow};
+use crate::ingredients::types::{
+    CatalogAliasRef, CatalogFoodRef, CatalogSnapshot, Food, FoodAlias, FoodSearchRow,
+};
 use crate::units::normalize_name;
 
 const FOOD_COLS: &str =
@@ -408,6 +410,38 @@ pub async fn search_foods(
 /* =========================
  * Legacy seeding
  * ========================= */
+
+/// All shopping categories as `(id, name)`, ordered by `sort_order`.
+///
+/// # Errors
+///
+/// Returns an error if the database lookup fails.
+#[allow(dead_code)] // consumed from commit 4 (resolver) onwards
+pub async fn list_categories(pool: &SqlitePool) -> anyhow::Result<Vec<(i64, String)>> {
+    Ok(
+        sqlx::query_as("SELECT id, name FROM shopping_categories ORDER BY sort_order")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// Load a snapshot of all foods + aliases for candidate retrieval.
+///
+/// # Errors
+///
+/// Returns an error if a database lookup fails.
+#[allow(dead_code)] // consumed from commit 4 (resolver) onwards
+pub async fn load_catalog_snapshot(pool: &SqlitePool) -> anyhow::Result<CatalogSnapshot> {
+    let foods: Vec<CatalogFoodRef> =
+        sqlx::query_as("SELECT id, canonical_name, normalized_name FROM foods")
+            .fetch_all(pool)
+            .await?;
+    let aliases: Vec<CatalogAliasRef> =
+        sqlx::query_as("SELECT alias, normalized_alias, food_id FROM food_aliases")
+            .fetch_all(pool)
+            .await?;
+    Ok(CatalogSnapshot { foods, aliases })
+}
 
 /// One row of the legacy string-based `ingredient_aliases` table.
 #[derive(sqlx::FromRow)]

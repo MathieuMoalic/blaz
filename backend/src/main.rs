@@ -105,6 +105,10 @@ async fn main() -> anyhow::Result<()> {
         config.system_prompt_macros.len()
     );
     tracing::info!(
+        "System prompt food resolver: {} chars",
+        config.system_prompt_food_resolver.len()
+    );
+    tracing::info!(
         "Password hash: {}",
         if config.password_hash.is_some() {
             "<set>"

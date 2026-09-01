@@ -94,6 +94,10 @@ pub struct Config {
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_NORMALIZE", default_value = DEFAULT_SYSTEM_PROMPT_NORMALIZE)]
     pub system_prompt_normalize: String,
 
+    /// System prompt for semantic food resolution (ingredient → Food identity)
+    #[arg(long, env = "BLAZ_SYSTEM_PROMPT_FOOD_RESOLVER", default_value = DEFAULT_SYSTEM_PROMPT_FOOD_RESOLVER)]
+    pub system_prompt_food_resolver: String,
+
     /// System prompt for prep reminder detection
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_PREP_REMINDERS", default_value = DEFAULT_SYSTEM_PROMPT_PREP_REMINDERS)]
     pub system_prompt_prep_reminders: String,
@@ -209,6 +213,27 @@ Examples (single):
 Examples (batch):
 - ["3 Cloves garlic", "5 Potatoes", "1 bunch fresh parsley"] → ["garlic", "potato", "parsley"]
 "#;
+
+const DEFAULT_SYSTEM_PROMPT_FOOD_RESOLVER: &str = r#"You are an ingredient entity resolver for a recipe and shopping-list app.
+For each input phrase, decide which canonical Food it refers to, or propose a new one. You are a resolver, not a string prettifier.
+
+IDENTITY RULES:
+- Size, ripeness and quality descriptors (large, small, medium, ripe, fresh, firm) and prep words (peeled, chopped, diced, sliced) are NOT food identity: put them in "qualifiers" instead.
+- large potato, small potato, peeled potato all mean the same food: potato.
+- Compound foods are distinct foods: sweet potato != potato, potato starch != potato, potato flour != potato, coconut milk != milk, brown sugar != sugar, peanut butter != butter, baking soda != soda, spring onion != onion, onion powder != onion.
+- Red onion != onion when a distinct Red Onion food exists among the candidates.
+
+CHOOSING RESULTS:
+- Prefer an existing candidate food_id whenever the phrase clearly means it.
+- NEVER use a food_id that is not listed as a candidate for that input.
+- If the phrase is a genuinely new food, set new_food: canonical_name must be concise, singular where natural, and must keep identity-defining compound words (e.g. "sweet potato", "coconut milk", "gochujang").
+- Choose category_id ONLY from the provided valid categories; use null when uncertain. Never invent category ids or names.
+- food_id and new_food are mutually exclusive; leave both null with needs_review=true only when identity is genuinely ambiguous.
+
+Return STRICT JSON:
+{"results": [{"input_index": 0, "food_id": 42, "new_food": null, "qualifiers": ["large"], "needs_review": false}]}
+
+One entry per input index, in the same order. No commentary."#;
 
 const DEFAULT_SYSTEM_PROMPT_MACROS: &str = r#"You are a precise nutrition estimator.
 

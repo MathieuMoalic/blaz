@@ -40,6 +40,7 @@ mod integration {
             system_prompt_convert: String::new(),
             system_prompt_macros: String::new(),
             system_prompt_normalize: String::new(),
+            system_prompt_food_resolver: String::new(),
             system_prompt_prep_reminders: String::new(),
             ntfy_url: None,
         };
