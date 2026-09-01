@@ -6,4 +6,5 @@
 //! identity and canonical metadata live here.
 
 pub mod catalog;
+pub mod parser;
 pub mod types;

@@ -9,8 +9,9 @@ use serde::Deserialize;
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::error::AppResult;
+use crate::ingredients::parser::parse_ingredient_line;
 use crate::models::{AppState, NewItem, ShoppingItemView};
-use crate::units::{canon_unit_str, normalize_name, to_canonical_qty_unit};
+use crate::units::{normalize_name, to_canonical_qty_unit};
 
 fn internal_err<E: std::error::Error>(err: E) -> AppError {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into()
@@ -70,189 +71,19 @@ pub struct ParsedItem {
     pub name_norm: String,    // normalized for merge key/category
 }
 
-/* ---------- Alias types ---------- */
+/* ---------- Line parsing (shared parser adapter) ---------- */
 
-/// Parse a simple fraction like "1/2" or "3/4" into f64
-fn parse_fraction(s: &str) -> Option<f64> {
-    let (num, denom) = s.split_once('/')?;
-    let numerator = num.trim().parse::<f64>().ok()?;
-    let denominator = denom.trim().parse::<f64>().ok()?;
-    if denominator == 0.0 {
-        return None;
-    }
-    Some(numerator / denominator)
-}
-
-/// Replace common Unicode fraction characters with decimal strings.
-/// Adds a leading space so "1½" becomes "1 0.5" for mixed number handling.
-fn replace_unicode_fractions(s: &str) -> String {
-    s.replace('½', " 0.5")
-        .replace('⅓', " 0.333333")
-        .replace('⅔', " 0.666667")
-        .replace('¼', " 0.25")
-        .replace('¾', " 0.75")
-        .replace('⅕', " 0.2")
-        .replace('⅖', " 0.4")
-        .replace('⅗', " 0.6")
-        .replace('⅘', " 0.8")
-        .replace('⅙', " 0.166667")
-        .replace('⅚', " 0.833333")
-        .replace('⅛', " 0.125")
-        .replace('⅜', " 0.375")
-        .replace('⅝', " 0.625")
-        .replace('⅞', " 0.875")
-}
-
-fn parse_qty_token(t: &str) -> Option<f64> {
-    let t = t.trim().replace(',', ".");
-    if t.is_empty() {
-        return None;
-    }
-
-    // Handle ranges (e.g., "2-3"), but not fraction ranges
-    if let Some((a, b)) = t.split_once('-').or_else(|| t.split_once('–'))
-        && !a.contains('/')
-        && !b.contains('/')
-    {
-        let x = a.trim().parse::<f64>().ok()?;
-        let y = b.trim().parse::<f64>().ok()?;
-        return Some(f64::midpoint(x, y));
-    }
-
-    // Handle simple fractions (e.g., "1/2", "3/4")
-    if let Some(result) = parse_fraction(&t) {
-        return Some(result);
-    }
-
-    t.parse::<f64>().ok()
-}
-
-fn normalize_unit_token(t: &str) -> Option<String> {
-    let u = t.trim();
-    if u.is_empty() {
-        return None;
-    }
-    canon_unit_str(u).map(std::string::ToString::to_string)
-}
-
-fn create_plain_name_item(raw: &str, reason: &str) -> ParsedItem {
-    let name_raw = raw.to_string();
-    let name_norm = normalize_name(&name_raw);
-    let parsed = ParsedItem {
-        qty: None,
-        unit: None,
-        name_raw,
-        name_norm,
-    };
-
-    tracing::info!(
-        raw = %raw,
-        qty = ?parsed.qty,
-        unit = ?parsed.unit,
-        name_raw = %parsed.name_raw,
-        name_norm = %parsed.name_norm,
-        "parsed ingredient line ({reason})"
-    );
-
-    parsed
-}
-
-/// Parse a line that may look like:
-/// - "120 g flour"
-/// - "2-3 apples"
-/// - "1 banana"
-/// - "milk"
-/// - "1/2 cup flour" (fraction)
-/// - "1 1/2 cups flour" (mixed number)
-/// - "½ cup flour" (unicode fraction)
-/// - "1½ cups flour" (unicode mixed number)
-///
-/// The function is intentionally tolerant:
-/// - If it doesn't start with a number, qty/unit are None and the whole line is the name.
-/// - If it starts with a number but the remaining name is empty, it falls back to treating
-///   the whole line as the name.
+/// Adapter from the shared deterministic parser to the shopping-line shape.
+/// Prep wording is intentionally dropped: it never belongs on a shopping row.
 fn parse_item_line(raw: &str) -> Option<ParsedItem> {
-    // Preprocess: replace Unicode fractions with decimal equivalents
-    let raw = replace_unicode_fractions(raw);
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let tokens: Vec<&str> = raw.split_whitespace().collect();
-    if tokens.is_empty() {
-        return None;
-    }
-
-    // Try parse leading qty (handles decimals, ranges, and fractions like "1/2")
-    let first_qty = parse_qty_token(tokens[0]);
-
-    // If no leading number, treat whole line as plain name
-    if first_qty.is_none() {
-        return Some(create_plain_name_item(raw, "no leading quantity"));
-    }
-
-    // Check for mixed number: "1 1/2" or "1 0.5" (from Unicode conversion)
-    let mut idx = 1usize;
-    let mut qty = first_qty;
-
-    if let Some(second_token) = tokens.get(1) {
-        // Check if it's a fraction like "1/2"
-        if let Some(frac) = parse_fraction(second_token) {
-            qty = Some(first_qty.unwrap_or(0.0) + frac);
-            idx = 2;
-        }
-        // Check if it's a decimal < 1 (likely from Unicode fraction conversion)
-        else if let Ok(decimal) = second_token.parse::<f64>()
-            && decimal > 0.0
-            && decimal < 1.0
-        {
-            qty = Some(first_qty.unwrap_or(0.0) + decimal);
-            idx = 2;
-        }
-    }
-
-    // Optional unit
-    let mut unit: Option<String> = None;
-
-    if let Some(t1) = tokens.get(idx)
-        && let Some(un) = normalize_unit_token(t1)
-    {
-        unit = Some(un);
-        idx += 1;
-    }
-
-    // Optional "of"
-    if tokens.get(idx).copied() == Some("of") {
-        idx += 1;
-    }
-
-    // Remaining tokens are the name
-    if idx >= tokens.len() {
-        // Mirror old fallback: ignore parsed qty/unit if name is missing
-        return Some(create_plain_name_item(raw, "missing name after qty"));
-    }
-
-    let name_raw = tokens[idx..].join(" ");
-    let name_norm = normalize_name(&name_raw);
-
-    let parsed = ParsedItem {
-        qty,
-        unit,
-        name_raw,
+    let parsed = parse_ingredient_line(raw)?;
+    let name_norm = normalize_name(&parsed.ingredient_phrase);
+    Some(ParsedItem {
+        qty: parsed.quantity,
+        unit: parsed.unit.map(str::to_string),
+        name_raw: parsed.ingredient_phrase,
         name_norm,
-    };
-
-    tracing::info!(
-        raw = %raw,
-        qty = ?parsed.qty,
-        unit = ?parsed.unit,
-        name_raw = %parsed.name_raw,
-        name_norm = %parsed.name_norm,
-        "parsed ingredient line"
-    );
-
-    Some(parsed)
+    })
 }
 
 /* ---------- DB helpers ---------- */
@@ -1142,146 +973,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_qty_token() {
-        assert_eq!(parse_qty_token("2"), Some(2.0));
-        assert_eq!(parse_qty_token("10"), Some(10.0));
-        assert_eq!(parse_qty_token("1.5"), Some(1.5));
-        assert_eq!(parse_qty_token("1,5"), Some(1.5));
-
-        assert_eq!(parse_qty_token("2-3"), Some(2.5));
-        assert_eq!(parse_qty_token("2–3"), Some(2.5));
-        assert_eq!(parse_qty_token("1.5-2.5"), Some(2.0));
-        assert_eq!(parse_qty_token("10–20"), Some(15.0));
-
-        assert_eq!(parse_qty_token(""), None);
-        assert_eq!(parse_qty_token("  "), None);
-        assert_eq!(parse_qty_token("abc"), None);
-    }
-
-    #[test]
-    fn test_normalize_unit_token() {
-        assert_eq!(normalize_unit_token("g"), Some("g".to_string()));
-        assert_eq!(normalize_unit_token("kg"), Some("kg".to_string()));
-        assert_eq!(normalize_unit_token("ml"), Some("ml".to_string()));
-        assert_eq!(normalize_unit_token("L"), Some("L".to_string()));
-        assert_eq!(normalize_unit_token("tsp"), Some("tsp".to_string()));
-        assert_eq!(normalize_unit_token("tbsp"), Some("tbsp".to_string()));
-
-        assert_eq!(normalize_unit_token("gram"), Some("g".to_string()));
-        assert_eq!(normalize_unit_token("GRAMS"), Some("g".to_string()));
-
-        assert_eq!(normalize_unit_token(""), None);
-        assert_eq!(normalize_unit_token("  "), None);
-        assert_eq!(normalize_unit_token("cup"), None);
-        assert_eq!(normalize_unit_token("oz"), None);
-    }
-
-    #[test]
-    fn test_parse_item_line_simple() {
-        let p = parse_item_line("milk").unwrap();
-        assert_eq!(p.qty, None);
-        assert_eq!(p.unit, None);
-        assert_eq!(p.name_raw, "milk");
-        assert_eq!(p.name_norm, "milk");
-    }
-
-    #[test]
-    fn test_parse_item_line_with_qty() {
-        let p = parse_item_line("2 apples").unwrap();
-        assert_eq!(p.qty, Some(2.0));
-        assert_eq!(p.unit, None);
-        assert_eq!(p.name_raw, "apples");
-        assert_eq!(p.name_norm, "apples");
-    }
-
-    #[test]
-    fn test_parse_item_line_with_qty_and_unit() {
-        let p = parse_item_line("120 g flour").unwrap();
-        assert_eq!(p.qty, Some(120.0));
-        assert_eq!(p.unit, Some("g".to_string()));
-        assert_eq!(p.name_raw, "flour");
-        assert_eq!(p.name_norm, "flour");
-    }
-
-    #[test]
-    fn test_parse_item_line_range() {
-        let p = parse_item_line("2-3 kg potatoes").unwrap();
-        assert_eq!(p.qty, Some(2.5));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "potatoes");
-        assert_eq!(p.name_norm, "potatoes");
-    }
-
-    #[test]
-    fn test_parse_item_line_with_of() {
-        let p = parse_item_line("2 kg of rice").unwrap();
-        assert_eq!(p.qty, Some(2.0));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "rice");
-        assert_eq!(p.name_norm, "rice");
-    }
-
-    #[test]
-    fn test_parse_item_line_decimal() {
-        let p = parse_item_line("1.5 L water").unwrap();
-        assert_eq!(p.qty, Some(1.5));
-        assert_eq!(p.unit, Some("L".to_string()));
-        assert_eq!(p.name_raw, "water");
-        assert_eq!(p.name_norm, "water");
-    }
-
-    #[test]
-    fn test_parse_item_line_comma_decimal() {
-        let p = parse_item_line("1,5 kg sugar").unwrap();
-        assert_eq!(p.qty, Some(1.5));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "sugar");
-        assert_eq!(p.name_norm, "sugar");
-    }
-
-    #[test]
-    fn test_parse_item_line_case_insensitive() {
-        let p = parse_item_line("200 ML Milk").unwrap();
-        assert_eq!(p.qty, Some(200.0));
-        assert_eq!(p.unit, Some("ml".to_string()));
-        assert_eq!(p.name_raw, "Milk");
-        assert_eq!(p.name_norm, "milk");
-    }
-
-    #[test]
-    fn test_parse_item_line_missing_name_fallback() {
-        let p = parse_item_line("2 kg").unwrap();
-        assert_eq!(p.qty, None);
-        assert_eq!(p.unit, None);
-        assert_eq!(p.name_raw, "2 kg");
-        assert_eq!(p.name_norm, "2 kg");
-    }
-
-    #[test]
-    fn test_parse_item_line_empty() {
-        assert!(parse_item_line("").is_none());
-        assert!(parse_item_line("   ").is_none());
-    }
-
-    #[test]
-    fn test_parse_item_line_unknown_unit() {
-        let p = parse_item_line("2 cups flour").unwrap();
-        assert_eq!(p.qty, Some(2.0));
-        assert_eq!(p.unit, None);
-        assert_eq!(p.name_raw, "cups flour");
-        assert_eq!(p.name_norm, "cups flour");
-    }
-
-    #[test]
-    fn test_parse_item_line_whitespace_normalization() {
-        let p = parse_item_line("  2   kg    of   flour  ").unwrap();
-        assert_eq!(p.qty, Some(2.0));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "flour");
-        assert_eq!(p.name_norm, "flour");
-    }
-
-    #[test]
     fn test_normalize_name_basic() {
         assert_eq!(normalize_name("flour"), "flour");
         assert_eq!(normalize_name("  Flour  "), "flour");
@@ -1317,61 +1008,4 @@ mod tests {
         assert_eq!(key1, key2);
     }
 
-    #[test]
-    fn test_parse_fraction() {
-        assert_eq!(parse_fraction("1/2"), Some(0.5));
-        assert_eq!(parse_fraction("1/4"), Some(0.25));
-        assert_eq!(parse_fraction("3/4"), Some(0.75));
-        assert_eq!(parse_fraction("2/3"), Some(2.0 / 3.0));
-        assert_eq!(parse_fraction("1/0"), None); // division by zero
-        assert_eq!(parse_fraction("abc"), None);
-        assert_eq!(parse_fraction("1"), None); // not a fraction
-    }
-
-    #[test]
-    fn test_parse_qty_token_fractions() {
-        assert_eq!(parse_qty_token("1/2"), Some(0.5));
-        assert_eq!(parse_qty_token("1/4"), Some(0.25));
-        assert_eq!(parse_qty_token("3/4"), Some(0.75));
-    }
-
-    #[test]
-    fn test_parse_item_line_simple_fraction() {
-        let p = parse_item_line("1/2 kg flour").unwrap();
-        assert_eq!(p.qty, Some(0.5));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "flour");
-    }
-
-    #[test]
-    fn test_parse_item_line_mixed_number() {
-        let p = parse_item_line("1 1/2 kg flour").unwrap();
-        assert_eq!(p.qty, Some(1.5));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "flour");
-    }
-
-    #[test]
-    fn test_parse_item_line_unicode_half() {
-        let p = parse_item_line("½ kg flour").unwrap();
-        assert_eq!(p.qty, Some(0.5));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "flour");
-    }
-
-    #[test]
-    fn test_parse_item_line_unicode_mixed() {
-        let p = parse_item_line("1½ kg flour").unwrap();
-        assert_eq!(p.qty, Some(1.5));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "flour");
-    }
-
-    #[test]
-    fn test_parse_item_line_unicode_three_quarters() {
-        let p = parse_item_line("¾ kg butter").unwrap();
-        assert_eq!(p.qty, Some(0.75));
-        assert_eq!(p.unit, Some("kg".to_string()));
-        assert_eq!(p.name_raw, "butter");
-    }
 }
