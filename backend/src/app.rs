@@ -6,8 +6,8 @@ use crate::{
     logging::{access_log, log_payloads},
     models::AppState,
     routes::{
-        categories, import_recipe_images, import_recipesage, llm_credits, meal_plan, parse_recipe,
-        recipes, settings, share_recipe, shopping,
+        categories, import_recipe_images, import_recipesage, ingredients, llm_credits, meal_plan,
+        parse_recipe, recipes, settings, share_recipe, shopping,
     },
 };
 
@@ -96,6 +96,7 @@ pub fn build_app(state: AppState) -> Router {
             post(recipes::reparse_ingredients),
         )
         .route("/recipes/import", post(parse_recipe::import_from_url))
+        .route("/ingredients/resolve", post(ingredients::resolve_lines))
         .route(
             "/recipes/import/images",
             post(import_recipe_images::import_from_images),

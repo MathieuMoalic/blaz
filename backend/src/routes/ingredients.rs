@@ -6,9 +6,59 @@
 //! ingredient goes through the semantic Food resolver. Recipe-visible
 //! wording is never rewritten; only identity metadata is attached.
 
+use crate::error::AppResult;
 use crate::ingredients::parser::parse_ingredient_line;
 use crate::ingredients::resolver::{self, OpenRouterFoodLlm};
 use crate::models::{AppState, Ingredient};
+use axum::{
+    Json,
+    extract::State,
+};
+use serde::{Deserialize, Serialize};
+
+/* =========================
+ * POST /ingredients/resolve
+ * ========================= */
+
+#[derive(Deserialize, Debug)]
+pub struct ResolveLinesReq {
+    /// Free-form ingredient lines, e.g. "1/2 teaspoon cumin".
+    #[serde(default)]
+    pub lines: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct ResolveLinesResp {
+    pub ingredients: Vec<Ingredient>,
+}
+
+/// `POST /ingredients/resolve`
+///
+/// The shared entry point for manual/free-form input: each line is parsed
+/// with the deterministic parser (fractions, units, prep — no LLM needed)
+/// and resolved to stable Food identity. Unresolvable lines come back
+/// flagged `needs_review` instead of blocking the caller.
+///
+/// # Errors
+///
+/// Err if the request body is malformed.
+pub async fn resolve_lines(
+    State(state): State<AppState>,
+    Json(req): Json<ResolveLinesReq>,
+) -> AppResult<Json<ResolveLinesResp>> {
+    let mut ingredients: Vec<Ingredient> = req
+        .lines
+        .iter()
+        .filter_map(|line| parse_ingredient_line(line))
+        .map(|parsed| Ingredient::from_parsed(&parsed))
+        .collect();
+
+    if let Err(e) = ensure_resolved(&state, &mut ingredients).await {
+        tracing::warn!(?e, "ingredient resolution failed");
+    }
+
+    Ok(Json(ResolveLinesResp { ingredients }))
+}
 
 /// Structure raw lines and assign stable food identity to all ingredients.
 ///

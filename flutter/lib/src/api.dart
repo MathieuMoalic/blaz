@@ -136,6 +136,29 @@ Map<String, String> _headers([Map<String, String>? extra, bool includeAuth = tru
 List<String> splitLines(String s) =>
     s.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
 
+/// Parses and resolves free-form ingredient lines on the backend.
+///
+/// The server owns parsing (fractions, units, prep) and semantic Food
+/// resolution; unknown foods come back flagged `needsReview` instead of
+/// blocking.
+Future<List<Ingredient>> resolveIngredients(List<String> lines) async {
+  final clean = lines.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  if (clean.isEmpty) return const [];
+  final r = await http.post(
+    _u('/ingredients/resolve'),
+    headers: _headers({'content-type': 'application/json'}),
+    body: jsonEncode({'lines': clean}),
+  );
+  if (r.statusCode != 200) _throw(r);
+  final data = jsonDecode(r.body) as Map<String, dynamic>;
+  final list = data['ingredients'] as List?;
+  return list
+          ?.whereType<Map<String, dynamic>>()
+          .map(Ingredient.fromJson)
+          .toList() ??
+      const [];
+}
+
 Future<String> login({required String password}) async {
   final r = await http.post(
     _u('/auth/login'),

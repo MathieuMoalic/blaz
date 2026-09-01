@@ -223,13 +223,15 @@ class _AddRecipePageState extends State<AddRecipePage> {
     final source = _source.text.trim();
     final yieldText = _yieldText.text.trim();
     final notes = _notes.text.trim();
-    final ingredients = splitLines(
-      _ingredientsRaw.text,
-    ).map((line) => Ingredient(name: line.trim(), raw: true)).toList();
+    final lines = splitLines(_ingredientsRaw.text);
     final instructions = splitLines(_instructionsRaw.text);
 
     setState(() => _busy = true);
     try {
+      // The server owns parsing and Food resolution (same pipeline as
+      // imports); unresolvable lines are flagged, never blocking the save.
+      final ingredients = await resolveIngredients(lines);
+
       final created = await createRecipeFull(
         title: title,
         source: source,

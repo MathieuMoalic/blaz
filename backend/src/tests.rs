@@ -734,6 +734,46 @@ mod integration {
     }
 
     #[tokio::test]
+    async fn ingredients_resolve_endpoint_structures_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let potato = seed_food_alias(&state.pool, "potato", "potatoes").await;
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        let resp = app
+            .oneshot(auth_json(
+                "POST",
+                "/ingredients/resolve",
+                &token,
+                &json!({"lines": ["2 potatoes", "1/2 teaspoon cumin", ""]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_body(resp.into_body()).await;
+        let ings = body["ingredients"].as_array().unwrap();
+        assert_eq!(ings.len(), 2, "empty lines are dropped");
+
+        // Known alias resolves deterministically, no LLM.
+        assert_eq!(ings[0]["quantity"], 2.0);
+        assert_eq!(ings[0]["name"], "potatoes");
+        assert_eq!(ings[0]["food_id"], potato);
+        assert_eq!(ings[0]["resolution_source"], "confirmed_alias");
+        assert_eq!(ings[0]["needs_review"], false);
+        assert_eq!(ings[0]["raw"], false);
+
+        // Fractions/units are deterministic; unknown foods are flagged for
+        // review rather than blocking.
+        assert_eq!(ings[1]["quantity"], 0.5);
+        assert_eq!(ings[1]["unit"], "tsp");
+        assert_eq!(ings[1]["name"], "cumin");
+        assert_eq!(ings[1]["food_id"], serde_json::Value::Null);
+        assert_eq!(ings[1]["needs_review"], true);
+    }
+
+    #[tokio::test]
     async fn shopping_list_starts_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;
