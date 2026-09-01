@@ -44,6 +44,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Handle subcommands
     if let Some(command) = cli.command {
+        // The backfill can take minutes (batched LLM calls): surface
+        // progress instead of appearing stuck.
+        if matches!(command, Commands::BackfillIngredients) {
+            let _guards = init_logging(&cli.config);
+            return handle_command(command, &cli.config).await;
+        }
         return handle_command(command, &cli.config).await;
     }
 
