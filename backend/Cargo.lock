@@ -369,6 +369,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "strsim",
  "tempfile",
  "tokio",
  "tower",

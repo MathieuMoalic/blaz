@@ -245,6 +245,12 @@ pub struct ShoppingItemView {
     pub notes: String,
     pub recipe_ids: String,            // JSON array like "[1,2,3]"
     pub recipe_titles: Option<String>, // Comma-separated like "Recipe A, Recipe B"
+    pub food_id: Option<i64>,
+    pub name: Option<String>,
+    pub quantity: Option<f64>,
+    pub unit: Option<String>,
+    pub category_id: Option<i64>,
+    pub category_is_override: bool,
 }
 
 #[derive(Deserialize)]

@@ -1,4 +1,6 @@
-use crate::categories::{Category, guess_category, validate_category};
+use crate::categories::validate_category;
+use crate::ingredients::catalog;
+use crate::ingredients::resolver::{OpenRouterFoodLlm, resolve_batch};
 use crate::error::AppError;
 use axum::http::StatusCode;
 use axum::{
@@ -11,9 +13,9 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::error::AppResult;
 use crate::ingredients::parser::parse_ingredient_line;
 use crate::models::{AppState, NewItem, ShoppingItemView};
-use crate::units::{normalize_name, to_canonical_qty_unit};
+use crate::units::{normalize_name, to_storage_qty_unit};
 
-fn internal_err<E: std::error::Error>(err: E) -> AppError {
+fn internal_err<E: std::fmt::Display>(err: E) -> AppError {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into()
 }
 
@@ -53,7 +55,8 @@ pub struct InIngredient {
     pub quantity: Option<f64>,
     pub unit: Option<String>, // "g","kg","ml","L","tsp","tbsp" or null
     pub name: String,
-    pub canonical_name: Option<String>,
+    #[serde(default)]
+    pub food_id: Option<i64>,
     pub category: Option<String>,
 }
 
@@ -68,7 +71,6 @@ pub struct ParsedItem {
     pub qty: Option<f64>,
     pub unit: Option<String>, // normalized short unit, e.g. "g","kg","ml","L","tsp","tbsp"
     pub name_raw: String,     // as extracted from the line
-    pub name_norm: String,    // normalized for merge key/category
 }
 
 /* ---------- Line parsing (shared parser adapter) ---------- */
@@ -77,28 +79,116 @@ pub struct ParsedItem {
 /// Prep wording is intentionally dropped: it never belongs on a shopping row.
 fn parse_item_line(raw: &str) -> Option<ParsedItem> {
     let parsed = parse_ingredient_line(raw)?;
-    let name_norm = normalize_name(&parsed.ingredient_phrase);
     Some(ParsedItem {
         qty: parsed.quantity,
         unit: parsed.unit.map(str::to_string),
         name_raw: parsed.ingredient_phrase,
-        name_norm,
     })
+}
+
+/* ---------- Food-based merge identity ---------- */
+
+/// Unique merge key for food-backed rows: `f:<food_id>|<storage unit>`
+/// (`f:42|` for count-style). Aliased spellings of the same food collapse
+/// into the same key, so merging never depends on spelling.
+fn make_food_key(food_id: i64, unit: Option<&str>) -> String {
+    match unit {
+        Some(u) if !u.is_empty() => format!("f:{food_id}|{u}"),
+        _ => format!("f:{food_id}|"),
+    }
+}
+
+/// A shopping line resolved to canonical identity + storage units.
+struct ShoppingLine {
+    food_id: Option<i64>,
+    key: String,
+    name: String,
+    unit: Option<String>,
+    quantity: Option<f64>,
+    /// Food's category name (from the Food, never guessed per-item).
+    category: Option<String>,
+}
+
+/// Build the merge key + storage units for an already-known food id.
+async fn shopping_line_for_food(
+    state: &AppState,
+    food_id: Option<i64>,
+    name_raw: &str,
+    unit: Option<&str>,
+    quantity: Option<f64>,
+) -> anyhow::Result<ShoppingLine> {
+    let food = if let Some(id) = food_id {
+        catalog::get_food_by_id(&state.pool, id).await?
+    } else {
+        None
+    };
+
+    let (storage_unit, storage_qty) = to_storage_qty_unit(unit, quantity);
+    let storage_unit = storage_unit.map(str::to_string);
+
+    if let Some(food) = food {
+        let category = sqlx::query_scalar::<_, String>(
+            "SELECT c.name FROM shopping_categories c               JOIN foods f ON f.category_id = c.id              WHERE f.id = ?",
+        )
+        .bind(food.id)
+        .fetch_optional(&state.pool)
+        .await?;
+        Ok(ShoppingLine {
+            food_id: Some(food.id),
+            key: make_food_key(food.id, storage_unit.as_deref()),
+            name: food.canonical_name.clone(),
+            unit: storage_unit,
+            quantity: storage_qty,
+            category,
+        })
+    } else {
+        let name_norm = normalize_name(name_raw);
+        Ok(ShoppingLine {
+            food_id: None,
+            key: make_key(&name_norm, storage_unit.as_deref()),
+            name: name_norm,
+            unit: storage_unit,
+            quantity: storage_qty,
+            category: None,
+        })
+    }
+}
+
+/// Resolve the food identity for a shopping line and compute its merge
+/// key + storage units. An explicit `food_id_hint` (client-resolved) wins;
+/// otherwise the resolver strategies decide (A–F). Unresolved lines fall
+/// back to the legacy name-based key. Category comes from the Food when
+/// known, never from a per-item classifier.
+async fn resolve_shopping_line(
+    state: &AppState,
+    food_id_hint: Option<i64>,
+    name_raw: &str,
+    unit: Option<&str>,
+    quantity: Option<f64>,
+) -> anyhow::Result<ShoppingLine> {
+    let food_id = if let Some(id) = food_id_hint {
+        Some(id)
+    } else {
+        let llm = OpenRouterFoodLlm::from_state(state).await;
+        let outcome = resolve_batch(&state.pool, &llm, &[name_raw.to_string()])
+            .await
+            .map_err(|e| sqlx::Error::Protocol(format!("resolver failed: {e}")))?;
+        outcome.first().and_then(|o| o.food_id)
+    };
+    shopping_line_for_food(state, food_id, name_raw, unit, quantity).await
 }
 
 /* ---------- DB helpers ---------- */
 
+const VIEW_COLS: &str = "id, text, done, category, notes, recipe_ids, recipe_titles, \
+                          food_id, name, quantity, unit, category_id, category_is_override";
+
 async fn fetch_view_by_id(state: &AppState, id: i64) -> Result<ShoppingItemView, sqlx::Error> {
-    sqlx::query_as::<_, ShoppingItemView>(
-        r"
-        SELECT id, text, done, category, notes, recipe_ids, recipe_titles
-          FROM shopping_items_view
-         WHERE id = ?
-        ",
-    )
-    .bind(id)
-    .fetch_one(&state.pool)
-    .await
+    let sql = format!("SELECT {VIEW_COLS} FROM shopping_items_view WHERE id = ?");
+    sqlx::query_as::<_, ShoppingItemView>(&sql)
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
 }
 
 #[derive(sqlx::FromRow)]
@@ -110,6 +200,7 @@ struct ShoppingItemRow {
     category: Option<String>,
     notes: String,
     recipe_ids: String,
+    food_id: Option<i64>,
 }
 
 async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, sqlx::Error> {
@@ -122,7 +213,8 @@ async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, s
             done,
             category,
             notes,
-            COALESCE(recipe_ids, '[]') AS recipe_ids
+            COALESCE(recipe_ids, '[]') AS recipe_ids,
+            food_id
           FROM shopping_items
          WHERE id = ?
         ",
@@ -142,6 +234,7 @@ struct ResolvedPatch {
     notes: String,
     recipe_ids: String,
     key: String,
+    food_id: Option<i64>,
 }
 
 fn merge_recipe_ids_json(existing: &str, incoming: &str) -> String {
@@ -206,53 +299,42 @@ async fn resolve_patch_values(
     if let Some(t) = payload.text.as_deref() {
         let parsed =
             parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
-        let (unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
-        let unit_norm = unit_norm.map(str::to_string);
-        if qty_norm.is_none() {
-            // Keep the canonical key unitless if the quantity vanished.
-            let unit_norm = None::<String>;
-            let key = make_key(&parsed.name_norm, unit_norm.as_deref());
-            let category = if payload.category.is_none() {
-                Some(guess_category(state, &parsed.name_raw).await)
-            } else {
-                category
-            };
+        let line = resolve_shopping_line(
+            state,
+            None,
+            &parsed.name_raw,
+            parsed.unit.as_deref(),
+            parsed.qty,
+        )
+        .await
+        .map_err(internal_err)?;
 
-            return Ok(ResolvedPatch {
-                name: parsed.name_norm,
-                unit: unit_norm,
-                quantity: qty_norm,
-                done,
-                category,
-                notes,
-                recipe_ids: current.recipe_ids,
-                key,
-            });
-        }
-
-        let key = make_key(&parsed.name_norm, unit_norm.as_deref());
         let category = if payload.category.is_none() {
-            Some(guess_category(state, &parsed.name_raw).await)
+            line.category.clone().or(current.category)
         } else {
             category
         };
 
         return Ok(ResolvedPatch {
-            name: parsed.name_norm,
-            unit: unit_norm,
-            quantity: qty_norm,
+            name: line.name,
+            unit: line.unit,
+            quantity: line.quantity,
             done,
             category,
             notes,
             recipe_ids: current.recipe_ids,
-            key,
+            key: line.key,
+            food_id: line.food_id,
         });
     }
 
     let has_structured =
         payload.name.is_some() || payload.unit.is_some() || payload.quantity.is_some();
     if !has_structured {
-        let key = make_key(&current.name, current.unit.as_deref());
+        let key = match current.food_id {
+            Some(fid) => make_food_key(fid, current.unit.as_deref()),
+            None => make_key(&current.name, current.unit.as_deref()),
+        };
         return Ok(ResolvedPatch {
             name: current.name,
             unit: current.unit,
@@ -262,6 +344,7 @@ async fn resolve_patch_values(
             notes,
             recipe_ids: current.recipe_ids,
             key,
+            food_id: current.food_id,
         });
     }
 
@@ -275,8 +358,6 @@ async fn resolve_patch_values(
         current.name.clone()
     };
 
-    let new_name_norm = normalize_name(&new_name_raw);
-
     let new_unit_raw = payload.unit.clone().map(|u| u.trim().to_string());
     let new_unit_raw = match new_unit_raw.as_deref() {
         Some("") => None,
@@ -286,45 +367,45 @@ async fn resolve_patch_values(
 
     let new_qty = payload.quantity.or(current.quantity);
 
-    let (unit_norm, qty_norm) = to_canonical_qty_unit(new_unit_raw.as_deref(), new_qty);
-    let unit_norm = unit_norm.map(str::to_string);
-    if qty_norm.is_none() {
-        let unit_norm = None::<String>;
-        let key = make_key(&new_name_norm, unit_norm.as_deref());
-        let category = if payload.category.is_none() && payload.name.is_some() {
-            Some(guess_category(state, &new_name_raw).await)
-        } else {
-            category
+    // A name change re-resolves identity; quantity/unit-only edits keep it.
+    let line = if payload.name.is_some() {
+        resolve_shopping_line(state, None, &new_name_raw, new_unit_raw.as_deref(), new_qty)
+            .await
+            .map_err(internal_err)?
+    } else {
+        let (storage_unit, storage_qty) =
+            to_storage_qty_unit(new_unit_raw.as_deref(), new_qty);
+        let storage_unit = storage_unit.map(str::to_string);
+        let key = match current.food_id {
+            Some(fid) => make_food_key(fid, storage_unit.as_deref()),
+            None => make_key(&normalize_name(&current.name), storage_unit.as_deref()),
         };
-
-        return Ok(ResolvedPatch {
-            name: new_name_norm,
-            unit: unit_norm,
-            quantity: qty_norm,
-            done,
-            category,
-            notes,
-            recipe_ids: current.recipe_ids,
+        ShoppingLine {
+            food_id: current.food_id,
             key,
-        });
-    }
+            name: current.name.clone(),
+            unit: storage_unit,
+            quantity: storage_qty,
+            category: current.category.clone(),
+        }
+    };
 
-    let key = make_key(&new_name_norm, unit_norm.as_deref());
-    let category = if payload.category.is_none() && payload.name.is_some() {
-        Some(guess_category(state, &new_name_raw).await)
+    let category = if payload.category.is_none() {
+        line.category.clone().or(current.category)
     } else {
         category
     };
 
     Ok(ResolvedPatch {
-        name: new_name_norm,
-        unit: unit_norm,
-        quantity: qty_norm,
+        name: line.name,
+        unit: line.unit,
+        quantity: line.quantity,
         done,
         category,
         notes,
         recipe_ids: current.recipe_ids,
-        key,
+        key: line.key,
+        food_id: line.food_id,
     })
 }
 
@@ -341,14 +422,16 @@ async fn resolve_patch_conflict(
         conflict_category,
         conflict_notes,
         conflict_recipe_ids,
-    )) = sqlx::query_as::<_, (i64, Option<f64>, i64, Option<String>, String, String)>(
+        conflict_food_id,
+    )) = sqlx::query_as::<_, (i64, Option<f64>, i64, Option<String>, String, String, Option<i64>)>(
         r"
         SELECT id,
                quantity,
                done,
                category,
                notes,
-               COALESCE(recipe_ids, '[]') AS recipe_ids
+               COALESCE(recipe_ids, '[]') AS recipe_ids,
+               food_id
           FROM shopping_items
          WHERE key = ? AND id != ?
         ",
@@ -369,6 +452,7 @@ async fn resolve_patch_conflict(
     let merged_quantity = merge_quantities(conflict_quantity, resolved.quantity);
     let merged_done = resolved.done;
     let merged_category = conflict_category.or(resolved.category);
+    let merged_food_id = resolved.food_id.or(conflict_food_id);
     let merged_notes = if resolved.notes.is_empty() {
         conflict_notes
     } else {
@@ -384,7 +468,8 @@ async fn resolve_patch_conflict(
                done = ?,
                category = ?,
                notes = ?,
-               recipe_ids = ?
+               recipe_ids = ?,
+               food_id = ?
          WHERE id = ?
         ",
     )
@@ -393,8 +478,9 @@ async fn resolve_patch_conflict(
     .bind(merged_quantity)
     .bind(i64::from(merged_done))
     .bind(&merged_category)
-    .bind(merged_notes)
+    .bind(&merged_notes)
     .bind(&merged_recipe_ids)
+    .bind(merged_food_id)
     .bind(conflict_id)
     .execute(&state.pool)
     .await
@@ -431,24 +517,26 @@ fn make_key(name_norm: &str, unit_norm: Option<&str>) -> String {
 /// # Errors
 /// Err if querying the database fails.
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    let mut rows = sqlx::query_as::<_, ShoppingItemView>(
-        r"
-        SELECT id, text, done, category, notes, recipe_ids, recipe_titles
-          FROM shopping_items_view
-         WHERE done = 0
-         ORDER BY id
-        ",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let sql = format!(
+        "SELECT {VIEW_COLS} FROM shopping_items_view WHERE done = 0 ORDER BY id"
+    );
+    let mut rows: Vec<ShoppingItemView> = sqlx::query_as(&sql).fetch_all(&state.pool).await?;
 
-    // Optional nicer ordering: category order (enum order), then id.
+    // Nicer ordering: user's category order, then insertion order.
+    // Rows without any category sort last (they display as Uncategorized).
+    let orders: std::collections::HashMap<String, i64> =
+        sqlx::query_as("SELECT name, sort_order FROM shopping_categories")
+            .fetch_all(&state.pool)
+            .await?
+            .into_iter()
+            .collect();
     rows.sort_by_key(|r| {
         let cat_key = r
             .category
             .as_deref()
-            .and_then(Category::from_str)
-            .map_or(255u8, Category::sort_key);
+            .and_then(|c| orders.get(c))
+            .copied()
+            .unwrap_or_else(|| i64::from(u16::MAX));
         (cat_key, r.id)
     });
 
@@ -491,95 +579,45 @@ pub async fn create(
 
     let parsed = parse_item_line(text).ok_or(StatusCode::BAD_REQUEST)?;
 
-    // Structured path only if a leading qty was detected
-    if parsed.qty.is_some() {
-        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
-        if qty_norm.is_none() {
-            unit_norm = None;
-        }
-
-        // Use alias table for merging (skip for manually-entered items)
-        let name_normalized = normalize_name(&parsed.name_raw.trim().to_lowercase());
-        let key = make_key(&name_normalized, unit_norm);
-
-        // Reuse existing category if present to avoid redundant LLM calls.
-        let existing: Option<(i64, Option<String>, i64)> =
-            sqlx::query_as(r"SELECT id, category, done FROM shopping_items WHERE key = ?")
-                .bind(&key)
-                .fetch_optional(&state.pool)
-                .await?;
-
-        let category_guess = match existing.as_ref().and_then(|(_, c, _)| c.clone()) {
-            Some(c) if !c.trim().is_empty() => c,
-            _ => guess_category(&state, &parsed.name_raw).await,
-        };
-
-        sqlx::query(
-            r"
-            INSERT INTO shopping_items (name, unit, quantity, done, key, category)
-            VALUES (?, ?, ?, 0, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-              quantity = CASE 
-                WHEN shopping_items.done = 1 THEN excluded.quantity
-                ELSE COALESCE(shopping_items.quantity, 0) + COALESCE(excluded.quantity, 0)
-              END,
-              category = COALESCE(shopping_items.category, excluded.category),
-              name = excluded.name,
-              unit = excluded.unit,
-              done = 0
-            ",
-        )
-        .bind(&name_normalized)
-        .bind(unit_norm)
-        .bind(qty_norm)
-        .bind(&key)
-        .bind(&category_guess)
-        .execute(&state.pool)
-        .await?;
-
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM shopping_items WHERE key = ?")
-            .bind(&key)
-            .fetch_one(&state.pool)
-            .await?;
-
-        let row = fetch_view_by_id(&state, id).await?;
-        return Ok(Json(row));
-    }
-
-    // Fallback: unitless item
-    let name_normalized = normalize_name(&parsed.name_raw.trim().to_lowercase());
-    let key = make_key(&name_normalized, None);
-
-    // Reuse existing category if present to avoid redundant LLM calls.
-    let existing_cat: Option<String> =
-        sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
-            .bind(&key)
-            .fetch_optional(&state.pool)
-            .await?;
-
-    let category_guess = match existing_cat {
-        Some(c) if !c.trim().is_empty() => c,
-        _ => guess_category(&state, &parsed.name_raw).await,
-    };
+    let line = resolve_shopping_line(
+        &state,
+        None,
+        &parsed.name_raw,
+        parsed.unit.as_deref(),
+        parsed.qty,
+    )
+    .await
+    .map_err(internal_err)?;
 
     sqlx::query(
         r"
-        INSERT INTO shopping_items (name, unit, quantity, done, key, category)
-        VALUES (?, NULL, NULL, 0, ?, ?)
+        INSERT INTO shopping_items (name, unit, quantity, done, key, category, food_id)
+        VALUES (?, ?, ?, 0, ?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET
-          category = COALESCE(shopping_items.category, excluded.category),
+          quantity = CASE
+            WHEN shopping_items.done = 1 THEN excluded.quantity
+            WHEN excluded.quantity IS NULL THEN shopping_items.quantity
+            WHEN shopping_items.quantity IS NULL THEN excluded.quantity
+            ELSE shopping_items.quantity + excluded.quantity
+          END,
           name = excluded.name,
+          unit = excluded.unit,
+          food_id = COALESCE(excluded.food_id, shopping_items.food_id),
+          category = COALESCE(shopping_items.category, excluded.category),
           done = 0
         ",
     )
-    .bind(&name_normalized)
-    .bind(&key)
-    .bind(&category_guess)
+    .bind(&line.name)
+    .bind(&line.unit)
+    .bind(line.quantity)
+    .bind(&line.key)
+    .bind(&line.category)
+    .bind(line.food_id)
     .execute(&state.pool)
     .await?;
 
     let (id,): (i64,) = sqlx::query_as("SELECT id FROM shopping_items WHERE key = ?")
-        .bind(&key)
+        .bind(&line.key)
         .fetch_one(&state.pool)
         .await?;
 
@@ -664,40 +702,51 @@ async fn apply_text_update(
     let parsed =
         parse_item_line(t).ok_or_else(|| (StatusCode::BAD_REQUEST, "empty text".into()))?;
 
-    let (mut unit_norm, qty_norm) = to_canonical_qty_unit(parsed.unit.as_deref(), parsed.qty);
-    if qty_norm.is_none() {
-        unit_norm = None;
-    }
-
-    let key = make_key(&parsed.name_norm, unit_norm);
+    let line = resolve_shopping_line(
+        state,
+        None,
+        &parsed.name_raw,
+        parsed.unit.as_deref(),
+        parsed.qty,
+    )
+    .await
+    .map_err(internal_err)?;
 
     push_sep(qb, wrote);
 
     qb.push("name = ");
-    qb.push_bind(parsed.name_norm);
+    qb.push_bind(line.name);
 
     qb.push(", quantity = ");
-    if let Some(q) = qty_norm {
+    if let Some(q) = line.quantity {
         qb.push_bind(q);
     } else {
         qb.push("NULL");
     }
 
     qb.push(", unit = ");
-    if let Some(u) = unit_norm {
+    if let Some(u) = line.unit.clone() {
         qb.push_bind(u);
     } else {
         qb.push("NULL");
     }
 
     qb.push(", key = ");
-    qb.push_bind(key);
+    qb.push_bind(line.key.clone());
 
-    // If `category` was NOT explicitly provided, refresh it based on the name.
+    qb.push(", food_id = ");
+    if let Some(f) = line.food_id {
+        qb.push_bind(f);
+    } else {
+        qb.push("NULL");
+    }
+
+    // Without an explicit category, the Food's category applies when known;
+    // otherwise the existing value stays (never a per-item guess).
     if payload.category.is_none() {
-        let cat_guess = guess_category(state, &parsed.name_raw).await;
-        qb.push(", category = ");
-        qb.push_bind(cat_guess);
+        qb.push(", category = COALESCE(");
+        qb.push_bind(line.category);
+        qb.push(", category)");
     }
 
     Ok(true)
@@ -731,8 +780,6 @@ async fn apply_structured_update(
         current.name.clone()
     };
 
-    let new_name_norm = normalize_name(&new_name_raw);
-
     let new_unit_raw = payload.unit.clone().map(|u| u.trim().to_string());
     let new_unit_raw = match new_unit_raw.as_deref() {
         Some("") => None, // allow clearing
@@ -742,42 +789,65 @@ async fn apply_structured_update(
 
     let new_qty = payload.quantity.or(current.quantity);
 
-    let (mut unit_norm, qty_norm) = to_canonical_qty_unit(new_unit_raw.as_deref(), new_qty);
-    if qty_norm.is_none() {
-        unit_norm = None;
-    }
-
-    let key = make_key(&new_name_norm, unit_norm);
+    // A name change re-resolves identity; a quantity/unit-only edit keeps
+    // the existing food and only re-canonicalizes the storage units.
+    let line = if payload.name.is_some() {
+        resolve_shopping_line(state, None, &new_name_raw, new_unit_raw.as_deref(), new_qty)
+            .await
+            .map_err(internal_err)?
+    } else {
+        let (storage_unit, storage_qty) =
+            to_storage_qty_unit(new_unit_raw.as_deref(), new_qty);
+        let storage_unit = storage_unit.map(str::to_string);
+        let key = match current.food_id {
+            Some(fid) => make_food_key(fid, storage_unit.as_deref()),
+            None => make_key(&normalize_name(&current.name), storage_unit.as_deref()),
+        };
+        ShoppingLine {
+            food_id: current.food_id,
+            key,
+            name: current.name.clone(),
+            unit: storage_unit,
+            quantity: storage_qty,
+            category: current.category.clone(),
+        }
+    };
 
     push_sep(qb, wrote);
 
     qb.push("name = ");
-    qb.push_bind(new_name_norm);
+    qb.push_bind(line.name);
 
     qb.push(", quantity = ");
-    if let Some(q) = qty_norm {
+    if let Some(q) = line.quantity {
         qb.push_bind(q);
     } else {
         qb.push("NULL");
     }
 
     qb.push(", unit = ");
-    if let Some(u) = unit_norm {
+    if let Some(u) = line.unit.clone() {
         qb.push_bind(u);
     } else {
         qb.push("NULL");
     }
 
     qb.push(", key = ");
-    qb.push_bind(key);
+    qb.push_bind(line.key.clone());
 
-    // Auto-guess category only if:
-    // - `category` wasn't explicitly provided
-    // - and `name` was part of this patch
-    if payload.category.is_none() && payload.name.is_some() {
-        let cat_guess = guess_category(state, &new_name_raw).await;
-        qb.push(", category = ");
-        qb.push_bind(cat_guess);
+    qb.push(", food_id = ");
+    if let Some(f) = line.food_id {
+        qb.push_bind(f);
+    } else {
+        qb.push("NULL");
+    }
+
+    // Without an explicit category: a re-resolved name takes the Food's
+    // category when known; otherwise the existing value stays.
+    if payload.category.is_none() {
+        qb.push(", category = COALESCE(");
+        qb.push_bind(line.category);
+        qb.push(", category)");
     }
 
     Ok(true)
@@ -869,59 +939,40 @@ pub async fn merge_items(
     State(state): State<AppState>,
     Json(req): Json<MergeReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    for it in &req.items {
-        // Use canonical_name if available; if not, try to resolve from aliases or use normalized name
-        let merge_name = if let Some(canonical) = &it.canonical_name {
-            canonical.clone()
-        } else {
-            let norm = normalize_name(&it.name);
-            // Try to resolve from aliases table
-            if let Ok(Some((canonical_name, _))) = sqlx::query_as::<_, (String, i32)>(
-                "SELECT canonical_name, confirmed FROM ingredient_aliases WHERE raw_name = ?",
-            )
-            .bind(&norm)
-            .fetch_optional(&state.pool)
-            .await
-            {
-                canonical_name
-            } else {
-                norm
+    // Resolve all items in one batch (at most one LLM call per request).
+    let llm = OpenRouterFoodLlm::from_state(&state).await;
+    let names: Vec<String> = req.items.iter().map(|it| it.name.clone()).collect();
+    let outcomes = resolve_batch(&state.pool, &llm, &names).await.unwrap_or_else(|e| {
+        tracing::warn!(?e, "shopping merge resolution failed; using legacy keys");
+        std::iter::repeat_with(crate::ingredients::types::ResolutionOutcome::unresolved)
+            .take(names.len())
+            .collect()
+    });
+
+    for (it, outcome) in req.items.iter().zip(&outcomes) {
+        let line = shopping_line_for_food(
+            &state,
+            it.food_id.or(outcome.food_id),
+            &it.name,
+            it.unit.as_deref(),
+            it.quantity,
+        )
+        .await
+        .map_err(internal_err)?;
+
+        // Explicit incoming category (by name) wins; else the Food's.
+        let chosen_cat = match it.category.as_ref() {
+            Some(c) => {
+                let c = crate::units::norm_whitespace(c);
+                if c.is_empty() {
+                    None
+                } else if validate_category(&state, &c).await {
+                    Some(c)
+                } else {
+                    return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
+                }
             }
-        };
-
-        let merge_name_norm = normalize_name(&merge_name);
-
-        // Parse qty/unit from the ingredient fields
-        let (mut unit_norm, qty_norm) = to_canonical_qty_unit(it.unit.as_deref(), it.quantity);
-        if qty_norm.is_none() {
-            unit_norm = None;
-        }
-
-        let key = make_key(&merge_name_norm, unit_norm);
-
-        // Normalize/validate incoming category, if present
-        let chosen_cat = it.category.as_ref().and_then(|s| {
-            let s = crate::units::norm_whitespace(s);
-            if s.is_empty() { None } else { Some(s) }
-        });
-
-        let chosen_cat = if let Some(c) = chosen_cat {
-            if !validate_category(&state, &c).await {
-                return Err((StatusCode::BAD_REQUEST, "invalid category".into()).into());
-            }
-            Some(c)
-        } else {
-            // Reuse existing category if already set; call LLM for new items.
-            let existing: Option<String> =
-                sqlx::query_scalar(r"SELECT category FROM shopping_items WHERE key = ?")
-                    .bind(&key)
-                    .fetch_optional(&state.pool)
-                    .await?
-                    .flatten();
-            match existing {
-                Some(c) if !c.trim().is_empty() => Some(c),
-                _ => Some(guess_category(&state, &it.name).await),
-            }
+            None => None,
         };
 
         // Prepare recipe_ids JSON array
@@ -931,8 +982,8 @@ pub async fn merge_items(
 
         sqlx::query(
             r"
-            INSERT INTO shopping_items (name, unit, quantity, done, key, category, recipe_ids)
-            VALUES (?, ?, ?, 0, ?, ?, ?)
+            INSERT INTO shopping_items (name, unit, quantity, done, key, category, recipe_ids, food_id)
+            VALUES (?, ?, ?, 0, ?, ?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
               quantity = CASE
                 WHEN excluded.quantity IS NULL THEN shopping_items.quantity
@@ -941,6 +992,7 @@ pub async fn merge_items(
               END,
               name = excluded.name,
               unit = excluded.unit,
+              food_id = COALESCE(excluded.food_id, shopping_items.food_id),
               category = COALESCE(shopping_items.category, excluded.category),
               recipe_ids = (
                 SELECT json_group_array(DISTINCT value)
@@ -954,12 +1006,13 @@ pub async fn merge_items(
               done = 0
             ",
         )
-        .bind(&merge_name_norm)
-        .bind(unit_norm)
-        .bind(qty_norm)
-        .bind(&key)
-        .bind(chosen_cat)
+        .bind(&line.name)
+        .bind(&line.unit)
+        .bind(line.quantity)
+        .bind(&line.key)
+        .bind(chosen_cat.or_else(|| line.category.clone()))
         .bind(&recipe_ids_json)
+        .bind(line.food_id)
         .execute(&state.pool)
         .await?;
     }

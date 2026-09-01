@@ -661,8 +661,8 @@ mod integration {
     async fn recipe_update_preserves_and_re_resolves_identity() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;
-        let pool = &state.pool;
-        let potato = seed_food_alias(pool, "potato", "potatoes").await;
+        let pool = state.pool.clone();
+        let potato = seed_food_alias(&pool, "potato", "potatoes").await;
 
         let token = make_token();
         let app = crate::app::build_app(state);
@@ -771,6 +771,164 @@ mod integration {
         assert_eq!(ings[1]["name"], "cumin");
         assert_eq!(ings[1]["food_id"], serde_json::Value::Null);
         assert_eq!(ings[1]["needs_review"], true);
+    }
+
+    #[tokio::test]
+    async fn shopping_merges_by_food_id_across_aliases_and_units() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = state.pool.clone();
+        let potato = seed_food_alias(&pool, "potato", "potatoes").await;
+        // A second alias pointing at the same food.
+        sqlx::query(
+            "INSERT INTO food_aliases (alias, normalized_alias, food_id, source, confirmed) \
+             VALUES ('large potatoes', 'large potatoes', ?, 'automatic', 1)",
+        )
+        .bind(potato)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        // Recipe A: 2 potatoes.
+        app.clone()
+            .oneshot(auth_json(
+                "POST",
+                "/shopping/merge",
+                &token,
+                &json!({"items": [{"name": "potatoes", "quantity": 2.0}], "recipe_id": 1}),
+            ))
+            .await
+            .unwrap();
+        // Recipe B: 3 large potatoes — same food through another alias.
+        app.clone()
+            .oneshot(auth_json(
+                "POST",
+                "/shopping/merge",
+                &token,
+                &json!({"items": [{"name": "large potatoes", "quantity": 3.0}], "recipe_id": 2}),
+            ))
+            .await
+            .unwrap();
+        // Manual add: 1 potato.
+        app.clone()
+            .oneshot(auth_json(
+                "POST",
+                "/shopping",
+                &token,
+                &json!({"text": "1 potato"}),
+            ))
+            .await
+            .unwrap();
+
+        let list = json_body(
+            app.clone()
+                .oneshot(auth_get("/shopping", &token))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "all spellings merge into one row");
+        assert_eq!(arr[0]["food_id"], potato);
+        assert_eq!(arr[0]["quantity"], 6.0);
+        assert_eq!(arr[0]["name"], "potato", "display name from the Food");
+    }
+
+    #[tokio::test]
+    async fn shopping_unit_merging_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = make_test_state(&tmp).await;
+        let pool = state.pool.clone();
+        let potato = seed_food_alias(&pool, "potato", "potatoes").await;
+
+        let token = make_token();
+        let app = crate::app::build_app(state);
+
+        let post = |body: serde_json::Value| {
+            let app = app.clone();
+            let token = token.clone();
+            async move {
+                json_body(
+                    app.oneshot(auth_json("POST", "/shopping/merge", &token, &body))
+                        .await
+                        .unwrap()
+                        .into_body(),
+                )
+                .await
+            }
+        };
+
+        // 500 g + 1 kg → one row of 1500 g (displayed as 1.5 kg).
+        post(json!({"items": [{"name": "potatoes", "quantity": 500.0, "unit": "g"}]})).await;
+        post(json!({"items": [{"name": "potatoes", "quantity": 1.0, "unit": "kg"}]})).await;
+
+        // 3 potatoes (count-style) never merges with weighed potatoes.
+        post(json!({"items": [{"name": "potatoes", "quantity": 3.0}]})).await;
+
+        let list = json_body(
+            app.clone()
+                .oneshot(auth_get("/shopping", &token))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 2, "kg and count rows stay separate");
+
+        let weighed = arr
+            .iter()
+            .find(|r| r["unit"].as_str().is_some_and(|u| u == "g"))
+            .expect("weighed row");
+        assert_eq!(weighed["quantity"], 1500.0);
+        assert_eq!(weighed["food_id"], potato);
+        assert_eq!(
+            weighed["text"].as_str().unwrap(),
+            "1.5 kg potato",
+            "display formats >=1000 g back to kg"
+        );
+
+        let counted = arr
+            .iter()
+            .find(|r| r["unit"].is_null())
+            .expect("count row");
+        assert_eq!(counted["quantity"], 3.0);
+
+        // A different food never merges with potato.
+        let sweet = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO foods (canonical_name, normalized_name) \
+             VALUES ('sweet potato', 'sweet potato') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO food_aliases (alias, normalized_alias, food_id, source, confirmed) \
+             VALUES ('sweet potatoes', 'sweet potatoes', ?, 'automatic', 1)",
+        )
+        .bind(sweet)
+        .execute(&pool)
+        .await
+        .unwrap();
+        post(json!({"items": [{"name": "sweet potatoes", "quantity": 2.0}]})).await;
+
+        let list = json_body(
+            app.oneshot(auth_get("/shopping", &token))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 3, "sweet potato is its own row");
+        assert!(
+            arr.iter()
+                .any(|r| r["food_id"] == sweet && r["quantity"] == 2.0)
+        );
     }
 
     #[tokio::test]
@@ -1049,3 +1207,4 @@ mod integration {
         assert_eq!(confirmed_category, 0);
     }
 }
+

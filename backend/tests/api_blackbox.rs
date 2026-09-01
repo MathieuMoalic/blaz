@@ -346,8 +346,9 @@ async fn shopping_done_and_category_behavior() {
     let item_js = created.json::<serde_json::Value>().await.unwrap();
     let id = item_js["id"].as_i64().expect("id");
 
-    // With no LLM API key configured, classifier falls back to "Other"
-    assert_eq!(item_js["category"].as_str(), Some("Other"));
+    // With no LLM API key configured, unknown items stay uncategorized
+    // (LLM failure must never silently become "Other")
+    assert_eq!(item_js["category"], serde_json::Value::Null);
     assert_eq!(item_js["done"].as_i64(), Some(0));
 
     // Mark item as done

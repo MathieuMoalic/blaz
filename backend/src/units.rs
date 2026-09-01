@@ -39,16 +39,23 @@ pub fn canon_unit_str(u: &str) -> Option<&'static str> {
     }
 }
 
-// No unit conversion — each unit is stored as-is so "1 kg potatoes" and
-// "500 g potatoes" appear as separate shopping items.
+/// Canonical *storage* form for shopping rows: mass is stored in `g` and
+/// volume in `ml`, so `500 g` + `1 kg` merge into one row. Count-style
+/// (`unit = None`) rows never merge with weighed rows.
 #[must_use]
-pub fn to_canonical_qty_unit(
+pub fn to_storage_qty_unit(
     unit: Option<&str>,
     qty: Option<f64>,
 ) -> (Option<&'static str>, Option<f64>) {
-    match (unit.map(str::to_ascii_lowercase), qty) {
-        (Some(u), q) => (canon_unit_str(&u), q),
-        (None, q) => (None, q),
+    match unit.map(str::to_ascii_lowercase) {
+        Some(u) if canon_unit_str(&u) == Some("kg") => {
+            (Some("g"), qty.map(|q| q * 1000.0))
+        }
+        Some(u) if canon_unit_str(&u) == Some("L") => {
+            (Some("ml"), qty.map(|q| q * 1000.0))
+        }
+        Some(u) => (canon_unit_str(&u), qty),
+        None => (None, qty),
     }
 }
 
@@ -118,61 +125,37 @@ mod tests {
         assert_eq!(canon_unit_str(""), None);
     }
 
+
     #[test]
-    fn test_to_canonical_qty_unit() {
-        // All units pass through without conversion.
+    fn test_to_storage_qty_unit() {
+        // Mass and volume collapse to g/ml for merging.
         assert_eq!(
-            to_canonical_qty_unit(Some("kg"), Some(1.0)),
-            (Some("kg"), Some(1.0))
+            to_storage_qty_unit(Some("kg"), Some(1.5)),
+            (Some("g"), Some(1500.0))
         );
         assert_eq!(
-            to_canonical_qty_unit(Some("kg"), Some(2.5)),
-            (Some("kg"), Some(2.5))
+            to_storage_qty_unit(Some("kg"), None),
+            (Some("g"), None)
         );
         assert_eq!(
-            to_canonical_qty_unit(Some("KG"), Some(1.0)),
-            (Some("kg"), Some(1.0))
-        );
-
-        assert_eq!(
-            to_canonical_qty_unit(Some("l"), Some(1.0)),
-            (Some("L"), Some(1.0))
+            to_storage_qty_unit(Some("L"), Some(2.0)),
+            (Some("ml"), Some(2000.0))
         );
         assert_eq!(
-            to_canonical_qty_unit(Some("L"), Some(1.5)),
-            (Some("L"), Some(1.5))
+            to_storage_qty_unit(Some("l"), Some(0.5)),
+            (Some("ml"), Some(500.0))
         );
-
+        // Already-canonical units pass through.
         assert_eq!(
-            to_canonical_qty_unit(Some("tbsp"), Some(2.0)),
-            (Some("tbsp"), Some(2.0))
-        );
-        assert_eq!(
-            to_canonical_qty_unit(Some("TBSP"), Some(3.0)),
-            (Some("tbsp"), Some(3.0))
-        );
-
-        assert_eq!(
-            to_canonical_qty_unit(Some("tsp"), Some(3.0)),
-            (Some("tsp"), Some(3.0))
+            to_storage_qty_unit(Some("g"), Some(500.0)),
+            (Some("g"), Some(500.0))
         );
         assert_eq!(
-            to_canonical_qty_unit(Some("TSP"), Some(2.0)),
-            (Some("tsp"), Some(2.0))
+            to_storage_qty_unit(Some("tsp"), Some(1.5)),
+            (Some("tsp"), Some(1.5))
         );
-
-        assert_eq!(
-            to_canonical_qty_unit(Some("g"), Some(100.0)),
-            (Some("g"), Some(100.0))
-        );
-        assert_eq!(
-            to_canonical_qty_unit(Some("ml"), Some(50.0)),
-            (Some("ml"), Some(50.0))
-        );
-
-        assert_eq!(to_canonical_qty_unit(None, Some(5.0)), (None, Some(5.0)));
-        assert_eq!(to_canonical_qty_unit(Some("g"), None), (Some("g"), None));
-        assert_eq!(to_canonical_qty_unit(None, None), (None, None));
+        // Count-style stays unitless.
+        assert_eq!(to_storage_qty_unit(None, Some(3.0)), (None, Some(3.0)));
     }
 
     #[test]
