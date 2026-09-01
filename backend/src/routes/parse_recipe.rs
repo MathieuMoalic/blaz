@@ -330,13 +330,17 @@ const IMPERIAL_UNIT_WORDS: &[&str] = &[
 ];
 
 fn needs_llm_structuring(parsed: &ParsedIngredient) -> bool {
-    parsed.unit.is_none()
-        && parsed.quantity.is_some()
-        && parsed
-            .ingredient_phrase
-            .split_whitespace()
-            .next()
-            .is_some_and(|w| IMPERIAL_UNIT_WORDS.contains(&w.to_ascii_lowercase().as_str()))
+    // Imperial / legacy units the parser now recognises still need LLM
+    // conversion to metric at import time.
+    let unit_is_imperial = parsed.unit.is_some_and(|u| matches!(u, "cup" | "oz" | "lb"));
+    unit_is_imperial
+        || (parsed.unit.is_none()
+            && parsed.quantity.is_some()
+            && parsed
+                .ingredient_phrase
+                .split_whitespace()
+                .next()
+                .is_some_and(|w| IMPERIAL_UNIT_WORDS.contains(&w.to_ascii_lowercase().as_str())))
 }
 
 /// Structure ingredient lines: deterministic parser first; the LLM

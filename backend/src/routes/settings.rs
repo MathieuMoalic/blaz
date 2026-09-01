@@ -80,7 +80,7 @@ pub struct LlmSettings {
 impl Default for LlmSettings {
     fn default() -> Self {
         Self {
-            model: "google/gemini-2.0-flash-001".to_string(),
+            model: "openai/gpt-4o-mini".to_string(),
             fallback_model: "openai/gpt-4o-mini".to_string(),
             vision_model: "google/gemini-2.0-flash-001".to_string(),
             vision_fallback_model: "openai/gpt-4o-mini".to_string(),
@@ -111,5 +111,24 @@ impl LlmSettings {
                 .filter(|s| !s.is_empty())
                 .unwrap_or(defaults.vision_fallback_model),
         }
+    }
+
+    /// Apply environment/config overrides on top of database settings.
+    /// Binding the model via config (rather than baking a transient model
+    /// ID into the resolver) lets deployments pick a working model without
+    /// a code change.
+    #[must_use]
+    pub fn with_env_overrides(
+        mut self,
+        model: Option<&str>,
+        fallback_model: Option<&str>,
+    ) -> Self {
+        if let Some(m) = model.filter(|s| !s.is_empty()) {
+            self.model = m.to_string();
+        }
+        if let Some(m) = fallback_model.filter(|s| !s.is_empty()) {
+            self.fallback_model = m.to_string();
+        }
+        self
     }
 }

@@ -35,6 +35,12 @@ pub fn canon_unit_str(u: &str) -> Option<&'static str> {
         "l" | "liter" | "litre" | "liters" | "litres" => Some("L"),
         "tsp" | "teaspoon" | "teaspoons" => Some("tsp"),
         "tbsp" | "tablespoon" | "tablespoons" => Some("tbsp"),
+        // Legacy cooking units: recognised by the deterministic parser so
+        // legacy ingredient lines are not sent intact to semantic
+        // resolution. They are stored as-is (never converted to metric).
+        "cup" | "cups" => Some("cup"),
+        "oz" | "ounce" | "ounces" => Some("oz"),
+        "lb" | "lbs" | "pound" | "pounds" => Some("lb"),
         _ => None,
     }
 }
@@ -121,7 +127,12 @@ mod tests {
         assert_eq!(canon_unit_str("tablespoons"), Some("tbsp"));
 
         assert_eq!(canon_unit_str("unknown"), None);
-        assert_eq!(canon_unit_str("cup"), None);
+        assert_eq!(canon_unit_str("cup"), Some("cup"));
+        assert_eq!(canon_unit_str("cups"), Some("cup"));
+        assert_eq!(canon_unit_str("oz"), Some("oz"));
+        assert_eq!(canon_unit_str("ounce"), Some("oz"));
+        assert_eq!(canon_unit_str("lb"), Some("lb"));
+        assert_eq!(canon_unit_str("pounds"), Some("lb"));
         assert_eq!(canon_unit_str(""), None);
     }
 

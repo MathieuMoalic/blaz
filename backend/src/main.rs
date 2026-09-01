@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(command) = cli.command {
         // The backfill can take minutes (batched LLM calls): surface
         // progress instead of appearing stuck.
-        if matches!(command, Commands::BackfillIngredients) {
+        if matches!(command, Commands::BackfillIngredients { .. }) {
             let _guards = init_logging(&cli.config);
             return handle_command(command, &cli.config).await;
         }
@@ -150,14 +150,16 @@ async fn main() -> anyhow::Result<()> {
 async fn handle_command(command: Commands, config: &config::Config) -> anyhow::Result<()> {
     match command {
         Commands::HashPassword => hash_password_interactive(),
-        Commands::BackfillIngredients => run_backfill(config).await,
+        Commands::BackfillIngredients { retry_unresolved } => {
+            run_backfill(config, retry_unresolved).await
+        }
     }
 }
 
 /// Backfill legacy ingredients to canonical Food identity (idempotent).
-async fn run_backfill(config: &config::Config) -> anyhow::Result<()> {
+async fn run_backfill(config: &config::Config, retry_unresolved: bool) -> anyhow::Result<()> {
     let pool = make_pool(config.database_path.clone()).await?;
-    let stats = crate::ingredients::backfill::run(&pool, config).await?;
+    let stats = crate::ingredients::backfill::run(&pool, config, retry_unresolved).await?;
     crate::ingredients::backfill::print_summary(&stats);
     Ok(())
 }

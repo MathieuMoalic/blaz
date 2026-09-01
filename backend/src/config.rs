@@ -15,8 +15,16 @@ pub struct Cli {
 pub enum Commands {
     /// Generate an Argon2 password hash for authentication
     HashPassword,
-    /// Backfill legacy ingredients to canonical Food identity (idempotent)
-    BackfillIngredients,
+    /// Backfill legacy ingredients to canonical Food identity (idempotent).
+    ///
+    /// By default only un-attempted ingredients are processed; entries that
+    /// were already resolved are reused, and needs-review/unresolved
+    /// entries are skipped. Pass --retry-unresolved to re-attempt them.
+    BackfillIngredients {
+        /// Also retry needs-review / unresolved entries (default: skip)
+        #[arg(long)]
+        retry_unresolved: bool,
+    },
 }
 
 /// Blaz server configuration
@@ -71,6 +79,15 @@ pub struct Config {
         default_value = "https://openrouter.ai/api/v1"
     )]
     pub llm_api_url: String,
+
+    /// LLM model override (e.g. `openai/gpt-4o-mini`). Takes precedence over
+    /// `llm_model` in the database `/settings` API.
+    #[arg(long, env = "BLAZ_LLM_MODEL")]
+    pub llm_model: Option<String>,
+
+    /// LLM fallback-model override (`BLAZ_LLM_FALLBACK_MODEL`).
+    #[arg(long, env = "BLAZ_LLM_FALLBACK_MODEL")]
+    pub llm_fallback_model: Option<String>,
 
     /// System prompt for recipe import
     #[arg(long, env = "BLAZ_SYSTEM_PROMPT_IMPORT", default_value = DEFAULT_SYSTEM_PROMPT_IMPORT)]

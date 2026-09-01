@@ -409,11 +409,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_item_line_unknown_unit() {
+    fn test_parse_item_line_legacy_unit() {
+        // "cup" is a recognised legacy cooking unit, so it leaves the name.
         let p = parse("2 cups flour");
         assert_eq!(p.quantity, Some(2.0));
+        assert_eq!(p.unit, Some("cup"));
+        assert_eq!(p.ingredient_phrase, "flour");
+
+        // Unrecognised words still stay in the name.
+        let p = parse("2 pinches flour");
+        assert_eq!(p.quantity, Some(2.0));
         assert_eq!(p.unit, None);
-        assert_eq!(p.ingredient_phrase, "cups flour");
+        assert_eq!(p.ingredient_phrase, "pinches flour");
     }
 
     #[test]

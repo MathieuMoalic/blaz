@@ -82,7 +82,12 @@ impl OpenRouterFoodLlm {
     /// strategies and fails fast on LLM batches.
     pub async fn from_state(state: &crate::models::AppState) -> Self {
         use crate::routes::settings::LlmSettings;
-        let settings = LlmSettings::load(&state.pool).await;
+        let settings = LlmSettings::load(&state.pool)
+            .await
+            .with_env_overrides(
+                state.config.llm_model.as_deref(),
+                state.config.llm_fallback_model.as_deref(),
+            );
         Self::new(
             LlmClient::new(
                 state.config.llm_api_url.clone(),

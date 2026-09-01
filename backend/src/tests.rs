@@ -34,6 +34,8 @@ mod integration {
             password_hash: None,
             llm_api_key: None,
             llm_api_url: "http://localhost/".to_string(),
+            llm_model: None,
+            llm_fallback_model: None,
             system_prompt_import: String::new(),
             system_prompt_extract: String::new(),
             system_prompt_structure: String::new(),
@@ -572,11 +574,12 @@ mod integration {
         assert!(ings[1].ingredient_id.is_some());
         assert!(!ings[1].raw);
 
-        // "2 cups flour" needs the LLM, which is unavailable: it falls back
-        // to the deterministic parse instead of failing the import.
+        // "2 cups flour" is imperial, so it still goes to the LLM (which is
+        // unavailable here): it falls back to the deterministic parse with
+        // the recognised legacy unit extracted.
         assert_eq!(ings[2].quantity, Some(2.0));
-        assert_eq!(ings[2].unit, None);
-        assert_eq!(ings[2].name, "cups flour");
+        assert_eq!(ings[2].unit.as_deref(), Some("cup"));
+        assert_eq!(ings[2].name, "flour");
         assert_eq!(ings[2].raw_text.as_deref(), Some("2 cups flour"));
 
         assert_eq!(ings[3].name, "salt");
