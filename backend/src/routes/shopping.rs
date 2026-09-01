@@ -342,6 +342,7 @@ fn merge_quantities(existing: Option<f64>, incoming: Option<f64>) -> Option<f64>
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn resolve_patch_values(
     state: &AppState,
     id: i64,

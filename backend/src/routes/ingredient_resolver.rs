@@ -14,7 +14,7 @@ pub struct ResolvedIngredient {
 }
 
 /// Resolves ingredient canonical names and shopping categories for better shopping list merging.
-/// Uses ingredient_aliases table and LLM for unresolved names.
+/// Uses the `ingredient_aliases` table and LLM for unresolved names.
 #[allow(dead_code)]
 pub async fn resolve_ingredient_canonical_names(
     pool: &SqlitePool,
@@ -32,7 +32,7 @@ pub async fn resolve_ingredient_canonical_names(
             if !norm_name.is_empty() {
                 names_to_resolve
                     .entry(norm_name)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(idx);
             }
         }
@@ -75,7 +75,7 @@ pub async fn resolve_ingredient_canonical_names(
 }
 
 /// Public function to resolve ingredient canonical names and categories for shopping merge.
-/// Returns a map of normalized_name -> ResolvedIngredient.
+/// Returns a map of `normalized_name` -> `ResolvedIngredient`.
 #[allow(dead_code)]
 pub async fn resolve_ingredient_shopping_categories(
     pool: &SqlitePool,
@@ -109,7 +109,7 @@ pub async fn resolve_ingredient_shopping_categories(
 }
 
 /// Batch resolve ingredient names and categories using alias table and LLM if needed.
-/// Returns a map of normalized_name -> ResolvedIngredient.
+/// Returns a map of `normalized_name` -> `ResolvedIngredient`.
 #[allow(dead_code)]
 async fn resolve_names_batch(
     pool: &SqlitePool,
@@ -164,7 +164,7 @@ async fn resolve_names_batch(
         .await?;
 
         // Save to alias table (confirmed=0, confirmed_category=0) and add to result
-        for (raw_name, resolved_ing) in llm_result.iter() {
+        for (raw_name, resolved_ing) in &llm_result {
             // Insert or ignore if already exists
             sqlx::query(
                 "INSERT OR IGNORE INTO ingredient_aliases (raw_name, canonical_name, confirmed, category, confirmed_category) VALUES (?, ?, 0, ?, 0)",
@@ -183,7 +183,7 @@ async fn resolve_names_batch(
 }
 
 /// Call LLM to normalize ingredient names and assign shopping categories.
-/// Returns a map of input_name -> ResolvedIngredient (canonical_name + category).
+/// Returns a map of `input_name` -> `ResolvedIngredient` (`canonical_name` + category).
 #[allow(dead_code)]
 async fn resolve_names_via_llm(
     llm_client: &LlmClient,
@@ -193,15 +193,14 @@ async fn resolve_names_via_llm(
     valid_categories: &[String],
 ) -> Result<HashMap<String, ResolvedIngredient>, Box<dyn std::error::Error>> {
     let valid_categories_str = valid_categories.join(", ");
+    let ingredient_list = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| format!("{i}: \"{n}\""))
+        .collect::<Vec<_>>()
+        .join("\n");
     let user_prompt = format!(
-        "For each ingredient, return BOTH the canonical name (singular, no size/prep descriptors) AND the shopping category.\n\nValid categories: {}\n\nIngredients:\n{}",
-        valid_categories_str,
-        names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| format!("{}: \"{}\"", i, n))
-            .collect::<Vec<_>>()
-            .join("\n")
+        "For each ingredient, return BOTH the canonical name (singular, no size/prep descriptors) AND the shopping category.\n\nValid categories: {valid_categories_str}\n\nIngredients:\n{ingredient_list}"
     );
 
     let response = llm_client
@@ -220,39 +219,36 @@ async fn resolve_names_via_llm(
     let mut result: HashMap<String, ResolvedIngredient> = HashMap::new();
 
     if let Some(obj) = response.as_object() {
-        for (idx_str, resolved_val) in obj.iter() {
-            if let Ok(idx) = idx_str.parse::<usize>() {
-                if idx < names.len() {
-                    if let Some(obj_val) = resolved_val.as_object() {
-                        if let (Some(canonical_str), Some(category_str)) = (
-                            obj_val.get("canonical").and_then(|v| v.as_str()),
-                            obj_val.get("category").and_then(|v| v.as_str()),
-                        ) {
-                            let canonical = normalize_name(canonical_str);
-                            if !canonical.is_empty() {
-                                // Validate category
-                                let validated_category = if valid_categories
-                                    .contains(&category_str.to_string())
-                                {
-                                    category_str.to_string()
-                                } else {
-                                    warn!(
-                                        "LLM returned invalid category '{}' for ingredient '{}', falling back to 'Other'",
-                                        category_str, names[idx]
-                                    );
-                                    "Other".to_string()
-                                };
+        for (idx_str, resolved_val) in obj {
+            if let Ok(idx) = idx_str.parse::<usize>()
+                && idx < names.len()
+                && let Some(obj_val) = resolved_val.as_object()
+                && let (Some(canonical_str), Some(category_str)) = (
+                    obj_val.get("canonical").and_then(|v| v.as_str()),
+                    obj_val.get("category").and_then(|v| v.as_str()),
+                )
+            {
+                let canonical = normalize_name(canonical_str);
+                if !canonical.is_empty() {
+                    // Validate category
+                    let validated_category = if valid_categories.contains(&category_str.to_string())
+                    {
+                        category_str.to_string()
+                    } else {
+                        warn!(
+                            "LLM returned invalid category '{category_str}' for ingredient '{}', falling back to 'Other'",
+                            names[idx]
+                        );
+                        "Other".to_string()
+                    };
 
-                                result.insert(
-                                    names[idx].clone(),
-                                    ResolvedIngredient {
-                                        canonical_name: canonical,
-                                        category: validated_category,
-                                    },
-                                );
-                            }
-                        }
-                    }
+                    result.insert(
+                        names[idx].clone(),
+                        ResolvedIngredient {
+                            canonical_name: canonical,
+                            category: validated_category,
+                        },
+                    );
                 }
             }
         }

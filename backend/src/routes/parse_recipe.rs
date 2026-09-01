@@ -710,17 +710,18 @@ fn parse_quantity(value: &str) -> Option<f64> {
 
     // Try parsing ranges like "2-3" or "2–3"
     for separator in &['-', '–'] {
-        if let Some(index) = token.find(*separator) {
-            if index > 0 {
-                let before = token[..index].trim();
-                let after = token[index + 1..].trim();
+        if let Some(index) = token.find(*separator)
+            && index > 0
+        {
+            let before = token[..index].trim();
+            let after = token[index + 1..].trim();
 
-                // Only treat as range if both parts are simple numbers/fractions
-                if !before.contains('/') && !after.contains('/') {
-                    if let (Ok(a), Ok(b)) = (before.parse::<f64>(), after.parse::<f64>()) {
-                        return Some((a + b) / 2.0);
-                    }
-                }
+            // Only treat as range if both parts are simple numbers/fractions
+            if !before.contains('/')
+                && !after.contains('/')
+                && let (Ok(a), Ok(b)) = (before.parse::<f64>(), after.parse::<f64>())
+            {
+                return Some(f64::midpoint(a, b));
             }
         }
     }

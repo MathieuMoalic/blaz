@@ -26,7 +26,7 @@ pub struct ListQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 {
+const fn default_limit() -> i64 {
     100
 }
 
@@ -154,7 +154,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<Vec<Recipe>>> {
-    let limit = query.limit.max(1).min(1000);
+    let limit = query.limit.clamp(1, 1000);
     let offset = query.offset.max(0);
     let sql = format!(
         "SELECT {RECIPE_COLS} FROM recipes WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?"

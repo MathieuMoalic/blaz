@@ -600,13 +600,11 @@ mod integration {
             let (canonical, category) = record.unwrap();
             assert_eq!(
                 canonical, "potato",
-                "variant '{}' should map to canonical 'potato'",
-                variant
+                "variant '{variant}' should map to canonical 'potato'"
             );
             assert_eq!(
                 category, "Vegetables",
-                "variant '{}' category should be 'Vegetables'",
-                variant
+                "variant '{variant}' category should be 'Vegetables'"
             );
         }
     }
@@ -675,7 +673,7 @@ mod integration {
                 .await
                 .unwrap();
 
-        assert!(categories.len() > 0);
+        assert!(!categories.is_empty());
         assert!(categories.contains(&"Other".to_string()));
         assert!(categories.contains(&"Vegetables".to_string()));
         assert!(categories.contains(&"Fruits".to_string()));
