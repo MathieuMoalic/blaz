@@ -44,9 +44,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Handle subcommands
     if let Some(command) = cli.command {
-        // The backfill can take minutes (batched LLM calls): surface
-        // progress instead of appearing stuck.
-        if matches!(command, Commands::BackfillIngredients { .. }) {
+        // Long-running commands surface progress instead of appearing stuck.
+        if matches!(
+            command,
+            Commands::BackfillIngredients { .. } | Commands::ReconcileCatalog
+        ) {
             let _guards = init_logging(&cli.config);
             return handle_command(command, &cli.config).await;
         }
@@ -153,6 +155,7 @@ async fn handle_command(command: Commands, config: &config::Config) -> anyhow::R
         Commands::BackfillIngredients { retry_unresolved } => {
             run_backfill(config, retry_unresolved).await
         }
+        Commands::ReconcileCatalog => run_reconcile(config).await,
     }
 }
 
@@ -161,6 +164,29 @@ async fn run_backfill(config: &config::Config, retry_unresolved: bool) -> anyhow
     let pool = make_pool(config.database_path.clone()).await?;
     let stats = crate::ingredients::backfill::run(&pool, config, retry_unresolved).await?;
     crate::ingredients::backfill::print_summary(&stats);
+    Ok(())
+}
+
+/// Deterministic catalog reconciliation (idempotent, no LLM).
+async fn run_reconcile(config: &config::Config) -> anyhow::Result<()> {
+    let pool = make_pool(config.database_path.clone()).await?;
+    let report = crate::ingredients::reconcile::run(&pool).await?;
+    println!("\nCatalog reconciliation\n");
+    for (keep, away) in &report.foods_merged {
+        println!("Merged food:            {away} -> {keep}");
+    }
+    for alias in &report.aliases_repointed {
+        println!("Alias re-pointed:       {alias}");
+    }
+    for alias in &report.aliases_deleted {
+        println!("Alias deleted:          {alias}");
+    }
+    for food in &report.garbage_foods_deleted {
+        println!("Garbage food deleted:   {}", food.replace('\n', " / "));
+    }
+    println!("Refs re-pointed:        {}", report.refs_repointed);
+    println!("Refs cleared (review):  {}", report.refs_cleared);
+    println!("Shopping rows merged:   {}", report.shopping_rows_merged);
     Ok(())
 }
 

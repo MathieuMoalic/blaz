@@ -25,6 +25,10 @@ pub enum Commands {
         #[arg(long)]
         retry_unresolved: bool,
     },
+    /// Deterministic catalog reconciliation (idempotent, no LLM):
+    /// curated qualifier-duplicate merges, shadow-alias cleanup, and
+    /// legacy-garbage removal.
+    ReconcileCatalog,
 }
 
 /// Blaz server configuration

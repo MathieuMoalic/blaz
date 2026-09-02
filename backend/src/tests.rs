@@ -1114,13 +1114,12 @@ mod integration {
         assert_eq!(override_id, None);
 
         // The other existing row now displays the new category.
-        let (other_cat, other_cat_id): (String, Option<i64>) = sqlx::query_as(
-            "SELECT category, category_id FROM shopping_items_view WHERE id = ?",
-        )
-        .bind(other_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let (other_cat, other_cat_id): (String, Option<i64>) =
+            sqlx::query_as("SELECT category, category_id FROM shopping_items_view WHERE id = ?")
+                .bind(other_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(other_cat, "Pantry");
         assert_eq!(other_cat_id, Some(pantry));
 

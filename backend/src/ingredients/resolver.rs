@@ -392,7 +392,7 @@ fn singularize_last_word(word: &str) -> Option<String> {
 /// `es` → stripped, trailing `s` → stripped). Conservative by design:
 /// the result is only ever used as a *lookup* against existing foods and
 /// aliases, never as an identity claim.
-fn singularized_phrase(normalized: &str) -> Option<String> {
+pub fn singularized_phrase(normalized: &str) -> Option<String> {
     let words: Vec<&str> = normalized.split_whitespace().collect();
     let last = *words.last()?;
     let singular = singularize_last_word(last)?;
@@ -402,13 +402,53 @@ fn singularized_phrase(normalized: &str) -> Option<String> {
     Some(format!("{} {singular}", words[..words.len() - 1].join(" ")))
 }
 
-/// Strategies A–D: local, deterministic lookups.
+/// Qualifier words that are clearly non-identity (size / preparation form).
+/// Deliberately small; each entry is covered by positive AND negative
+/// regression tests. Identity-bearing words (`sweet`, `red`, `spring`,
+/// `brown`, `coconut`, ...) must never appear here.
+const QUALIFIER_PREFIXES: &[&str] = &["small", "medium", "large", "ground"];
+
+/// Strip one leading qualifier ("ground cumin" → "cumin") for lookup.
+fn strip_leading_qualifier(normalized: &str) -> Option<String> {
+    let (first, rest) = normalized.split_once(' ')?;
+    if QUALIFIER_PREFIXES.contains(&first) && !rest.trim().is_empty() {
+        Some(rest.trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Lookup variants for a phrase: the phrase itself plus a hyphen-normalized
+/// variant where joining hyphens/en/em-dashes become spaces (persisted
+/// normalized names are unchanged; this is a lookup-only helper).
+fn lookup_variants(phrase: &str) -> Vec<String> {
+    let mut out = vec![phrase.to_string()];
+    let hyphenless: String = phrase
+        .chars()
+        .map(|c| match c {
+            '-' | '–' | '—' => ' ',
+            other => other,
+        })
+        .collect();
+    if hyphenless != phrase {
+        let collapsed = crate::units::norm_whitespace(&hyphenless);
+        if !collapsed.is_empty() {
+            out.push(collapsed);
+        }
+    }
+    out
+}
+
+/// Strategies A–E: local, deterministic lookups.
 ///
 /// Order of precedence:
 /// 1. exact canonical Food name — identity by definition, wins before any
 ///    alias (a stale automatic alias must never shadow a canonical name);
 /// 2. confirmed/user alias, then any exact alias (LLM cache);
-/// 3. conservative deterministic singularization (lookup only).
+/// 3. conservative deterministic singularization (lookup only);
+/// 4. leading size/prep qualifier stripped, remainder looked up
+///    ("small potatoes" → Potato, "ground cumin" → Cumin) — lookup only,
+///    never Food creation.
 ///
 /// Returns `Ok(None)` when the phrase must go to the LLM.
 async fn resolve_deterministic(
@@ -420,92 +460,169 @@ async fn resolve_deterministic(
         return Ok(Some(ResolutionOutcome::unresolved()));
     }
 
-    // C: exact canonical Food name; cache an alias so future runs are fast.
-    // This deliberately outranks alias hits: if a legacy automatic alias
-    // `coconut milk -> milk` exists while Food `coconut milk` exists, the
-    // phrase must resolve to the Food, never through the corrupt alias.
-    if let Some(food) = catalog::get_food_by_name(pool, phrase).await? {
-        if let Err(e) =
-            catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(1.0)).await
-        {
-            // The canonical resolution above is still authoritative; only
-            // the cache write failed.
-            tracing::warn!(phrase = %phrase, error = ?e, "canonical-hit alias cache skipped");
-        }
-        tracing::info!(phrase = %phrase, food_id = food.id, "ingredient_resolution_food_hit");
-        return Ok(Some(ResolutionOutcome {
-            food_id: Some(food.id),
-            canonical_name: Some(food.canonical_name),
-            qualifiers: Vec::new(),
-            resolution_source: Some("food"),
-            resolution_confidence: Some(1.0),
-            needs_review: false,
-        }));
-    }
-
-    // A/B: exact alias (confirmed mappings are authoritative among aliases).
-    if let Some(alias) = catalog::find_alias(pool, phrase).await?
-        && let Some(food) = catalog::get_food_by_id(pool, alias.food_id).await?
-    {
-        let confidence = if alias.confirmed {
-            Some(1.0)
-        } else {
-            alias.confidence
-        };
-        tracing::info!(
-            phrase = %phrase,
-            food_id = food.id,
-            confirmed = alias.confirmed,
-            "ingredient_resolution_alias_hit"
-        );
-        return Ok(Some(ResolutionOutcome {
-            food_id: Some(food.id),
-            canonical_name: Some(food.canonical_name),
-            qualifiers: Vec::new(),
-            resolution_source: Some(if alias.confirmed {
-                "confirmed_alias"
-            } else {
-                "alias"
-            }),
-            resolution_confidence: confidence,
-            needs_review: false,
-        }));
-    }
-
-    // D: conservative deterministic singularization (lookup only, never creation).
-    if let Some(singular) = singularized_phrase(&normalized) {
-        let hit = match catalog::get_food_by_name(pool, &singular).await? {
-            Some(food) => Some(food),
-            None => match catalog::find_alias(pool, &singular).await? {
-                Some(alias) => catalog::get_food_by_id(pool, alias.food_id).await?,
-                None => None,
-            },
-        };
-        if let Some(food) = hit {
+    for variant in lookup_variants(phrase) {
+        // C: exact canonical Food name; cache an alias so future runs are fast.
+        // This deliberately outranks alias hits: if a legacy automatic alias
+        // `coconut milk -> milk` exists while Food `coconut milk` exists, the
+        // phrase must resolve to the Food, never through the corrupt alias.
+        if let Some(food) = catalog::get_food_by_name(pool, &variant).await? {
             if let Err(e) =
-                catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(0.9)).await
+                catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(1.0)).await
             {
-                // Identity conflict: leave this phrase unresolved rather
-                // than corrupting the catalog.
-                tracing::warn!(phrase = %phrase, error = ?e, "singularized alias rejected");
-                return Ok(None);
+                // The canonical resolution above is still authoritative; only
+                // the cache write failed.
+                tracing::warn!(phrase = %phrase, error = ?e, "canonical-hit alias cache skipped");
             }
+            tracing::info!(phrase = %phrase, food_id = food.id, "ingredient_resolution_food_hit");
+            return Ok(Some(ResolutionOutcome {
+                food_id: Some(food.id),
+                canonical_name: Some(food.canonical_name),
+                qualifiers: Vec::new(),
+                resolution_source: Some("food"),
+                resolution_confidence: Some(1.0),
+                needs_review: false,
+            }));
+        }
+
+        // A/B: exact alias (confirmed mappings are authoritative among aliases).
+        if let Some(alias) = catalog::find_alias(pool, &variant).await?
+            && let Some(food) = catalog::get_food_by_id(pool, alias.food_id).await?
+        {
+            let confidence = if alias.confirmed {
+                Some(1.0)
+            } else {
+                alias.confidence
+            };
             tracing::info!(
                 phrase = %phrase,
                 food_id = food.id,
-                "ingredient_resolution_deterministic_hit"
+                confirmed = alias.confirmed,
+                "ingredient_resolution_alias_hit"
             );
             return Ok(Some(ResolutionOutcome {
                 food_id: Some(food.id),
                 canonical_name: Some(food.canonical_name),
                 qualifiers: Vec::new(),
-                resolution_source: Some("deterministic"),
-                resolution_confidence: Some(0.9),
+                resolution_source: Some(if alias.confirmed {
+                    "confirmed_alias"
+                } else {
+                    "alias"
+                }),
+                resolution_confidence: confidence,
                 needs_review: false,
             }));
         }
     }
 
+    // D: conservative deterministic singularization (lookup only, never creation).
+    if let Some(outcome) = singularized_lookup(pool, phrase, &normalized).await? {
+        return Ok(Some(outcome));
+    }
+
+    // E: leading qualifier stripped, remainder looked up against existing
+    // Foods and aliases only. Never creates Foods; distinctions like
+    // `sweet potato` / `red onion` / `coconut milk` are preserved because
+    // their first words are not in QUALIFIER_PREFIXES.
+    let normalized_variants = lookup_variants(&normalized);
+    for variant in normalized_variants.iter().map(String::as_str) {
+        let Some(stripped) = strip_leading_qualifier(variant) else {
+            continue;
+        };
+        if let Some(outcome) = qualifier_stripped_lookup(pool, phrase, &stripped).await? {
+            return Ok(Some(outcome));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Strategy D helper: singularized-phrase lookup with alias caching.
+async fn singularized_lookup(
+    pool: &SqlitePool,
+    phrase: &str,
+    normalized: &str,
+) -> anyhow::Result<Option<ResolutionOutcome>> {
+    let Some(singular) = singularized_phrase(normalized) else {
+        return Ok(None);
+    };
+    let hit = match catalog::get_food_by_name(pool, &singular).await? {
+        Some(food) => Some(food),
+        None => match catalog::find_alias(pool, &singular).await? {
+            Some(alias) => catalog::get_food_by_id(pool, alias.food_id).await?,
+            None => None,
+        },
+    };
+    let Some(food) = hit else {
+        return Ok(None);
+    };
+    if let Err(e) =
+        catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(0.9)).await
+    {
+        // Identity conflict: leave this phrase unresolved rather than
+        // corrupting the catalog.
+        tracing::warn!(phrase = %phrase, error = ?e, "singularized alias rejected");
+        return Ok(None);
+    }
+    tracing::info!(
+        phrase = %phrase,
+        food_id = food.id,
+        "ingredient_resolution_deterministic_hit"
+    );
+    Ok(Some(ResolutionOutcome {
+        food_id: Some(food.id),
+        canonical_name: Some(food.canonical_name),
+        qualifiers: Vec::new(),
+        resolution_source: Some("deterministic"),
+        resolution_confidence: Some(0.9),
+        needs_review: false,
+    }))
+}
+
+/// Strategy E helper: look up the qualifier-stripped remainder; on hit,
+/// cache an alias for the full phrase (convergence is the desired
+/// outcome: "ground cumin" → Cumin).
+async fn qualifier_stripped_lookup(
+    pool: &SqlitePool,
+    phrase: &str,
+    stripped: &str,
+) -> anyhow::Result<Option<ResolutionOutcome>> {
+    // Try the remainder as-is, then singularized ("sweet potatoes" after
+    // stripping "medium").
+    let mut candidates = vec![stripped.to_string()];
+    if let Some(singular) = singularized_phrase(stripped) {
+        candidates.push(singular);
+    }
+    for candidate in &candidates {
+        let hit = match catalog::get_food_by_name(pool, candidate).await? {
+            Some(food) => Some(food),
+            None => match catalog::find_alias(pool, candidate).await? {
+                Some(alias) => catalog::get_food_by_id(pool, alias.food_id).await?,
+                None => None,
+            },
+        };
+        let Some(food) = hit else {
+            continue;
+        };
+        if let Err(e) =
+            catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(0.9)).await
+        {
+            tracing::warn!(phrase = %phrase, error = ?e, "qualifier-stripped alias rejected");
+            return Ok(None);
+        }
+        tracing::info!(
+            phrase = %phrase,
+            food_id = food.id,
+            "ingredient_resolution_qualifier_hit"
+        );
+        return Ok(Some(ResolutionOutcome {
+            food_id: Some(food.id),
+            canonical_name: Some(food.canonical_name),
+            qualifiers: Vec::new(),
+            resolution_source: Some("deterministic"),
+            resolution_confidence: Some(0.9),
+            needs_review: false,
+        }));
+    }
     Ok(None)
 }
 
@@ -1081,7 +1198,8 @@ mod tests {
             .expect("potato food");
 
         let llm = MockFoodLlm::new(MockPlan::MapFirstCandidate);
-        let out = resolve_batch(&pool, &llm, &phrases(&["large potatoes"]))
+        // "baby" is not a deterministic qualifier, so this reaches the LLM.
+        let out = resolve_batch(&pool, &llm, &phrases(&["baby potatoes"]))
             .await
             .expect("resolve");
         assert_eq!(llm.calls(), 1);
@@ -1091,7 +1209,7 @@ mod tests {
         assert!(!out[0].needs_review);
 
         // Now cached; no further LLM calls.
-        let out = resolve_batch(&pool, &llm, &phrases(&["large potatoes"]))
+        let out = resolve_batch(&pool, &llm, &phrases(&["baby potatoes"]))
             .await
             .expect("resolve again");
         assert_eq!(llm.calls(), 1);

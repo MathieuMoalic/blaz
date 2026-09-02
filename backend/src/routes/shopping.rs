@@ -962,19 +962,19 @@ async fn apply_category_update(
             .map_err(internal_err)?
             .flatten();
 
-    if let Some(fid) = food_id {
-        if let Some(cid) = category_id {
-            crate::ingredients::catalog::set_food_category(
-                &state.pool,
-                fid,
-                Some(cid),
-                "user",
-                None,
-                true,
-            )
-            .await
-            .map_err(|e| -> AppError { (StatusCode::BAD_REQUEST, e.to_string()).into() })?;
-        }
+    if let Some(fid) = food_id
+        && let Some(cid) = category_id
+    {
+        crate::ingredients::catalog::set_food_category(
+            &state.pool,
+            fid,
+            Some(cid),
+            "user",
+            None,
+            true,
+        )
+        .await
+        .map_err(|e| -> AppError { (StatusCode::BAD_REQUEST, e.to_string()).into() })?;
     }
 
     push_sep(qb, wrote);

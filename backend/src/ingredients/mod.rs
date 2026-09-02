@@ -10,6 +10,7 @@ pub mod backfill;
 mod backfill_tests;
 pub mod catalog;
 pub mod parser;
+pub mod reconcile;
 pub mod resolver;
 #[cfg(test)]
 mod semantic_tests;

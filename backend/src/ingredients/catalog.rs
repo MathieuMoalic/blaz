@@ -262,7 +262,7 @@ pub fn check_alias_identity(
 /// Detect instruction-like / pathological canonical names observed in the
 /// migration audit (LLM reasoning text stored as a Food name, modifier-only
 /// names).
-fn is_pathological_food_name(canonical_name: &str, normalized: &str) -> Option<&'static str> {
+pub fn is_pathological_food_name(canonical_name: &str, normalized: &str) -> Option<&'static str> {
     let lower = canonical_name.to_lowercase();
     if lower.contains("```")
         || lower.contains("remove quantities")
