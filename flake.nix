@@ -74,7 +74,7 @@
 
     webBuild = pkgs.flutter.buildFlutterApplication {
       pname = "blaz-web";
-      version = "2.8.11";
+      version = "2.8.12";
       src = pkgs.lib.cleanSource ./flutter;
       autoPubspecLock = ./flutter/pubspec.lock;
       targetFlutterPlatform = "web";
@@ -82,7 +82,7 @@
 
     package = pkgs.rustPlatform.buildRustPackage {
       pname = "blaz";
-      version = "2.8.11";
+      version = "2.8.12";
       src = ./backend;
 
       cargoLock = {
@@ -115,11 +115,11 @@
 
     prebuilt = pkgs.stdenvNoCC.mkDerivation {
       pname = "blaz";
-      version = "2.8.11";
+      version = "2.8.12";
 
       src = pkgs.fetchurl {
-        url = "https://github.com/MathieuMoalic/blaz/releases/download/v2.8.11/blaz-v2.8.11-x86_64-linux";
-        hash = "sha256-J4DWwvvG12IdAAjpvQ9tJnaulyEPnaZJ/RTUG6g0kf4=";
+        url = "https://github.com/MathieuMoalic/blaz/releases/download/v2.8.12/blaz-v2.8.12-x86_64-linux";
+        hash = "sha256-LdQqWOBHlG0ki+SetXwSwuUHZZfaMQ8/eFH3sK436fs=";
       };
 
       dontUnpack = true;
