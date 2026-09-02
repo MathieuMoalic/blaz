@@ -5,7 +5,16 @@ import '../api.dart';
 
 class EditRecipePage extends StatefulWidget {
   final Recipe recipe;
-  const EditRecipePage({super.key, required this.recipe});
+
+  /// Optional index into `recipe.ingredients` to scroll to and highlight on
+  /// open (used by the recipe detail "Review" action to jump straight to the
+  /// first needs-review ingredient).
+  final int? focusIngredientIndex;
+  const EditRecipePage({
+    super.key,
+    required this.recipe,
+    this.focusIngredientIndex,
+  });
 
   @override
   State<EditRecipePage> createState() => _EditRecipePageState();
@@ -26,6 +35,7 @@ class _EditRecipePageState extends State<EditRecipePage> {
   late List<String> _instructionKeys;
   int _instructionKeySeq = 0;
   bool _busy = false;
+  final _focusTileKey = GlobalKey();
 
   @override
   void initState() {
@@ -40,6 +50,19 @@ class _EditRecipePageState extends State<EditRecipePage> {
       _ingredients.length,
       (_) => _newIngredientKey(),
     );
+    if (widget.focusIngredientIndex != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final ctx = _focusTileKey.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 350),
+            alignment: 0.15,
+          );
+        }
+      });
+    }
     _instructions = List.from(r.instructions);
     _instructionKeys = List.generate(
       _instructions.length,
@@ -400,14 +423,21 @@ class _EditRecipePageState extends State<EditRecipePage> {
                         _moveIngredient(oldIndex, newIndex);
                       },
                       itemCount: _ingredients.length,
-                      itemBuilder: (context, i) => _IngredientTile(
-                        key: ValueKey(_ingredientKeys[i]),
-                        index: i,
-                        ingredient: _ingredients[i],
-                        canReorder: !_busy,
-                        onTap: _busy ? null : () => _editIngredient(i),
-                        onDelete: _busy ? null : () => _removeIngredientAt(i),
-                      ),
+                      itemBuilder: (context, i) {
+                        final isFocus =
+                            widget.focusIngredientIndex != null &&
+                                i == widget.focusIngredientIndex;
+                        return _IngredientTile(
+                          key: isFocus
+                              ? _focusTileKey
+                              : ValueKey(_ingredientKeys[i]),
+                          index: i,
+                          ingredient: _ingredients[i],
+                          canReorder: !_busy,
+                          onTap: _busy ? null : () => _editIngredient(i),
+                          onDelete: _busy ? null : () => _removeIngredientAt(i),
+                        );
+                      },
                     ),
                     const Divider(height: 1),
                     ListTile(
@@ -590,6 +620,7 @@ class _IngredientTile extends StatelessWidget {
     }
 
     final isRaw = ingredient.raw;
+    final needsReview = ingredient.needsReview && !ingredient.isSection;
 
     final qtyLabel = isRaw
         ? '?'
@@ -602,6 +633,9 @@ class _IngredientTile extends StatelessWidget {
 
     return ListTile(
       dense: true,
+      tileColor: needsReview
+          ? theme.colorScheme.error.withValues(alpha: 0.05)
+          : null,
       leading: SizedBox(
         width: 52,
         child: Text(
@@ -617,7 +651,34 @@ class _IngredientTile extends StatelessWidget {
         ingredient.name,
         style: isRaw ? TextStyle(color: muted) : null,
       ),
-      subtitle: (ingredient.prep != null && ingredient.prep!.isNotEmpty)
+      subtitle: needsReview
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  size: 13,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Needs review',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (ingredient.prep != null && ingredient.prep!.isNotEmpty)
+                  Expanded(
+                    child: Text(
+                      ' · ${ingredient.prep!}',
+                      style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+            )
+          : (ingredient.prep != null && ingredient.prep!.isNotEmpty)
           ? Text(
               ingredient.prep!,
               style: theme.textTheme.bodySmall?.copyWith(color: muted),
@@ -938,7 +999,6 @@ class _InstructionDialogState extends State<_InstructionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    const gap = SizedBox(height: 12);
     return AlertDialog(
       title: Text(widget.title),
       content: SizedBox(

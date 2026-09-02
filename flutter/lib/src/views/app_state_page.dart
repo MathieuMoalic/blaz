@@ -1,3 +1,4 @@
+import '../widgets/toast.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -98,9 +99,8 @@ class _AppStatePageState extends State<AppStatePage> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Model settings saved')),
-        );
+        // Short toast keeps settings feedback out of the way.
+        showShortToast(context, 'Settings saved');
       }
     } catch (e) {
       if (mounted) {
@@ -114,24 +114,21 @@ class _AppStatePageState extends State<AppStatePage> {
   Future<void> _toggleNotifications(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('notifications_enabled', enabled);
-    
+
     if (enabled) {
       await initNotifications();
     } else {
       await cancelNotifications();
     }
-    
+
     setState(() => _notificationsEnabled = enabled);
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            enabled
-                ? 'Prep reminder notifications enabled'
-                : 'Prep reminder notifications disabled'
-          ),
-        ),
+      showShortToast(
+        context,
+        enabled
+            ? 'Prep reminder notifications enabled'
+            : 'Prep reminder notifications disabled',
       );
     }
   }
@@ -139,15 +136,15 @@ class _AppStatePageState extends State<AppStatePage> {
   Future<void> _testNotification() async {
     final success = await sendTestNotification();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success
-                ? 'Test notification sent!'
-                : 'Failed to send notification. Check permissions.',
+      if (success) {
+        showShortToast(context, 'Test notification sent');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send notification. Check permissions.'),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 
@@ -159,9 +156,8 @@ class _AppStatePageState extends State<AppStatePage> {
     }
     await checkRemindersNow();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Reminder check complete')),
-      );
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      showShortToast(context, 'Reminder check complete');
     }
   }
 

@@ -1,3 +1,4 @@
+import '../../widgets/toast.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -251,7 +252,14 @@ class MealPlanPageState extends State<MealPlanPage> {
                                         );
                                         await _reloadDay(dayIso);
                                         messenger.showSnackBar(
-                                          SnackBar(content: Text('Restored "$recipeName"')),
+                                          const SnackBar(
+                                            content: Text('Restored'),
+                                            behavior:
+                                                SnackBarBehavior.floating,
+                                            width: 220,
+                                            duration:
+                                                Duration(milliseconds: 1500),
+                                          ),
                                         );
                                       } catch (e) {
                                         messenger.showSnackBar(
@@ -350,9 +358,13 @@ class MealPlanPageState extends State<MealPlanPage> {
 
     if (!mounted) return;
     final msg = failures.isEmpty
-        ? 'Assigned $ok recipe(s) to $dayIso'
-        : 'Assigned $ok, failed ${failures.length} (IDs: ${failures.join(', ')})';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        ? 'Added $ok ${ok == 1 ? 'recipe' : 'recipes'} to $dayIso'
+        : 'Added $ok, failed ${failures.length} (IDs: ${failures.join(', ')})';
+    if (failures.isEmpty) {
+      showShortToast(context, msg);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
   }
 }
 

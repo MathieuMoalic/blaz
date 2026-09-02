@@ -1016,7 +1016,7 @@ mod integration {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn category_override_and_always_use_flow() {
+    async fn category_change_always_teaches_the_food() {
         let tmp = tempfile::tempdir().unwrap();
         let state = make_test_state(&tmp).await;
         let pool = state.pool.clone();
@@ -1057,7 +1057,24 @@ mod integration {
         assert_eq!(item["category_id"], vegetables);
         assert_eq!(item["category_is_override"], false);
 
-        // One-time override does not touch the Food.
+        // A second row on the same Food exists before the change.
+        let other = json_body(
+            app.clone()
+                .oneshot(auth_json(
+                    "POST",
+                    "/shopping",
+                    &token,
+                    &json!({"text": "500 g potatoes"}),
+                ))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        let other_id = other["id"].as_i64().unwrap();
+
+        // Changing the item's category teaches the canonical Food directly;
+        // there is no separate "always use" step and no one-time override.
         let patched = json_body(
             app.clone()
                 .oneshot(auth_json(
@@ -1073,33 +1090,10 @@ mod integration {
         .await;
         assert_eq!(patched["category"], "Pantry");
         assert_eq!(patched["category_id"], pantry);
-        assert_eq!(patched["category_is_override"], true);
-
-        let food: (Option<i64>, String) =
-            sqlx::query_as("SELECT category_id, category_source FROM foods WHERE id = ?")
-                .bind(potato)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
         assert_eq!(
-            food.0,
-            Some(vegetables),
-            "one-time override leaves Food alone"
+            patched["category_is_override"], false,
+            "no override is created; the Food owns the category"
         );
-        assert_eq!(food.1, "unknown", "Food category untouched");
-
-        // "Always use this category" persists as a user choice on the Food.
-        let resp = app
-            .clone()
-            .oneshot(auth_json(
-                "PATCH",
-                &format!("/shopping/{id}"),
-                &token,
-                &json!({"always_use_category": true}),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
 
         let food: (Option<i64>, String) =
             sqlx::query_as("SELECT category_id, category_source FROM foods WHERE id = ?")
@@ -1107,10 +1101,47 @@ mod integration {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(food.0, Some(pantry));
-        assert_eq!(food.1, "user");
+        assert_eq!(food.0, Some(pantry), "category change updates the Food");
+        assert_eq!(food.1, "user", "category_source is user");
 
-        // PATCH /foods: category_id persisted, invalid ones rejected.
+        // The override column is cleared for the patched row.
+        let override_id: Option<i64> =
+            sqlx::query_scalar("SELECT category_override_id FROM shopping_items WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(override_id, None);
+
+        // The other existing row now displays the new category.
+        let (other_cat, other_cat_id): (String, Option<i64>) = sqlx::query_as(
+            "SELECT category, category_id FROM shopping_items_view WHERE id = ?",
+        )
+        .bind(other_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(other_cat, "Pantry");
+        assert_eq!(other_cat_id, Some(pantry));
+
+        // A newly added row on the same Food also displays the new category
+        // (no LLM involved: identity is known, category comes from the Food).
+        let fresh = json_body(
+            app.clone()
+                .oneshot(auth_json(
+                    "POST",
+                    "/shopping",
+                    &token,
+                    &json!({"text": "2 potatoes"}),
+                ))
+                .await
+                .unwrap()
+                .into_body(),
+        )
+        .await;
+        assert_eq!(fresh["category"], "Pantry");
+
+        // PATCH /foods: invalid categories are still rejected.
         let resp = app
             .clone()
             .oneshot(auth_json(
@@ -1122,21 +1153,6 @@ mod integration {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-
-        let resp = app
-            .clone()
-            .oneshot(auth_json(
-                "PATCH",
-                &format!("/foods/{potato}"),
-                &token,
-                &json!({"category_id": vegetables}),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let food_json = json_body(resp.into_body()).await;
-        assert_eq!(food_json["category_id"], vegetables);
-        assert_eq!(food_json["category_source"], "user");
     }
 
     #[tokio::test]

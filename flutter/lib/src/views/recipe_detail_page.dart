@@ -1,3 +1,5 @@
+import '../widgets/toast.dart';
+import '../widgets/needs_review.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -242,11 +244,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
         instructions: imported.instructions,
       );
       _refresh();
-      messenger
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(content: Text('Re-imported successfully')),
-        );
+      showShortToast(context, 'Re-imported');
     } catch (e) {
       messenger
         ..clearSnackBars()
@@ -262,9 +260,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     if (r.ingredients.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('No ingredients to add')));
+      showShortToast(context, 'No ingredients to add');
       return;
     }
 
@@ -280,10 +276,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
 
     try {
       await api.mergeShoppingIngredients(selected, recipeId: r.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${selected.length} item(s)')),
-      );
+      // No success toast: the sheet closing is the visible completion, and
+      // the shopping tab shows the result.
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -333,9 +327,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
       // Assign future outside the setState body, then trigger rebuild.
       _future = Future.value(updated);
       setState(() {});
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Macros estimated')));
+      showShortToast(context, 'Macros estimated');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -392,9 +384,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: link));
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('Link copied')));
+                showShortToast(context, 'Link copied');
               },
             ),
           ],
@@ -714,64 +704,25 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                             if (r.ingredients
                                 .where((i) => i.needsReview && !i.isSection)
                                 .isNotEmpty) ...[
-                              Container(
-                                margin: const EdgeInsets.only(bottom: 10),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.secondaryContainer,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: InkWell(
-                                  onTap: () {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => EditRecipePage(
-                                          recipe: r,
-                                        ),
+                              NeedsReviewBanner(
+                                count: r.ingredients
+                                    .where((i) => i.needsReview && !i.isSection)
+                                    .length,
+                                onTap: () {
+                                  // Jump straight to the first
+                                  // needs-review ingredient.
+                                  final firstIdx = r.ingredients
+                                      .indexWhere((i) => i.needsReview);
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => EditRecipePage(
+                                        recipe: r,
+                                        focusIngredientIndex:
+                                            firstIdx >= 0 ? firstIdx : null,
                                       ),
-                                    );
-                                  },
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.warning_amber_rounded,
-                                        size: 18,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSecondaryContainer,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          '${r.ingredients.where((i) => i.needsReview && !i.isSection).length} '
-                                          'ingredients need review',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSecondaryContainer,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Review',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSecondaryContainer,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                             ],
                             Row(
@@ -841,9 +792,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                                 final checked = _checkedIngredients.contains(
                                   idx,
                                 );
-                                return _Bullet(
+                                return IngredientBullet(
                                   text: line,
                                   checked: checked,
+                                  needsReview:
+                                      ing.needsReview && !ing.isSection,
                                   onTap: () => _toggleIngredient(idx),
                                 );
                               }),
@@ -1301,50 +1254,6 @@ class _MetaRow extends StatelessWidget {
   }
 }
 
-class _Bullet extends StatelessWidget {
-  final String text;
-  final bool checked;
-  final VoidCallback onTap;
-  const _Bullet({
-    required this.text,
-    required this.checked,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final base = Theme.of(
-      context,
-    ).textTheme.bodyLarge; // Changed from bodyMedium to bodyLarge
-    final style = base?.copyWith(
-      decoration: checked ? TextDecoration.lineThrough : null,
-      color: checked
-          ? (base.color ?? Colors.black).withValues(alpha: 0.55)
-          : base.color,
-      height: 1.3, // Tighter line height
-    );
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4), // Reduced from 6
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('•  ', style: base),
-            Expanded(
-              child: AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 120),
-                style: style ?? const TextStyle(),
-                child: Text(text),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _Numbered extends StatelessWidget {
   final int step;

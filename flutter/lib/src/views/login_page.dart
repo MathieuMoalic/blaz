@@ -1,3 +1,4 @@
+import '../widgets/toast.dart';
 import 'package:flutter/material.dart';
 import '../auth.dart';
 import '../home_shell.dart';
@@ -74,9 +75,7 @@ class _LoginPageState extends State<LoginPage> {
       // Mark as verified for this session so we don't prompt again immediately.
       setState(() => _serverVerifiedThisSession = true);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Server URL saved.')));
+      showShortToast(context, 'Server URL saved');
     }
   }
 

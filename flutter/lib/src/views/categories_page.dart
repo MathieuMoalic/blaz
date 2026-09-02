@@ -1,3 +1,4 @@
+import '../widgets/toast.dart';
 import 'package:flutter/material.dart';
 import '../api.dart';
 
@@ -36,9 +37,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       await createCategory(name.trim());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Created "$name"')),
-      );
+      showShortToast(context, 'Created "$name"');
       _refresh();
     } catch (e) {
       if (!mounted) return;
@@ -58,9 +57,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       await updateCategory(cat.id, name: name.trim());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Renamed to "$name"')),
-      );
+      showShortToast(context, 'Renamed to "$name"');
       _refresh();
     } catch (e) {
       if (!mounted) return;
@@ -99,9 +96,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       await deleteCategory(cat.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Deleted "${cat.name}"')),
-      );
+      showShortToast(context, 'Deleted "${cat.name}"');
       _refresh();
     } catch (e) {
       if (!mounted) return;

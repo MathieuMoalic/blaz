@@ -640,7 +640,6 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _notesCtrl;
   late String _cat;
-  bool _alwaysUse = false;
 
   /// Get the list of category names to use (dynamic or fallback to hardcoded)
   List<String> get _categoryNames => widget.categories.isNotEmpty
@@ -783,17 +782,12 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                 ),
                 if (widget.item.foodId != null) ...[
                   const SizedBox(height: 4),
-                  CheckboxListTile(
-                    value: _alwaysUse,
-                    onChanged: (v) => setState(() => _alwaysUse = v ?? false),
-                    title: Text(
-                      'Always use this category for ${widget.item.name ?? ''}',
-                      style: const TextStyle(fontSize: 13),
+                  Text(
+                    'Saved for all ${widget.item.name ?? 'this ingredient'} items',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
                   ),
                 ],
                 if (widget.item.recipeTitles != null &&
@@ -867,7 +861,7 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                       final unit = _unitCtrl.text.trim().isEmpty
                           ? ''
                           : _unitCtrl.text.trim();
-                      final newCat = _cat == 'Other' ? '' : _cat;
+                      final newCat = _cat;
 
                       final updated = await updateShoppingItem(
                         id: widget.item.id,
@@ -876,7 +870,6 @@ class _EditShoppingItemSheetState extends State<_EditShoppingItemSheet> {
                         unit: unit,
                         category: newCat,
                         notes: _notesCtrl.text.trim(),
-                        alwaysUseCategory: _alwaysUse ? true : null,
                       );
                       if (!context.mounted) return;
                       Navigator.pop(context, updated);

@@ -1,3 +1,4 @@
+import '../widgets/toast.dart';
 import 'package:flutter/material.dart';
 import '../api.dart';
 
@@ -27,9 +28,7 @@ class _DeletedRecipesPageState extends State<DeletedRecipesPage> {
     try {
       await restoreRecipe(recipe.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Restored "${recipe.title}"')));
+      showShortToast(context, 'Restored "${recipe.title}"');
       _refresh();
     } catch (e) {
       if (!mounted) return;

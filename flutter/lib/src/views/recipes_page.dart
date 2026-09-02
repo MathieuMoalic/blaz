@@ -1,3 +1,4 @@
+import '../widgets/toast.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -143,9 +144,7 @@ class RecipesPageState extends State<RecipesPage> {
     try {
       final entry = await assignRecipeToDay(day: day, recipeId: r.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Assigned "${r.title}" to ${entry.day}')),
-      );
+      showShortToast(context, 'Added to ${entry.day}');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

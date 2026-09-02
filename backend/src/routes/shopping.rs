@@ -37,14 +37,16 @@ fn patch_update_err(err: sqlx::Error) -> AppError {
 #[derive(Deserialize, Debug)]
 pub struct UpdateShoppingItem {
     pub done: Option<bool>,
-    /// One-time category override (legacy name form). Empty string clears.
+    /// Category change for this item's ingredient.
+    ///
+    /// For items with Food identity this always teaches the canonical Food
+    /// (`foods.category_id`, `category_source = 'user'`); the category then
+    /// applies to every shopping row using the same Food. Legacy rows
+    /// without a Food keep the per-item override fallback.
     pub category: Option<String>,
-    /// One-time category override (by category id; wins over `category`).
+    /// Category change by category id; wins over the legacy `category` name.
     #[serde(default)]
     pub category_id: Option<i64>,
-    /// Persist the chosen category as the Food's default (`user`-locked).
-    #[serde(default)]
-    pub always_use_category: Option<bool>,
     pub notes: Option<String>,
 
     /// Backwards-compatible free-form update.
@@ -350,34 +352,6 @@ async fn fetch_raw_by_id(state: &AppState, id: i64) -> Result<ShoppingItemRow, s
     .bind(id)
     .fetch_one(&state.pool)
     .await
-}
-
-/// Record "always use this category" on the item's Food.
-async fn apply_always_use_category(state: &AppState, id: i64) -> AppResult<()> {
-    let row = fetch_raw_by_id(state, id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let Some(food_id) = row.food_id else {
-        return Err((StatusCode::BAD_REQUEST, "item has no food identity".into()).into());
-    };
-
-    let category_id: Option<i64> =
-        sqlx::query_scalar("SELECT category_id FROM shopping_items_view WHERE id = ?")
-            .bind(id)
-            .fetch_one(&state.pool)
-            .await?;
-
-    crate::ingredients::catalog::set_food_category(
-        &state.pool,
-        food_id,
-        category_id,
-        "user",
-        None,
-        true,
-    )
-    .await
-    .map_err(|e| -> AppError { (StatusCode::BAD_REQUEST, e.to_string()).into() })?;
-    Ok(())
 }
 
 async fn category_id_exists(state: &AppState, id: i64) -> bool {
@@ -949,10 +923,11 @@ async fn apply_category_update(
     qb: &mut QueryBuilder<'_, Sqlite>,
     wrote: &mut bool,
     state: &AppState,
+    id: i64,
     payload: &UpdateShoppingItem,
 ) -> AppResult<()> {
-    // Resolve the desired one-time override: an explicit `category_id` wins
-    // over the legacy `category` *name*; an empty name clears the override.
+    // Resolve the desired category: an explicit `category_id` wins over the
+    // legacy `category` *name*; an empty name clears it.
     let category_id = match (payload.category_id, payload.category.as_deref()) {
         (Some(cid), _) => {
             if category_id_exists(state, cid).await {
@@ -976,12 +951,44 @@ async fn apply_category_update(
 
     let name = category_name_by_id(state, category_id).await;
 
+    // Items with Food identity: the change always teaches the canonical
+    // Food (user-locked), then the item row follows the Food. One-time
+    // overrides are cleared so the Food's choice is authoritative.
+    let food_id: Option<i64> =
+        sqlx::query_scalar("SELECT food_id FROM shopping_items WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(internal_err)?
+            .flatten();
+
+    if let Some(fid) = food_id {
+        if let Some(cid) = category_id {
+            crate::ingredients::catalog::set_food_category(
+                &state.pool,
+                fid,
+                Some(cid),
+                "user",
+                None,
+                true,
+            )
+            .await
+            .map_err(|e| -> AppError { (StatusCode::BAD_REQUEST, e.to_string()).into() })?;
+        }
+    }
+
     push_sep(qb, wrote);
-    qb.push("category_override_id = ");
-    if let Some(cid) = category_id {
-        qb.push_bind(cid);
+    if food_id.is_some() {
+        // Follow the Food: clear any legacy per-item override.
+        qb.push("category_override_id = NULL");
     } else {
-        qb.push("NULL");
+        // Legacy row without Food identity: per-item fallback stays.
+        qb.push("category_override_id = ");
+        if let Some(cid) = category_id {
+            qb.push_bind(cid);
+        } else {
+            qb.push("NULL");
+        }
     }
 
     push_sep(qb, wrote);
@@ -1184,7 +1191,7 @@ pub async fn patch_shopping_item(
     let mut wrote = false;
 
     apply_done_update(&mut qb, &mut wrote, payload.done);
-    apply_category_update(&mut qb, &mut wrote, &state, &payload).await?;
+    apply_category_update(&mut qb, &mut wrote, &state, id, &payload).await?;
     apply_notes_update(&mut qb, &mut wrote, payload.notes.clone());
 
     // `text` takes priority over structured fields.
@@ -1192,12 +1199,6 @@ pub async fn patch_shopping_item(
     if !did_text {
         let _did_struct =
             apply_structured_update(&mut qb, &mut wrote, &state, id, &payload).await?;
-    }
-
-    // Persistent category preference ("Always use this category for <Food>").
-    // Runs even for category-only patches that don't write a column directly.
-    if payload.always_use_category == Some(true) {
-        apply_always_use_category(&state, id).await?;
     }
 
     if !wrote {
