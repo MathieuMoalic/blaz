@@ -14,7 +14,6 @@
 //! category. LLM failures never silently become "Other": unresolved phrases
 //! stay `food_id = NULL` with `needs_review = true`.
 
-
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -34,7 +33,7 @@ use crate::units::normalize_name;
 /// Minimum Jaro-Winkler similarity for a Food to be offered as candidate.
 const CANDIDATE_SIMILARITY_THRESHOLD: f64 = 0.75;
 /// Maximum candidates offered per input phrase.
-const CANDIDATE_LIMIT: usize = 5;
+pub const CANDIDATE_LIMIT: usize = 5;
 /// Maximum inputs per LLM call.
 const LLM_CHUNK_SIZE: usize = 30;
 
@@ -82,12 +81,10 @@ impl OpenRouterFoodLlm {
     /// strategies and fails fast on LLM batches.
     pub async fn from_state(state: &crate::models::AppState) -> Self {
         use crate::routes::settings::LlmSettings;
-        let settings = LlmSettings::load(&state.pool)
-            .await
-            .with_env_overrides(
-                state.config.llm_model.as_deref(),
-                state.config.llm_fallback_model.as_deref(),
-            );
+        let settings = LlmSettings::load(&state.pool).await.with_env_overrides(
+            state.config.llm_model.as_deref(),
+            state.config.llm_fallback_model.as_deref(),
+        );
         Self::new(
             LlmClient::new(
                 state.config.llm_api_url.clone(),
@@ -128,7 +125,6 @@ impl FoodLlm for OpenRouterFoodLlm {
 /* =========================
  * Prompt building / response validation
  * ========================= */
-
 fn build_user_prompt(req: &LlmResolveRequest) -> String {
     let mut out = String::new();
     out.push_str("Valid categories (id = name):\n");
@@ -137,7 +133,7 @@ fn build_user_prompt(req: &LlmResolveRequest) -> String {
     }
     out.push_str("\nIngredients to resolve:\n");
     for (index, input) in req.inputs.iter().enumerate() {
-        let _ = writeln!(out, "\n{index}. \"{}\"", input.phrase);
+        let _ = writeln!(out, "\n{}. [{}] \"{}\"", index, input.key, input.phrase);
         if input.candidates.is_empty() {
             out.push_str("   Candidates: none\n");
         } else {
@@ -155,110 +151,219 @@ fn build_user_prompt(req: &LlmResolveRequest) -> String {
             let _ = writeln!(out, "   Candidates: {list}");
         }
     }
-    out.push_str("\nReturn {\"results\":[...]} with one entry per input index, in order.\n");
+    out.push_str(
+        "\nReturn {\"results\":[...]} with one entry per input, in order. Each entry MUST echo\n",
+    );
+    out.push_str("the item's \"key\" and its \"input_index\" (0-based, in order). Example:\n");
+    out.push_str(
+        "{\"results\":[{\"key\":\"wi0000\",\"input_index\":0,\"food_id\":42,\"new_food\":null,\"qualifiers\":[],\"needs_review\":false}]}\n",
+    );
     out
+}
+
+/// One parsed response slot per work item.
+#[derive(Default, Clone)]
+struct Matched {
+    food_id: Option<i64>,
+    new_food: Option<LlmNewFood>,
+    qualifiers: Vec<String>,
+    needs_review: bool,
+    seen: bool,
+}
+
+/// Resolve one response entry to a chunk-local input index: by echoed
+/// work-item `key` first (authoritative; a disagreeing `input_index`
+/// invalidates the entry), then by index alone as a fallback.
+fn entry_index(
+    entry: &JsonValue,
+    key_to_index: &HashMap<&str, usize>,
+    input_count: usize,
+) -> Option<usize> {
+    let echoed_key = entry.get("key").and_then(JsonValue::as_str);
+    let raw_index = entry.get("input_index").and_then(JsonValue::as_u64);
+
+    if let Some(i) = echoed_key.and_then(|k| key_to_index.get(k)).copied() {
+        if let Some(raw) = raw_index
+            && !usize::try_from(raw).is_ok_and(|r| r == i)
+        {
+            tracing::warn!(
+                key = echoed_key,
+                input_index = raw,
+                "resolver LLM entry key/index disagree; ignoring entry"
+            );
+            return None;
+        }
+        return Some(i);
+    }
+    if echoed_key.is_some() {
+        tracing::warn!(
+            key = echoed_key,
+            "resolver LLM entry echoes an unknown work-item key; ignoring"
+        );
+        return None;
+    }
+    let index = raw_index.and_then(|raw| usize::try_from(raw).ok())?;
+    (index < input_count).then_some(index)
+}
+
+/// Validated fields of one response entry.
+struct EntryFields {
+    food_id: Option<i64>,
+    new_food: Option<LlmNewFood>,
+    qualifiers: Vec<String>,
+    needs_review: bool,
+}
+
+/// Parse one response entry's fields and validate them against its own
+/// input's candidate list.
+fn parse_entry_fields(
+    entry: &JsonValue,
+    input: &LlmInput,
+    index: usize,
+    categories: &[(i64, String)],
+) -> EntryFields {
+    let qualifiers: Vec<String> = entry
+        .get("qualifiers")
+        .and_then(JsonValue::as_array)
+        .map_or_else(Vec::new, |arr| {
+            arr.iter()
+                .filter_map(|q| q.as_str().map(str::to_string))
+                .collect()
+        });
+    let needs_review = entry
+        .get("needs_review")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+
+    let food_id = match entry.get("food_id").and_then(JsonValue::as_i64) {
+        Some(id) if input.candidates.iter().any(|c| c.food_id == id) => Some(id),
+        Some(id) => {
+            tracing::warn!(
+                food_id = id,
+                input_index = index,
+                "resolver LLM returned a food_id outside the candidate list; ignoring"
+            );
+            None
+        }
+        None => None,
+    };
+
+    let new_food = entry
+        .get("new_food")
+        .filter(|v| !v.is_null())
+        .and_then(|v| {
+            let name = v
+                .get("canonical_name")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?;
+            let category_id = match v.get("category_id").and_then(JsonValue::as_i64) {
+                Some(cid) if categories.iter().any(|(id, _)| *id == cid) => Some(cid),
+                Some(cid) => {
+                    tracing::warn!(
+                        category_id = cid,
+                        "resolver invalid category ID; new food starts uncategorized"
+                    );
+                    None
+                }
+                None => None,
+            };
+            Some(LlmNewFood {
+                canonical_name: name.to_string(),
+                category_id,
+            })
+        });
+
+    if food_id.is_some() && new_food.is_some() {
+        tracing::warn!(
+            input_index = index,
+            "resolver LLM returned both food_id and new_food; marking for review"
+        );
+        return EntryFields {
+            food_id: None,
+            new_food: None,
+            qualifiers,
+            needs_review: true,
+        };
+    }
+    EntryFields {
+        food_id,
+        new_food,
+        qualifiers,
+        needs_review,
+    }
 }
 
 /// Validate an LLM JSON response against the request it answers.
 ///
-/// Food ids must be among that input's candidates; category ids must be in
-/// the valid list (invalid ones are dropped, not guessed); `food_id` and
-/// `new_food` are mutually exclusive; out-of-range entries are ignored.
-fn parse_llm_response(value: &JsonValue, req: &LlmResolveRequest) -> Vec<LlmResultItem> {
+/// Association is by the echoed opaque work-item `key`; `input_index` is
+/// accepted only as a fallback when no key is present, and must agree with
+/// the key when both are given. Food ids must be among THAT input's
+/// candidates (never a global batch pool); category ids must be in the
+/// valid list (invalid ones are dropped, not guessed); `food_id` and
+/// `new_food` are mutually exclusive. Duplicate or missing entries leave
+/// the affected input unresolved; out-of-range or contradictory entries
+/// are ignored.
+pub fn parse_llm_response(value: &JsonValue, req: &LlmResolveRequest) -> Vec<LlmResultItem> {
     let Some(entries) = value.get("results").and_then(JsonValue::as_array) else {
         tracing::warn!("resolver LLM response is missing the 'results' array");
         return Vec::new();
     };
 
-    let mut out = Vec::new();
+    let key_to_index: HashMap<&str, usize> = req
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(i, input)| (input.key.as_str(), i))
+        .collect();
+    let mut matched: Vec<Matched> = vec![Matched::default(); req.inputs.len()];
+
     for entry in entries {
-        let Some(raw_index) = entry.get("input_index").and_then(JsonValue::as_u64) else {
-            tracing::warn!("resolver LLM entry without input_index; ignoring");
-            continue;
-        };
-        let Some(index) = usize::try_from(raw_index)
-            .ok()
-            .filter(|&i| i < req.inputs.len())
-        else {
-            tracing::warn!(
-                input_index = raw_index,
-                "resolver LLM entry index out of range; ignoring"
-            );
+        let Some(index) = entry_index(entry, &key_to_index, req.inputs.len()) else {
+            tracing::warn!("resolver LLM entry could not be associated; ignoring");
             continue;
         };
         let input = &req.inputs[index];
 
-        let qualifiers: Vec<String> = entry
-            .get("qualifiers")
-            .and_then(JsonValue::as_array)
-            .map_or_else(Vec::new, |arr| {
-                arr.iter()
-                    .filter_map(|q| q.as_str().map(str::to_string))
-                    .collect()
-            });
-        let needs_review = entry
-            .get("needs_review")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
-
-        let food_id = match entry.get("food_id").and_then(JsonValue::as_i64) {
-            Some(id) if input.candidates.iter().any(|c| c.food_id == id) => Some(id),
-            Some(id) => {
-                tracing::warn!(
-                    food_id = id,
-                    input_index = index,
-                    "resolver LLM returned a food_id outside the candidate list; ignoring"
-                );
-                None
-            }
-            None => None,
-        };
-
-        let new_food = entry
-            .get("new_food")
-            .filter(|v| !v.is_null())
-            .and_then(|v| {
-                let name = v
-                    .get("canonical_name")
-                    .and_then(JsonValue::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())?;
-                let category_id = match v.get("category_id").and_then(JsonValue::as_i64) {
-                    Some(cid) if req.categories.iter().any(|(id, _)| *id == cid) => Some(cid),
-                    Some(cid) => {
-                        tracing::warn!(
-                            category_id = cid,
-                            "resolver invalid category ID; new food starts uncategorized"
-                        );
-                        None
-                    }
-                    None => None,
-                };
-                Some(LlmNewFood {
-                    canonical_name: name.to_string(),
-                    category_id,
-                })
-            });
-
-        let (food_id, new_food, needs_review) = if food_id.is_some() && new_food.is_some() {
+        if matched[index].seen {
+            // Duplicate entry for the same work item: the response is
+            // ambiguous — refuse to guess.
             tracing::warn!(
+                key = %input.key,
                 input_index = index,
-                "resolver LLM returned both food_id and new_food; marking for review"
+                "resolver LLM returned duplicate entries for one work item; marking unresolved"
             );
-            (None, None, true)
-        } else {
-            (food_id, new_food, needs_review)
-        };
+            matched[index] = Matched {
+                needs_review: true,
+                seen: true,
+                ..Matched::default()
+            };
+            continue;
+        }
 
-        out.push(LlmResultItem {
-            input_index: index,
-            food_id,
-            new_food,
-            qualifiers,
-            needs_review,
-        });
+        let fields = parse_entry_fields(entry, input, index, &req.categories);
+
+        matched[index] = Matched {
+            food_id: fields.food_id,
+            new_food: fields.new_food,
+            qualifiers: fields.qualifiers,
+            needs_review: fields.needs_review,
+            seen: true,
+        };
     }
-    out
+
+    matched
+        .into_iter()
+        .enumerate()
+        .filter(|(_, slot)| slot.seen)
+        .map(|(index, slot)| LlmResultItem {
+            input_index: index,
+            food_id: slot.food_id,
+            new_food: slot.new_food,
+            qualifiers: slot.qualifiers,
+            needs_review: slot.needs_review,
+        })
+        .collect()
 }
 
 /* =========================
@@ -294,13 +399,16 @@ fn singularized_phrase(normalized: &str) -> Option<String> {
     if words.len() == 1 {
         return Some(singular);
     }
-    Some(format!(
-        "{} {singular}",
-        words[..words.len() - 1].join(" ")
-    ))
+    Some(format!("{} {singular}", words[..words.len() - 1].join(" ")))
 }
 
 /// Strategies A–D: local, deterministic lookups.
+///
+/// Order of precedence:
+/// 1. exact canonical Food name — identity by definition, wins before any
+///    alias (a stale automatic alias must never shadow a canonical name);
+/// 2. confirmed/user alias, then any exact alias (LLM cache);
+/// 3. conservative deterministic singularization (lookup only).
 ///
 /// Returns `Ok(None)` when the phrase must go to the LLM.
 async fn resolve_deterministic(
@@ -312,7 +420,30 @@ async fn resolve_deterministic(
         return Ok(Some(ResolutionOutcome::unresolved()));
     }
 
-    // A/B: exact alias (confirmed mappings are authoritative).
+    // C: exact canonical Food name; cache an alias so future runs are fast.
+    // This deliberately outranks alias hits: if a legacy automatic alias
+    // `coconut milk -> milk` exists while Food `coconut milk` exists, the
+    // phrase must resolve to the Food, never through the corrupt alias.
+    if let Some(food) = catalog::get_food_by_name(pool, phrase).await? {
+        if let Err(e) =
+            catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(1.0)).await
+        {
+            // The canonical resolution above is still authoritative; only
+            // the cache write failed.
+            tracing::warn!(phrase = %phrase, error = ?e, "canonical-hit alias cache skipped");
+        }
+        tracing::info!(phrase = %phrase, food_id = food.id, "ingredient_resolution_food_hit");
+        return Ok(Some(ResolutionOutcome {
+            food_id: Some(food.id),
+            canonical_name: Some(food.canonical_name),
+            qualifiers: Vec::new(),
+            resolution_source: Some("food"),
+            resolution_confidence: Some(1.0),
+            needs_review: false,
+        }));
+    }
+
+    // A/B: exact alias (confirmed mappings are authoritative among aliases).
     if let Some(alias) = catalog::find_alias(pool, phrase).await?
         && let Some(food) = catalog::get_food_by_id(pool, alias.food_id).await?
     {
@@ -341,20 +472,6 @@ async fn resolve_deterministic(
         }));
     }
 
-    // C: exact canonical food name; cache an alias so B short-circuits next time.
-    if let Some(food) = catalog::get_food_by_name(pool, phrase).await? {
-        catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(1.0)).await?;
-        tracing::info!(phrase = %phrase, food_id = food.id, "ingredient_resolution_food_hit");
-        return Ok(Some(ResolutionOutcome {
-            food_id: Some(food.id),
-            canonical_name: Some(food.canonical_name),
-            qualifiers: Vec::new(),
-            resolution_source: Some("food"),
-            resolution_confidence: Some(1.0),
-            needs_review: false,
-        }));
-    }
-
     // D: conservative deterministic singularization (lookup only, never creation).
     if let Some(singular) = singularized_phrase(&normalized) {
         let hit = match catalog::get_food_by_name(pool, &singular).await? {
@@ -365,7 +482,14 @@ async fn resolve_deterministic(
             },
         };
         if let Some(food) = hit {
-            catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(0.9)).await?;
+            if let Err(e) =
+                catalog::create_alias(pool, phrase, food.id, "automatic", false, Some(0.9)).await
+            {
+                // Identity conflict: leave this phrase unresolved rather
+                // than corrupting the catalog.
+                tracing::warn!(phrase = %phrase, error = ?e, "singularized alias rejected");
+                return Ok(None);
+            }
             tracing::info!(
                 phrase = %phrase,
                 food_id = food.id,
@@ -394,11 +518,7 @@ async fn resolve_deterministic(
 /// Food names or aliases that appear verbatim (as token n-grams, optionally
 /// singularized) inside the phrase score highest; otherwise Jaro-Winkler
 /// similarity must reach the threshold. `None` means "not a candidate".
-fn candidate_score(
-    ngrams: &HashSet<String>,
-    phrase: &str,
-    reference: &str,
-) -> Option<f64> {
+fn candidate_score(ngrams: &HashSet<String>, phrase: &str, reference: &str) -> Option<f64> {
     if ngrams.contains(reference) {
         return Some(1.0);
     }
@@ -410,7 +530,7 @@ fn candidate_score(
 /// never an identity claim. Token n-grams (up to 3 words, singularized
 /// variants included) match verbatim; everything else is ranked by
 /// Jaro-Winkler similarity, then name, deduplicated per food.
-fn candidate_matches(
+pub fn candidate_matches(
     snapshot: &CatalogSnapshot,
     normalized: &str,
     limit: usize,
@@ -524,6 +644,7 @@ pub async fn resolve_batch<R: FoodLlm>(
             let inputs: Vec<LlmInput> = chunk
                 .iter()
                 .map(|&i| LlmInput {
+                    key: work_item_key(i),
                     phrase: phrases[i].clone(),
                     candidates: candidate_matches(
                         &snapshot,
@@ -554,6 +675,13 @@ pub async fn resolve_batch<R: FoodLlm>(
         }
     }
 
+    // Zero-LLM reconciliation: batches earlier in this run may have created
+    // canonical Foods that later chunks never saw (the candidate snapshot is
+    // point-in-time) and that earlier unresolved phrases can now hit
+    // deterministically. Repeat local-only passes until no phrase makes
+    // progress; this must never call the LLM.
+    reconcile_locally(pool, phrases, &representatives, &mut outcomes).await?;
+
     // Duplicate phrases share their representative's outcome.
     for (i, phrase) in phrases.iter().enumerate() {
         if outcomes[i].is_none() {
@@ -571,6 +699,49 @@ pub async fn resolve_batch<R: FoodLlm>(
         .into_iter()
         .map(|o| o.unwrap_or_else(ResolutionOutcome::unresolved))
         .collect())
+}
+
+/// Stable opaque work-item key for one LLM input (`wi<index>`).
+/// The response must echo it, so batch entries can be associated with the
+/// exact work item even if a model reorders or misnumbers its output.
+pub fn work_item_key(index: usize) -> String {
+    format!("wi{index:04}")
+}
+
+/// Repeat local-only deterministic resolution over still-unresolved
+/// representatives until a pass makes no progress. Never calls the LLM.
+async fn reconcile_locally(
+    pool: &SqlitePool,
+    phrases: &[String],
+    representatives: &[usize],
+    outcomes: &mut [Option<ResolutionOutcome>],
+) -> anyhow::Result<()> {
+    let mut pass = 0usize;
+    loop {
+        let mut progress = false;
+        for &i in representatives {
+            if outcomes[i].is_some() {
+                continue;
+            }
+            if let Some(outcome) = resolve_deterministic(pool, &phrases[i]).await? {
+                if outcome.food_id.is_some() {
+                    tracing::info!(
+                        phrase = %phrases[i],
+                        food_id = outcome.food_id,
+                        reconciliation_pass = pass,
+                        "ingredient_resolution_reconciled_locally"
+                    );
+                    progress = true;
+                }
+                outcomes[i] = Some(outcome);
+            }
+        }
+        if !progress {
+            break;
+        }
+        pass += 1;
+    }
+    Ok(())
 }
 
 /// Persist and record one batch of validated LLM decisions.
@@ -591,7 +762,19 @@ async fn apply_llm_results(
             let Some(food) = catalog::get_food_by_id(pool, food_id).await? else {
                 continue;
             };
-            catalog::create_alias(pool, &phrases[i], food.id, "automatic", false, None).await?;
+            if let Err(e) =
+                catalog::create_alias(pool, &phrases[i], food.id, "automatic", false, None).await
+            {
+                // Identity guard rejection: log and leave for the local
+                // reconciliation pass instead of corrupting the catalog.
+                tracing::warn!(
+                    phrase = %phrases[i],
+                    food_id = food.id,
+                    error = ?e,
+                    "resolver alias rejected by identity guard; leaving unresolved"
+                );
+                continue;
+            }
             outcomes[i] = Some(ResolutionOutcome {
                 food_id: Some(food.id),
                 canonical_name: Some(food.canonical_name),
@@ -604,10 +787,37 @@ async fn apply_llm_results(
             let category_id = new_food
                 .category_id
                 .filter(|cid| categories.iter().any(|(id, _)| id == cid));
-            let food =
-                catalog::create_food(pool, &new_food.canonical_name, category_id, "llm", None)
-                    .await?;
-            catalog::create_alias(pool, &phrases[i], food.id, "automatic", false, None).await?;
+            let food = match catalog::create_food(
+                pool,
+                &new_food.canonical_name,
+                category_id,
+                "llm",
+                None,
+            )
+            .await
+            {
+                Ok(food) => food,
+                Err(e) => {
+                    tracing::warn!(
+                        phrase = %phrases[i],
+                        proposed_name = %new_food.canonical_name,
+                        error = ?e,
+                        "resolver new food rejected by name guard; leaving unresolved"
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) =
+                catalog::create_alias(pool, &phrases[i], food.id, "automatic", false, None).await
+            {
+                tracing::warn!(
+                    phrase = %phrases[i],
+                    food_id = food.id,
+                    error = ?e,
+                    "resolver alias for new food rejected by identity guard; leaving unresolved"
+                );
+                continue;
+            }
             tracing::info!(
                 canonical = %food.canonical_name,
                 category_id = ?category_id,
@@ -629,40 +839,24 @@ async fn apply_llm_results(
                 needs_review: result.needs_review,
             });
         } else {
+            // LLM returned no identity (needs_review or empty). Leave the
+            // outcome unset: the local reconciliation pass may still find a
+            // canonical Food created by a later batch; otherwise this
+            // becomes unresolved in the final mapping.
             tracing::info!(phrase = %phrases[i], "ingredient_resolution_needs_review");
-            outcomes[i] = Some(ResolutionOutcome::unresolved());
         }
     }
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
+    //! Shared LLM mocks for resolver and semantic-fixture tests.
+
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    async fn test_pool() -> SqlitePool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("in-memory pool");
-        crate::db::MIGRATOR.run(&pool).await.expect("migrations");
-        pool
-    }
-
-    async fn category_id(pool: &SqlitePool, name: &str) -> i64 {
-        sqlx::query_as::<_, (i64,)>("SELECT id FROM shopping_categories WHERE name = ?")
-            .bind(name)
-            .fetch_one(pool)
-            .await
-            .expect("category exists")
-            .0
-    }
-
-    fn phrases(list: &[&str]) -> Vec<String> {
-        list.iter().map(std::string::ToString::to_string).collect()
-    }
-
-    enum MockPlan {
+    pub enum MockPlan {
         Fail,
         MapFirstCandidate,
         NewFood {
@@ -671,20 +865,20 @@ mod tests {
         },
     }
 
-    struct MockFoodLlm {
+    pub struct MockFoodLlm {
         plan: MockPlan,
         calls: AtomicUsize,
     }
 
     impl MockFoodLlm {
-        fn new(plan: MockPlan) -> Self {
+        pub fn new(plan: MockPlan) -> Self {
             Self {
                 plan,
                 calls: AtomicUsize::new(0),
             }
         }
 
-        fn calls(&self) -> usize {
+        pub fn calls(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
         }
     }
@@ -735,6 +929,33 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{MockFoodLlm, MockPlan};
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool");
+        crate::db::MIGRATOR.run(&pool).await.expect("migrations");
+        pool
+    }
+
+    async fn category_id(pool: &SqlitePool, name: &str) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT id FROM shopping_categories WHERE name = ?")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .expect("category exists")
+            .0
+    }
+
+    fn phrases(list: &[&str]) -> Vec<String> {
+        list.iter().map(std::string::ToString::to_string).collect()
+    }
 
     /* ---------- deterministic strategies skip the LLM ---------- */
 
@@ -777,11 +998,12 @@ mod tests {
         assert_eq!(out[0].resolution_source, Some("food"));
         assert_eq!(llm.calls(), 0);
 
-        // Second run hits the alias cached by the first.
+        // Second run hits the canonical name again (canonical outranks the
+        // cached alias); still zero LLM calls.
         let out = resolve_batch(&pool, &llm, &phrases(&["Onion"]))
             .await
             .expect("resolve again");
-        assert_eq!(out[0].resolution_source, Some("alias"));
+        assert_eq!(out[0].resolution_source, Some("food"));
         assert_eq!(llm.calls(), 0);
     }
 
@@ -839,7 +1061,9 @@ mod tests {
         }
 
         // Fuzzy retrieval only generates candidates; it never merges.
-        let snapshot = catalog::load_catalog_snapshot(&pool).await.expect("snapshot");
+        let snapshot = catalog::load_catalog_snapshot(&pool)
+            .await
+            .expect("snapshot");
         let candidates = candidate_matches(&snapshot, "large potatoes", CANDIDATE_LIMIT);
         assert!(
             candidates.iter().any(|c| c.name == "potato"),
@@ -898,19 +1122,19 @@ mod tests {
         assert_eq!(food.category_id, Some(vegetables));
         assert_eq!(food.category_source, "llm");
 
-        // Second resolve: alias hit, no new food, no LLM call.
+        // Second resolve: canonical-name hit (canonical outranks aliases);
+        // no new food, no LLM call.
         let out = resolve_batch(&pool, &llm, &phrases(&["gochujang"]))
             .await
             .expect("resolve again");
         assert_eq!(llm.calls(), 1);
         assert_eq!(out[0].food_id, Some(food_id));
-        assert_eq!(out[0].resolution_source, Some("alias"));
+        assert_eq!(out[0].resolution_source, Some("food"));
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM foods")
-                .fetch_one(&pool)
-                .await
-                .expect("count foods");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM foods")
+            .fetch_one(&pool)
+            .await
+            .expect("count foods");
         assert_eq!(count, 1);
     }
 
@@ -934,11 +1158,10 @@ mod tests {
         assert!(out[0].needs_review);
         assert_eq!(out[0].resolution_source, Some("unresolved"));
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM foods")
-                .fetch_one(&pool)
-                .await
-                .expect("count foods");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM foods")
+            .fetch_one(&pool)
+            .await
+            .expect("count foods");
         assert_eq!(count, 1, "no junk food created from the failed phrase");
     }
 
@@ -983,10 +1206,7 @@ mod tests {
             .await
             .expect("resolve");
         assert_eq!(llm.calls(), 0);
-        assert!(
-            out.iter()
-                .all(|o| o.food_id.is_none() && o.needs_review)
-        );
+        assert!(out.iter().all(|o| o.food_id.is_none() && o.needs_review));
     }
 
     /* ---------- LLM response validation (§9F) ---------- */
@@ -994,6 +1214,7 @@ mod tests {
     fn sample_request() -> LlmResolveRequest {
         LlmResolveRequest {
             inputs: vec![LlmInput {
+                key: "wi0000-1a2b3c4d".to_string(),
                 phrase: "large potatoes".to_string(),
                 candidates: vec![LlmCandidate {
                     food_id: 42,

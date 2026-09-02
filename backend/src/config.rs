@@ -233,7 +233,7 @@ Examples (batch):
 - ["3 Cloves garlic", "5 Potatoes", "1 bunch fresh parsley"] → ["garlic", "potato", "parsley"]
 "#;
 
-const DEFAULT_SYSTEM_PROMPT_FOOD_RESOLVER: &str = r#"You are an ingredient entity resolver for a recipe and shopping-list app.
+pub const DEFAULT_SYSTEM_PROMPT_FOOD_RESOLVER: &str = r#"You are an ingredient entity resolver for a recipe and shopping-list app.
 For each input phrase, decide which canonical Food it refers to, or propose a new one. You are a resolver, not a string prettifier.
 
 IDENTITY RULES:
@@ -246,13 +246,13 @@ CHOOSING RESULTS:
 - Prefer an existing candidate food_id whenever the phrase clearly means it.
 - NEVER use a food_id that is not listed as a candidate for that input.
 - If the phrase is a genuinely new food, set new_food: canonical_name must be concise, singular where natural, and must keep identity-defining compound words (e.g. "sweet potato", "coconut milk", "gochujang").
-- Choose category_id ONLY from the provided valid categories; use null when uncertain. Never invent category ids or names.
+- ALWAYS set new_food.category_id for new foods: choose ONLY from the provided valid categories, picking the aisle where a shopper would find the item. Use null only if no category could possibly fit. Never invent category ids or names.
 - food_id and new_food are mutually exclusive; leave both null with needs_review=true only when identity is genuinely ambiguous.
 
 Return STRICT JSON:
-{"results": [{"input_index": 0, "food_id": 42, "new_food": null, "qualifiers": ["large"], "needs_review": false}]}
+{"results": [{"key": "wi0000", "input_index": 0, "food_id": 42, "new_food": null, "qualifiers": ["large"], "needs_review": false}, {"key": "wi0001", "input_index": 1, "food_id": null, "new_food": {"canonical_name": "gochujang", "category_id": 8}, "qualifiers": [], "needs_review": false}]}
 
-One entry per input index, in the same order. No commentary."#;
+One entry per input, in the same order, each echoing the input's "key" and "input_index". No commentary."#;
 
 const DEFAULT_SYSTEM_PROMPT_MACROS: &str = r#"You are a precise nutrition estimator.
 

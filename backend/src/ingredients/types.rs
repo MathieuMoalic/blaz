@@ -80,6 +80,9 @@ pub struct LlmCandidate {
 /// One unresolved input phrase plus its candidate Foods.
 #[derive(Debug, Clone)]
 pub struct LlmInput {
+    /// Stable opaque work-item key. The LLM must echo it back so a batch
+    /// response can never be associated with the wrong input item.
+    pub key: String,
     pub phrase: String,
     pub candidates: Vec<LlmCandidate>,
 }
