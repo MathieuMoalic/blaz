@@ -71,13 +71,11 @@ async fn setup_database(pool: &SqlitePool) {
     .unwrap();
 
     // Recipe: one unresolved raw line + one legacy structured line.
-    sqlx::query(
-        "INSERT INTO recipes (title, ingredients, instructions) VALUES ('Mash', ?, '[]')",
-    )
-    .bind(r#"[{"name":"2 potatoes","raw":true},{"quantity":1.0,"unit":"kg","name":"onion"}]"#)
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO recipes (title, ingredients, instructions) VALUES ('Mash', ?, '[]')")
+        .bind(r#"[{"name":"2 potatoes","raw":true},{"quantity":1.0,"unit":"kg","name":"onion"}]"#)
+        .execute(pool)
+        .await
+        .unwrap();
 
     // Legacy shopping row without food identity.
     sqlx::query(
@@ -172,7 +170,10 @@ fn prepare_is_conservative_for_structured_ingredients() {
     assert_eq!(ing.name, "olive oil");
     assert_eq!(ing.quantity, Some(1.0));
     assert_eq!(ing.unit.as_deref(), Some("tbsp"));
-    assert!(ing.raw_text.is_none(), "structured rows aren't given raw_text");
+    assert!(
+        ing.raw_text.is_none(),
+        "structured rows aren't given raw_text"
+    );
 
     // Plain legacy names with no embedded structure are left intact.
     let mut ing = ingredient("salt");
@@ -218,7 +219,10 @@ fn backfill_is_idempotent_by_default() {
     assert_eq!(second.shopping_updated, 0);
     assert_eq!(second.foods_created, 0);
     assert_eq!(second.aliases_created, 0, "no new aliases");
-    assert!(second.skipped_attempted >= 1, "unresolved entries are skipped");
+    assert!(
+        second.skipped_attempted >= 1,
+        "unresolved entries are skipped"
+    );
 
     let food_ids: Vec<Option<i64>> = runtime.block_on(async {
         sqlx::query_scalar("SELECT food_id FROM shopping_items")
@@ -246,7 +250,10 @@ fn backfill_is_idempotent_by_default() {
     assert!(ings[1].ingredient_id.is_some());
 
     let food_count: i64 = runtime.block_on(async {
-        sqlx::query_scalar("SELECT COUNT(*) FROM foods").fetch_one(&pool).await.unwrap()
+        sqlx::query_scalar("SELECT COUNT(*) FROM foods")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
     });
     let alias_count: i64 = runtime.block_on(async {
         sqlx::query_scalar("SELECT COUNT(*) FROM food_aliases")

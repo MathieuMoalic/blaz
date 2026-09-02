@@ -29,8 +29,7 @@ use crate::routes::settings::LlmSettings;
 use crate::units::normalize_name;
 
 /// Price annotations like "($0.24)" must not leak into Food identity.
-static PRICE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s*\(\$[^)]*\)").unwrap());
+static PRICE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\(\$[^)]*\)").unwrap());
 
 /// Counters for the final summary.
 #[derive(Default, Debug)]
@@ -49,11 +48,10 @@ pub struct BackfillStats {
 }
 
 /// Load every recipe's ingredient list for backfilling.
-async fn load_recipe_ingredients(
-    pool: &SqlitePool,
-) -> anyhow::Result<Vec<(i64, Vec<Ingredient>)>> {
-    let rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, ingredients FROM recipes").fetch_all(pool).await?;
+async fn load_recipe_ingredients(pool: &SqlitePool) -> anyhow::Result<Vec<(i64, Vec<Ingredient>)>> {
+    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, ingredients FROM recipes")
+        .fetch_all(pool)
+        .await?;
     let mut out = Vec::with_capacity(rows.len());
     for (id, json) in rows {
         let ings: Vec<Ingredient> = serde_json::from_str(&json).unwrap_or_default();
@@ -110,21 +108,25 @@ async fn apply_to_shopping(
         let outcome = outcomes_map.get(&normalize_name(phrase));
         match outcome.and_then(|o| o.food_id) {
             Some(food_id) => {
-                sqlx::query("UPDATE shopping_items SET food_id = ?, resolution_source = ? WHERE id = ?")
-                    .bind(food_id)
-                    .bind(outcome.and_then(|o| o.resolution_source))
-                    .bind(item_id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE shopping_items SET food_id = ?, resolution_source = ? WHERE id = ?",
+                )
+                .bind(food_id)
+                .bind(outcome.and_then(|o| o.resolution_source))
+                .bind(item_id)
+                .execute(pool)
+                .await?;
                 updated += 1;
             }
             None => {
                 // LLM failure / genuinely unknown: mark attempted so future
                 // default runs stay LLM-free.
-                sqlx::query("UPDATE shopping_items SET resolution_source = 'unresolved' WHERE id = ?")
-                    .bind(item_id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE shopping_items SET resolution_source = 'unresolved' WHERE id = ?",
+                )
+                .bind(item_id)
+                .execute(pool)
+                .await?;
             }
         }
     }
@@ -195,9 +197,10 @@ pub async fn run(
     }
 
     // Resolve each distinct name once.
-    let settings = LlmSettings::load(pool)
-        .await
-        .with_env_overrides(config.llm_model.as_deref(), config.llm_fallback_model.as_deref());
+    let settings = LlmSettings::load(pool).await.with_env_overrides(
+        config.llm_model.as_deref(),
+        config.llm_fallback_model.as_deref(),
+    );
     let llm = OpenRouterFoodLlm::new(
         crate::llm::LlmClient::new(
             config.llm_api_url.clone(),

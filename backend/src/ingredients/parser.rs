@@ -169,7 +169,11 @@ fn parse_glued(original: &str, tokens: &[&str]) -> Option<ParsedIngredient> {
         idx += 1;
     }
     if idx >= tokens.len() {
-        return Some(plain_item(original, tokens, "missing name after glued qty+unit"));
+        return Some(plain_item(
+            original,
+            tokens,
+            "missing name after glued qty+unit",
+        ));
     }
     let (phrase, prep) = split_prep(&tokens[idx..].join(" "));
     let parsed = ParsedIngredient {
@@ -210,9 +214,7 @@ pub fn parse_ingredient_line(raw: &str) -> Option<ParsedIngredient> {
     }
 
     // Drop a leading indefinite article: "a pinch of salt" → "pinch of salt".
-    if tokens.len() > 1
-        && matches!(tokens[0].to_ascii_lowercase().as_str(), "a" | "an")
-    {
+    if tokens.len() > 1 && matches!(tokens[0].to_ascii_lowercase().as_str(), "a" | "an") {
         tokens.remove(0);
     }
 
@@ -475,7 +477,11 @@ mod tests {
 
     #[test]
     fn test_fraction_teaspoon_variants() {
-        for line in ["1/2 teaspoon cumin", "½ teaspoon cumin", "0.5 teaspoon cumin"] {
+        for line in [
+            "1/2 teaspoon cumin",
+            "½ teaspoon cumin",
+            "0.5 teaspoon cumin",
+        ] {
             let p = parse(line);
             assert_eq!(p.quantity, Some(0.5), "line: {line}");
             assert_eq!(p.unit, Some("tsp"), "line: {line}");
@@ -646,9 +652,6 @@ mod tests {
         assert_eq!(split_prep("salt"), ("salt".to_string(), None));
         assert_eq!(split_prep(""), (String::new(), None));
         // Empty head keeps the original wording rather than inventing a prep.
-        assert_eq!(
-            split_prep(", peeled"),
-            (", peeled".to_string(), None)
-        );
+        assert_eq!(split_prep(", peeled"), (", peeled".to_string(), None));
     }
 }

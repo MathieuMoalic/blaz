@@ -118,10 +118,11 @@ pub async fn update_food(
     }
 
     if let Some(category_id) = req.category_id {
-        let known: Option<i64> = sqlx::query_scalar("SELECT id FROM shopping_categories WHERE id = ?")
-            .bind(category_id)
-            .fetch_optional(&state.pool)
-            .await?;
+        let known: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM shopping_categories WHERE id = ?")
+                .bind(category_id)
+                .fetch_optional(&state.pool)
+                .await?;
         if known.is_none() {
             return Err((StatusCode::BAD_REQUEST, "unknown category".into()).into());
         }

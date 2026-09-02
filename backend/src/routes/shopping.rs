@@ -1,7 +1,7 @@
 use crate::categories::validate_category;
+use crate::error::AppError;
 use crate::ingredients::catalog;
 use crate::ingredients::resolver::{OpenRouterFoodLlm, resolve_batch};
-use crate::error::AppError;
 use axum::http::StatusCode;
 use axum::{
     Json,
@@ -250,24 +250,26 @@ async fn attach_sources(
         return Ok(());
     }
     let ids: Vec<i64> = items.iter().map(|i| i.id).collect();
-    let mut qb =
-        QueryBuilder::<Sqlite>::new("SELECT s.shopping_item_id, s.source_type, s.recipe_id, r.title, \
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        "SELECT s.shopping_item_id, s.source_type, s.recipe_id, r.title, \
                                      s.recipe_ingredient_id, s.quantity, s.unit \
                                      FROM shopping_item_sources s \
                                      LEFT JOIN recipes r ON r.id = s.recipe_id \
-                                     WHERE s.shopping_item_id IN (");
+                                     WHERE s.shopping_item_id IN (",
+    );
     let mut separated = qb.separated(", ");
     for id in &ids {
         separated.push_bind(*id);
     }
     separated.push_unseparated(")");
 
-    let rows: Vec<SourceRow> =
-        qb.build_query_as().fetch_all(&state.pool).await?;
+    let rows: Vec<SourceRow> = qb.build_query_as().fetch_all(&state.pool).await?;
 
     let mut grouped: std::collections::HashMap<i64, Vec<ShoppingSource>> =
         std::collections::HashMap::new();
-    for (item_id, source_type, recipe_id, recipe_title, recipe_ingredient_id, quantity, unit) in rows {
+    for (item_id, source_type, recipe_id, recipe_title, recipe_ingredient_id, quantity, unit) in
+        rows
+    {
         grouped.entry(item_id).or_default().push(ShoppingSource {
             source_type,
             recipe_id,
@@ -556,8 +558,7 @@ async fn resolve_patch_values(
             .await
             .map_err(internal_err)?
     } else {
-        let (storage_unit, storage_qty) =
-            to_storage_qty_unit(new_unit_raw.as_deref(), new_qty);
+        let (storage_unit, storage_qty) = to_storage_qty_unit(new_unit_raw.as_deref(), new_qty);
         let storage_unit = storage_unit.map(str::to_string);
         let key = match current.food_id {
             Some(fid) => make_food_key(fid, storage_unit.as_deref()),
@@ -606,7 +607,18 @@ async fn resolve_patch_conflict(
         conflict_notes,
         conflict_recipe_ids,
         conflict_food_id,
-    )) = sqlx::query_as::<_, (i64, Option<f64>, i64, Option<String>, String, String, Option<i64>)>(
+    )) = sqlx::query_as::<
+        _,
+        (
+            i64,
+            Option<f64>,
+            i64,
+            Option<String>,
+            String,
+            String,
+            Option<i64>,
+        ),
+    >(
         r"
         SELECT id,
                quantity,
@@ -718,11 +730,12 @@ pub async fn remove_recipe_sources(
     State(state): State<AppState>,
     Json(req): Json<RemoveSourcesReq>,
 ) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    let affected_items: Vec<i64> =
-        sqlx::query_scalar("SELECT DISTINCT shopping_item_id FROM shopping_item_sources WHERE recipe_id = ?")
-            .bind(req.recipe_id)
-            .fetch_all(&state.pool)
-            .await?;
+    let affected_items: Vec<i64> = sqlx::query_scalar(
+        "SELECT DISTINCT shopping_item_id FROM shopping_item_sources WHERE recipe_id = ?",
+    )
+    .bind(req.recipe_id)
+    .fetch_all(&state.pool)
+    .await?;
 
     sqlx::query("DELETE FROM shopping_item_sources WHERE recipe_id = ?")
         .bind(req.recipe_id)
@@ -765,9 +778,7 @@ pub async fn remove_recipe_sources(
 }
 
 pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<ShoppingItemView>>> {
-    let sql = format!(
-        "SELECT {VIEW_COLS} FROM shopping_items_view WHERE done = 0 ORDER BY id"
-    );
+    let sql = format!("SELECT {VIEW_COLS} FROM shopping_items_view WHERE done = 0 ORDER BY id");
     let rows: Vec<ViewRow> = sqlx::query_as(&sql).fetch_all(&state.pool).await?;
     let mut rows: Vec<ShoppingItemView> = rows.into_iter().map(ViewRow::into_view).collect();
     attach_sources(&state, &mut rows).await?;
@@ -835,15 +846,9 @@ pub async fn create(
         {
             return Err((StatusCode::BAD_REQUEST, "unknown food".into()).into());
         }
-        shopping_line_for_food(
-            &state,
-            Some(food_id),
-            "",
-            new.unit.as_deref(),
-            new.quantity,
-        )
-        .await
-        .map_err(internal_err)?
+        shopping_line_for_food(&state, Some(food_id), "", new.unit.as_deref(), new.quantity)
+            .await
+            .map_err(internal_err)?
     } else {
         let parsed = parse_item_line(text).ok_or(StatusCode::BAD_REQUEST)?;
         resolve_shopping_line(
@@ -1097,8 +1102,7 @@ async fn apply_structured_update(
             .await
             .map_err(internal_err)?
     } else {
-        let (storage_unit, storage_qty) =
-            to_storage_qty_unit(new_unit_raw.as_deref(), new_qty);
+        let (storage_unit, storage_qty) = to_storage_qty_unit(new_unit_raw.as_deref(), new_qty);
         let storage_unit = storage_unit.map(str::to_string);
         let key = match current.food_id {
             Some(fid) => make_food_key(fid, storage_unit.as_deref()),
@@ -1258,12 +1262,14 @@ pub async fn merge_items(
     // Resolve all items in one batch (at most one LLM call per request).
     let llm = OpenRouterFoodLlm::from_state(&state).await;
     let names: Vec<String> = req.items.iter().map(|it| it.name.clone()).collect();
-    let outcomes = resolve_batch(&state.pool, &llm, &names).await.unwrap_or_else(|e| {
-        tracing::warn!(?e, "shopping merge resolution failed; using legacy keys");
-        std::iter::repeat_with(crate::ingredients::types::ResolutionOutcome::unresolved)
-            .take(names.len())
-            .collect()
-    });
+    let outcomes = resolve_batch(&state.pool, &llm, &names)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(?e, "shopping merge resolution failed; using legacy keys");
+            std::iter::repeat_with(crate::ingredients::types::ResolutionOutcome::unresolved)
+                .take(names.len())
+                .collect()
+        });
 
     for (it, outcome) in req.items.iter().zip(&outcomes) {
         let line = shopping_line_for_food(
@@ -1334,11 +1340,10 @@ pub async fn merge_items(
 
         // Record the exact contribution (recipe provenance).
         if let Some(recipe_id) = req.recipe_id {
-            let (item_id,): (i64,) =
-                sqlx::query_as("SELECT id FROM shopping_items WHERE key = ?")
-                    .bind(&line.key)
-                    .fetch_one(&state.pool)
-                    .await?;
+            let (item_id,): (i64,) = sqlx::query_as("SELECT id FROM shopping_items WHERE key = ?")
+                .bind(&line.key)
+                .fetch_one(&state.pool)
+                .await?;
             record_source(
                 &state,
                 item_id,
@@ -1395,5 +1400,4 @@ mod tests {
         let key2 = make_key(&normalize_name("flour"), None);
         assert_eq!(key1, key2);
     }
-
 }

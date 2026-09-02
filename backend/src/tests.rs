@@ -732,7 +732,10 @@ mod integration {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let updated = json_body(resp.into_body()).await;
-        assert_eq!(updated["ingredients"][0]["food_id"], serde_json::Value::Null);
+        assert_eq!(
+            updated["ingredients"][0]["food_id"],
+            serde_json::Value::Null
+        );
         assert_eq!(updated["ingredients"][0]["needs_review"], true);
     }
 
@@ -895,10 +898,7 @@ mod integration {
             "display formats >=1000 g back to kg"
         );
 
-        let counted = arr
-            .iter()
-            .find(|r| r["unit"].is_null())
-            .expect("count row");
+        let counted = arr.iter().find(|r| r["unit"].is_null()).expect("count row");
         assert_eq!(counted["quantity"], 3.0);
 
         // A different food never merges with potato.
@@ -1075,14 +1075,17 @@ mod integration {
         assert_eq!(patched["category_id"], pantry);
         assert_eq!(patched["category_is_override"], true);
 
-        let food: (Option<i64>, String) = sqlx::query_as(
-            "SELECT category_id, category_source FROM foods WHERE id = ?",
-        )
-        .bind(potato)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(food.0, Some(vegetables), "one-time override leaves Food alone");
+        let food: (Option<i64>, String) =
+            sqlx::query_as("SELECT category_id, category_source FROM foods WHERE id = ?")
+                .bind(potato)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            food.0,
+            Some(vegetables),
+            "one-time override leaves Food alone"
+        );
         assert_eq!(food.1, "unknown", "Food category untouched");
 
         // "Always use this category" persists as a user choice on the Food.
@@ -1098,13 +1101,12 @@ mod integration {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let food: (Option<i64>, String) = sqlx::query_as(
-            "SELECT category_id, category_source FROM foods WHERE id = ?",
-        )
-        .bind(potato)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let food: (Option<i64>, String) =
+            sqlx::query_as("SELECT category_id, category_source FROM foods WHERE id = ?")
+                .bind(potato)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(food.0, Some(pantry));
         assert_eq!(food.1, "user");
 
@@ -1215,11 +1217,7 @@ mod integration {
         assert_eq!(arr[0]["quantity"], 3.0);
         let sources = arr[0]["sources"].as_array().unwrap();
         assert_eq!(sources.len(), 2);
-        assert!(
-            sources
-                .iter()
-                .all(|s| s["recipe_id"].as_i64() != Some(1))
-        );
+        assert!(sources.iter().all(|s| s["recipe_id"].as_i64() != Some(1)));
     }
 
     #[tokio::test]
@@ -1264,4 +1262,3 @@ mod integration {
 
     // ── canonical ingredient resolution ──────────────────────────────────────
 }
-

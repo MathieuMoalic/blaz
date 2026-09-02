@@ -118,11 +118,7 @@ impl LlmSettings {
     /// ID into the resolver) lets deployments pick a working model without
     /// a code change.
     #[must_use]
-    pub fn with_env_overrides(
-        mut self,
-        model: Option<&str>,
-        fallback_model: Option<&str>,
-    ) -> Self {
+    pub fn with_env_overrides(mut self, model: Option<&str>, fallback_model: Option<&str>) -> Self {
         if let Some(m) = model.filter(|s| !s.is_empty()) {
             self.model = m.to_string();
         }

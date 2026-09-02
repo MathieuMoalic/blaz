@@ -54,12 +54,8 @@ pub fn to_storage_qty_unit(
     qty: Option<f64>,
 ) -> (Option<&'static str>, Option<f64>) {
     match unit.map(str::to_ascii_lowercase) {
-        Some(u) if canon_unit_str(&u) == Some("kg") => {
-            (Some("g"), qty.map(|q| q * 1000.0))
-        }
-        Some(u) if canon_unit_str(&u) == Some("L") => {
-            (Some("ml"), qty.map(|q| q * 1000.0))
-        }
+        Some(u) if canon_unit_str(&u) == Some("kg") => (Some("g"), qty.map(|q| q * 1000.0)),
+        Some(u) if canon_unit_str(&u) == Some("L") => (Some("ml"), qty.map(|q| q * 1000.0)),
         Some(u) => (canon_unit_str(&u), qty),
         None => (None, qty),
     }
@@ -136,7 +132,6 @@ mod tests {
         assert_eq!(canon_unit_str(""), None);
     }
 
-
     #[test]
     fn test_to_storage_qty_unit() {
         // Mass and volume collapse to g/ml for merging.
@@ -144,10 +139,7 @@ mod tests {
             to_storage_qty_unit(Some("kg"), Some(1.5)),
             (Some("g"), Some(1500.0))
         );
-        assert_eq!(
-            to_storage_qty_unit(Some("kg"), None),
-            (Some("g"), None)
-        );
+        assert_eq!(to_storage_qty_unit(Some("kg"), None), (Some("g"), None));
         assert_eq!(
             to_storage_qty_unit(Some("L"), Some(2.0)),
             (Some("ml"), Some(2000.0))

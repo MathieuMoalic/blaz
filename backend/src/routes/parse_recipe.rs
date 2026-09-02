@@ -322,17 +322,18 @@ async fn stage1_extract(
 /// imperial/container wording ("2 cups flour", "1 can (400g) chickpeas")
 /// needs the extraction prompt.
 const IMPERIAL_UNIT_WORDS: &[&str] = &[
-    "cup", "cups", "oz", "ounce", "ounces", "fl", "fluid", "lb", "lbs", "pound", "pounds",
-    "clove", "cloves", "can", "cans", "tin", "tins", "bunch", "bunches", "head", "heads",
-    "stick", "sticks", "package", "packages", "pkg", "packet", "envelope", "box", "boxes",
-    "bag", "pinch", "splash", "sprig", "sprigs", "slice", "slices", "jar", "bottle",
-    "handful", "knob",
+    "cup", "cups", "oz", "ounce", "ounces", "fl", "fluid", "lb", "lbs", "pound", "pounds", "clove",
+    "cloves", "can", "cans", "tin", "tins", "bunch", "bunches", "head", "heads", "stick", "sticks",
+    "package", "packages", "pkg", "packet", "envelope", "box", "boxes", "bag", "pinch", "splash",
+    "sprig", "sprigs", "slice", "slices", "jar", "bottle", "handful", "knob",
 ];
 
 fn needs_llm_structuring(parsed: &ParsedIngredient) -> bool {
     // Imperial / legacy units the parser now recognises still need LLM
     // conversion to metric at import time.
-    let unit_is_imperial = parsed.unit.is_some_and(|u| matches!(u, "cup" | "oz" | "lb"));
+    let unit_is_imperial = parsed
+        .unit
+        .is_some_and(|u| matches!(u, "cup" | "oz" | "lb"));
     unit_is_imperial
         || (parsed.unit.is_none()
             && parsed.quantity.is_some()
@@ -389,41 +390,24 @@ pub async fn structure_ingredients(
     }
 
     if !needs_llm.is_empty() {
-        let llm_lines: Vec<String> = needs_llm
-            .iter()
-            .map(|(i, _)| lines[*i].clone())
-            .collect();
-        let mut structured = match stage2_structure_ingredients(
-            llm,
-            http,
-            state,
-            llm_settings,
-            &llm_lines,
-        )
-        .await
-        {
-            Ok(ings) => ings,
-            Err(e) => {
-                tracing::warn!(?e, "LLM structuring failed; using deterministic parse");
-                Vec::new()
-            }
-        };
-        if !structured.is_empty() {
-            structured = match stage3_convert_to_metric(
-                llm,
-                http,
-                state,
-                llm_settings,
-                &structured,
-            )
-            .await
-            {
-                Ok(converted) => converted,
+        let llm_lines: Vec<String> = needs_llm.iter().map(|(i, _)| lines[*i].clone()).collect();
+        let mut structured =
+            match stage2_structure_ingredients(llm, http, state, llm_settings, &llm_lines).await {
+                Ok(ings) => ings,
                 Err(e) => {
-                    tracing::warn!(?e, "metric conversion failed; keeping stage 2 output");
-                    structured
+                    tracing::warn!(?e, "LLM structuring failed; using deterministic parse");
+                    Vec::new()
                 }
             };
+        if !structured.is_empty() {
+            structured =
+                match stage3_convert_to_metric(llm, http, state, llm_settings, &structured).await {
+                    Ok(converted) => converted,
+                    Err(e) => {
+                        tracing::warn!(?e, "metric conversion failed; keeping stage 2 output");
+                        structured
+                    }
+                };
         }
 
         if structured.len() == needs_llm.len() {
