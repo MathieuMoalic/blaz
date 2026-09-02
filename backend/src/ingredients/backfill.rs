@@ -161,11 +161,21 @@ pub async fn run(
     .await?;
 
     // Collect distinct normalized phrases across all sources that need work.
+    // The prepared phrase of every unattempted ingredient is remembered so
+    // the outcome lookup in `apply_to_recipes` sees exactly the phrase the
+    // resolver answered — `prepare_ingredient_for_resolution` mutates the
+    // ingredient (structuring raw lines), so re-preparing later could yield
+    // a *different* phrase and silently strand the ingredient unresolved.
     let mut phrases: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut shopping_attempted: Vec<(i64, String)> = Vec::new();
+    let mut prepared: HashMap<(i64, usize), String> = HashMap::new();
 
-    for (_, ings) in &mut recipes {
-        for ing in ings.iter_mut().filter(|i| i.section.is_none()) {
+    for (recipe_id, ings) in &mut recipes {
+        for (index, ing) in ings
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, i)| i.section.is_none())
+        {
             if is_attempted(ing, retry_unresolved) {
                 stats.skipped_attempted += 1;
                 continue;
@@ -173,6 +183,7 @@ pub async fn run(
             let phrase = prepare_ingredient_for_resolution(ing);
             if !phrase.is_empty() {
                 phrases.insert(normalize_name(&phrase));
+                prepared.insert((*recipe_id, index), phrase);
             }
         }
     }
@@ -218,7 +229,7 @@ pub async fn run(
 
     // Apply: recipe ingredient JSON.
     let ingredients_updated =
-        apply_to_recipes(pool, recipes, &outcomes_map, retry_unresolved).await?;
+        apply_to_recipes(pool, recipes, &prepared, &outcomes_map, retry_unresolved).await?;
     stats.ingredients_updated += ingredients_updated;
 
     // Apply: legacy shopping rows.
@@ -247,24 +258,32 @@ pub async fn run(
 }
 
 /// Write resolved identity back into recipe ingredient JSON.
+///
+/// Uses the phrase prepared during the collection pass (`prepared`) so the
+/// outcome lookup matches exactly what the resolver answered; ingredients
+/// are never re-parsed here (a second parse could produce a different
+/// phrase and strand the ingredient unresolved-but-unattempted).
 async fn apply_to_recipes(
     pool: &SqlitePool,
     mut recipes: Vec<(i64, Vec<Ingredient>)>,
+    prepared: &HashMap<(i64, usize), String>,
     outcomes_map: &HashMap<String, ResolutionOutcome>,
     retry_unresolved: bool,
 ) -> anyhow::Result<u64> {
     let mut updated = 0u64;
     for (recipe_id, ings) in &mut recipes {
         let mut changed = false;
-        for ing in ings.iter_mut() {
+        for (index, ing) in ings.iter_mut().enumerate() {
             if ing.section.is_some() {
                 continue;
             }
             if is_attempted(ing, retry_unresolved) {
                 continue;
             }
-            let phrase = prepare_ingredient_for_resolution(ing);
-            let Some(outcome) = outcomes_map.get(&normalize_name(&phrase)) else {
+            let Some(phrase) = prepared.get(&(*recipe_id, index)) else {
+                continue;
+            };
+            let Some(outcome) = outcomes_map.get(&normalize_name(phrase)) else {
                 continue;
             };
             updated += 1;

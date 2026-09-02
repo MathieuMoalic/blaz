@@ -265,6 +265,59 @@ fn backfill_is_idempotent_by_default() {
     assert_eq!(alias_count, 1, "the seeded alias is reused, no new ones");
 }
 
+/// Regression (v2 backfill non-idempotency): an ingredient whose
+/// *re-parse* yields a different phrase than the first parse ("season with
+/// lime and salt to taste" → "season with lime and salt") must still be
+/// persisted as attempted (needs_review) by the first run, using the
+/// phrase the resolver actually answered. Previously the outcome lookup
+/// missed after a second parse, the intermediate state was written by a
+/// sibling-ingredient update, and run 2 re-processed the ingredient.
+#[test]
+fn reparsed_ingredient_is_persisted_attempted_after_first_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("test.sqlite").to_string_lossy().to_string();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let pool = crate::db::make_pool(db_path.clone()).await.unwrap();
+        // The raw line parses to phrase "season with lime and salt to
+        // taste" (prep: "a drizzle ..."), whose own re-parse then strips
+        // "to taste" into prep, changing the phrase.
+        sqlx::query("INSERT INTO recipes (title, ingredients, instructions) VALUES ('R', ?, '[]')")
+            .bind(
+                r#"[{"name":"season with lime and salt to taste, a drizzle of olive oil","raw":true}]"#,
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let config = test_config(db_path.clone());
+        let first = backfill::run(&pool, &config, false).await.unwrap();
+        let second = backfill::run(&pool, &config, false).await.unwrap();
+
+        // First run must have persisted the attempt (LLM unavailable →
+        // needs_review), even though the prepared phrase changed on the
+        // second parse inside the run.
+        assert_eq!(first.ingredients_updated, 1, "attempt must be persisted");
+        let (nr, rs): (i64, Option<String>) = sqlx::query_as(
+            "SELECT json_extract(value,'$.needs_review'), \
+                    json_extract(value,'$.resolution_source') \
+               FROM recipes, json_each(recipes.ingredients)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(nr, 1, "needs_review persisted by the first run");
+        assert_eq!(rs.as_deref(), Some("unresolved"));
+
+        // Second run: the ingredient is attempted → nothing to do.
+        assert_eq!(second.ingredients_updated, 0);
+        assert_eq!(second.foods_created, 0);
+        assert_eq!(second.aliases_created, 0);
+        assert_eq!(second.skipped_attempted, 1);
+    });
+}
+
 #[test]
 fn retry_unresolved_reprocesses_attempted_entries() {
     let tmp = tempfile::tempdir().unwrap();
