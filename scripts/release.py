@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 from pathlib import Path
 
 
@@ -128,9 +127,8 @@ def update_flake_versions(version: str) -> None:
 
 def update_flake_prebuilt(version: str, nix_hash: str) -> None:
     tag = f"v{version}"
-    archive_name = f"{APP}-{tag}-{TARGET}.tar.gz"
     binary_name = f"{APP}-{tag}-{TARGET}"
-    url = f"https://github.com/{REPO}/releases/download/{tag}/{archive_name}"
+    url = f"https://github.com/{REPO}/releases/download/{tag}/{binary_name}"
 
     text = FLAKE.read_text()
 
@@ -162,11 +160,11 @@ def update_flake_prebuilt(version: str, nix_hash: str) -> None:
         "flake.nix prebuilt hash",
     )
 
-    text = replace_once(
+    text = re.sub(
+        r"install -Dm755 (?:blaz-v[0-9]+\.[0-9]+\.[0-9]+-x86_64-linux|\$src) \$out/bin/blaz",
+        "install -Dm755 $src $out/bin/blaz",
         text,
-        r"install -Dm755 blaz-v[0-9]+\.[0-9]+\.[0-9]+-x86_64-linux \$out/bin/blaz",
-        f"install -Dm755 {binary_name} $out/bin/blaz",
-        "flake.nix prebuilt install path",
+        count=1,
     )
 
     FLAKE.write_text(text)
@@ -188,26 +186,22 @@ def build_flutter_web() -> None:
     shutil.copytree(flutter_build_web, web_build)
 
 
-def build_backend_archive(version: str) -> Path:
+def build_backend(version: str) -> Path:
     tag = f"v{version}"
-    binary_name = f"{APP}-{tag}-{TARGET}"
-    archive_name = f"{binary_name}.tar.gz"
-    binary_path = RELEASE_DIR / binary_name
-    archive_path = RELEASE_DIR / archive_name
-    out_link = ROOT / ".release-backend"
+    artifact = RELEASE_DIR / f"{APP}-{tag}-{TARGET}"
 
-    run("nix", "build", ".#backend", "--out-link", str(out_link))
-    source = out_link / "bin" / APP
-    shutil.copy2(source, binary_path)
-    binary_path.chmod(0o755)
+    run("cargo", "build", "--release", "--locked", cwd=BACKEND)
 
-    with tarfile.open(archive_path, "w:gz") as tar:
-        tar.add(binary_path, arcname=binary_name)
+    source = BACKEND / "target" / "release" / APP
+    shutil.copy2(source, artifact)
 
-    binary_path.unlink()
-    if out_link.exists() or out_link.is_symlink():
-        out_link.unlink()
-    return archive_path
+    try:
+        run("strip", str(artifact))
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("Warning: strip failed; keeping unstripped binary")
+
+    artifact.chmod(0o755)
+    return artifact
 
 
 def build_apk(version: str) -> Path:
@@ -252,7 +246,7 @@ def push_release_command(tag: str) -> None:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
         raise RuntimeError("TAG must look like v1.2.3")
 
-    backend_artifact = RELEASE_DIR / f"{APP}-{tag}-{TARGET}.tar.gz"
+    backend_artifact = RELEASE_DIR / f"{APP}-{tag}-{TARGET}"
     apk_artifact = RELEASE_DIR / f"{APP}-{tag}.apk"
 
     if not backend_artifact.exists():
@@ -301,8 +295,12 @@ def release_command(bump_type: str) -> None:
         update_version_files(old, new)
         cargo_check()
         build_flutter_web()
-        backend_artifact = build_backend_archive(new)
+        backend_artifact = build_backend(new)
         nix_hash = nix_hash_file(backend_artifact)
+
+        print(f"Backend artifact: {backend_artifact}")
+        print(f"Nix hash: {nix_hash}")
+
         update_flake_prebuilt(new, nix_hash)
         commit_and_tag(new)
         apk_artifact = build_apk(new)

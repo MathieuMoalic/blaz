@@ -72,10 +72,11 @@ See [flake.nix](flake.nix) for all options.
 ## Release Process
 
 ```bash
-just bump patch         # Bump version and push
-# Wait for GitHub Actions...
-just update-prebuilt 1.0.12  # Update prebuilt hash
+just release patch    # bump, build web + backend, update flake hash, tag, publish
 ```
+
+Publishes a raw Linux binary and Android APK to GitHub Releases, then
+updates the homeserver via `just update-server`.
 
 ---
 
