@@ -117,9 +117,16 @@
       pname = "blaz";
       version = "2.8.12";
 
-      src = pkgs.fetchurl {
+      # The raw release binary embeds the build machine's /nix/store
+      # paths. As a fixed-output derivation, fetchurl is not allowed to
+      # refer to other store paths, so those stale references are
+      # explicitly discarded here; the outer derivation then patchelf's
+      # the binary onto the target system's interpreter and libraries.
+      src = (pkgs.fetchurl {
         url = "https://github.com/MathieuMoalic/blaz/releases/download/v2.8.12/blaz-v2.8.12-x86_64-linux";
         hash = "sha256-LdQqWOBHlG0ki+SetXwSwuUHZZfaMQ8/eFH3sK436fs=";
+      }).overrideAttrs {
+        unsafeDiscardReferences = {out = true;};
       };
 
       dontUnpack = true;
